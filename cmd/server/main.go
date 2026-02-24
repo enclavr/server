@@ -30,7 +30,7 @@ func main() {
 
 	authHandler := handlers.NewAuthHandler(db, authService)
 	roomHandler := handlers.NewRoomHandler(db)
-	voiceHandler := handlers.NewVoiceHandler(db, hub)
+	voiceHandler := handlers.NewVoiceHandler(db, hub, cfg)
 	oidcHandler := handlers.NewOIDCHandler(db, &cfg.Auth)
 
 	go hub.Run()

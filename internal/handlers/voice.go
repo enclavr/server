@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/enclavr/server/internal/config"
 	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/internal/models"
 	"github.com/enclavr/server/internal/websocket"
@@ -14,14 +15,16 @@ import (
 )
 
 type VoiceHandler struct {
-	db  *database.Database
-	hub *websocket.Hub
+	db     *database.Database
+	hub    *websocket.Hub
+	config *config.Config
 }
 
-func NewVoiceHandler(db *database.Database, hub *websocket.Hub) *VoiceHandler {
+func NewVoiceHandler(db *database.Database, hub *websocket.Hub, cfg *config.Config) *VoiceHandler {
 	return &VoiceHandler{
-		db:  db,
-		hub: hub,
+		db:     db,
+		hub:    hub,
+		config: cfg,
 	}
 }
 
@@ -78,10 +81,21 @@ type ICEServer struct {
 }
 
 func (h *VoiceHandler) GetICEConfig(w http.ResponseWriter, r *http.Request) {
+	iceServers := []ICEServer{
+		{URLs: []string{h.config.Voice.STUNServer}},
+	}
+
+	if h.config.Voice.TURNServer != "" {
+		turnServer := ICEServer{
+			URLs:       []string{h.config.Voice.TURNServer},
+			Username:   h.config.Voice.TURNUser,
+			Credential: h.config.Voice.TURNPass,
+		}
+		iceServers = append(iceServers, turnServer)
+	}
+
 	config := ICEConfig{
-		ICEServers: []ICEServer{
-			{URLs: []string{"stun:stun.l.google.com:19302"}},
-		},
+		ICEServers: iceServers,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
