@@ -52,6 +52,11 @@ func JWTAuth(authService *auth.AuthService) func(http.Handler) http.Handler {
 	}
 }
 
+func RequireAuth(authService *auth.AuthService, fn func(http.ResponseWriter, *http.Request)) http.HandlerFunc {
+	middleware := JWTAuth(authService)
+	return middleware(http.HandlerFunc(fn)).ServeHTTP
+}
+
 func GetUserID(r *http.Request) uuid.UUID {
 	if userID, ok := r.Context().Value(UserIDKey).(uuid.UUID); ok {
 		return userID

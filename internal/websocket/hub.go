@@ -3,21 +3,12 @@ package websocket
 import (
 	"encoding/json"
 	"log"
-	"net/http"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
-
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
-}
 
 type Hub struct {
 	rooms      map[uuid.UUID]map[*Client]bool
@@ -36,11 +27,14 @@ type Client struct {
 }
 
 type Message struct {
-	Type      string          `json:"type"`
-	RoomID    uuid.UUID       `json:"room_id,omitempty"`
-	UserID    uuid.UUID       `json:"user_id,omitempty"`
-	Payload   json.RawMessage `json:"payload,omitempty"`
-	Timestamp time.Time       `json:"timestamp"`
+	Type         string          `json:"type"`
+	RoomID       uuid.UUID       `json:"room_id,omitempty"`
+	UserID       uuid.UUID       `json:"user_id,omitempty"`
+	TargetUserID uuid.UUID       `json:"target_user_id,omitempty"`
+	Payload      json.RawMessage `json:"payload,omitempty"`
+	SDP          string          `json:"sdp,omitempty"`
+	Candidate    string          `json:"candidate,omitempty"`
+	Timestamp    time.Time       `json:"timestamp"`
 }
 
 func NewHub() *Hub {
@@ -123,6 +117,41 @@ func (h *Hub) GetRoomClients(roomID uuid.UUID) []*Client {
 	return clients
 }
 
+func (h *Hub) sendToClient(targetUserID uuid.UUID, msg *Message) {
+	h.mutex.RLock()
+	defer h.mutex.RUnlock()
+
+	for _, clients := range h.rooms {
+		for client := range clients {
+			if client.userID == targetUserID {
+				select {
+				case client.send <- msg.encode():
+				default:
+				}
+				return
+			}
+		}
+	}
+}
+
+func (h *Hub) broadcastToRoom(roomID uuid.UUID, msg *Message, excludeUserID uuid.UUID) {
+	h.mutex.RLock()
+	defer h.mutex.RUnlock()
+
+	if clients := h.rooms[roomID]; clients != nil {
+		for client := range clients {
+			if client.userID != excludeUserID {
+				select {
+				case client.send <- msg.encode():
+				default:
+					close(client.send)
+					delete(clients, client)
+				}
+			}
+		}
+	}
+}
+
 func (m *Message) encode() []byte {
 	if m.Timestamp.IsZero() {
 		m.Timestamp = time.Now()
@@ -146,9 +175,15 @@ func (c *Client) ReadPump() {
 	}()
 
 	c.conn.SetReadLimit(512 * 1024)
-	c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	if err := c.conn.SetReadDeadline(time.Now().Add(60 * time.Second)); err != nil {
+		log.Printf("Error setting read deadline: %v", err)
+		return
+	}
 	c.conn.SetPongHandler(func(string) error {
-		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		if err := c.conn.SetReadDeadline(time.Now().Add(60 * time.Second)); err != nil {
+			log.Printf("Error setting read deadline: %v", err)
+			return err
+		}
 		return nil
 	})
 
@@ -185,19 +220,29 @@ func (c *Client) WritePump() {
 	for {
 		select {
 		case message, ok := <-c.send:
-			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+				log.Printf("Error setting write deadline: %v", err)
+				return
+			}
 			if !ok {
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				if err := c.conn.WriteMessage(websocket.CloseMessage, []byte{}); err != nil {
+					log.Printf("Error sending close message: %v", err)
+				}
 				return
 			}
 
 			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
+				log.Printf("Error writing message: %v", err)
 				return
 			}
 
 		case <-ticker.C:
-			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+				log.Printf("Error setting write deadline: %v", err)
+				return
+			}
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				log.Printf("Error writing ping: %v", err)
 				return
 			}
 		}
@@ -207,9 +252,28 @@ func (c *Client) WritePump() {
 func (c *Client) handleMessage(msg *Message) {
 	switch msg.Type {
 	case "voice-offer", "voice-answer", "voice-ice-candidate":
-		c.hub.broadcast <- msg
+		if msg.UserID != msg.TargetUserID {
+			c.hub.sendToClient(msg.TargetUserID, msg)
+		}
 	case "voice-mute", "voice-unmute":
 		c.hub.broadcast <- msg
+	case "user-joined":
+		notifyMsg := &Message{
+			Type:      "user-joined",
+			RoomID:    c.roomID,
+			UserID:    c.userID,
+			Timestamp: time.Now(),
+		}
+		c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+	case "user-left":
+		notifyMsg := &Message{
+			Type:      "user-left",
+			RoomID:    c.roomID,
+			UserID:    c.userID,
+			Timestamp: time.Now(),
+		}
+		c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+		c.hub.UnregisterClient(c)
 	default:
 		log.Printf("Unknown message type: %s", msg.Type)
 	}

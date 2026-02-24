@@ -10,6 +10,7 @@ import (
 	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/internal/handlers"
 	"github.com/enclavr/server/internal/websocket"
+	"github.com/enclavr/server/pkg/middleware"
 )
 
 func main() {
@@ -30,6 +31,7 @@ func main() {
 	authHandler := handlers.NewAuthHandler(db, authService)
 	roomHandler := handlers.NewRoomHandler(db)
 	voiceHandler := handlers.NewVoiceHandler(db, hub)
+	oidcHandler := handlers.NewOIDCHandler(db, &cfg.Auth)
 
 	go hub.Run()
 
@@ -39,11 +41,15 @@ func main() {
 	mux.HandleFunc("/api/auth/refresh", authHandler.RefreshToken)
 	mux.HandleFunc("/api/auth/me", authHandler.GetMe)
 
-	mux.HandleFunc("/api/rooms", roomHandler.GetRooms)
-	mux.HandleFunc("/api/room/create", roomHandler.CreateRoom)
-	mux.HandleFunc("/api/room", roomHandler.GetRoom)
-	mux.HandleFunc("/api/room/join", roomHandler.JoinRoom)
-	mux.HandleFunc("/api/room/leave", roomHandler.LeaveRoom)
+	mux.HandleFunc("/api/auth/oidc/login", oidcHandler.Login)
+	mux.HandleFunc("/api/auth/oidc/callback", oidcHandler.Callback)
+	mux.HandleFunc("/api/auth/oidc/config", oidcHandler.GetConfig)
+
+	mux.HandleFunc("/api/rooms", middleware.RequireAuth(authService, roomHandler.GetRooms))
+	mux.HandleFunc("/api/room/create", middleware.RequireAuth(authService, roomHandler.CreateRoom))
+	mux.HandleFunc("/api/room", middleware.RequireAuth(authService, roomHandler.GetRoom))
+	mux.HandleFunc("/api/room/join", middleware.RequireAuth(authService, roomHandler.JoinRoom))
+	mux.HandleFunc("/api/room/leave", middleware.RequireAuth(authService, roomHandler.LeaveRoom))
 
 	mux.HandleFunc("/api/voice/ws", voiceHandler.HandleWebSocket)
 	mux.HandleFunc("/api/voice/ice", voiceHandler.GetICEConfig)

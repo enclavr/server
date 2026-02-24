@@ -2,7 +2,6 @@ package config
 
 import (
 	"os"
-	"strconv"
 	"time"
 )
 
@@ -108,13 +107,4 @@ func (d *DatabaseConfig) DSN() string {
 		" password=" + d.Password +
 		" dbname=" + d.DBName +
 		" sslmode=" + d.SSLMode
-}
-
-func getEnvInt(key string, defaultValue int) int {
-	if value := os.Getenv(key); value != "" {
-		if intVal, err := strconv.Atoi(value); err == nil {
-			return intVal
-		}
-	}
-	return defaultValue
 }

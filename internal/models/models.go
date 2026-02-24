@@ -15,6 +15,8 @@ type User struct {
 	DisplayName  string         `gorm:"size:100" json:"display_name"`
 	AvatarURL    string         `gorm:"size:500" json:"avatar_url"`
 	IsAdmin      bool           `gorm:"default:false" json:"is_admin"`
+	OIDCSubject  string         `gorm:"size:255" json:"-"`
+	OIDCIssuer   string         `gorm:"size:255" json:"-"`
 	CreatedAt    time.Time      `json:"created_at"`
 	UpdatedAt    time.Time      `json:"updated_at"`
 	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/enclavr/server/internal/database"
@@ -102,7 +103,9 @@ func (h *RoomHandler) GetRooms(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(responses)
+	if err := json.NewEncoder(w).Encode(responses); err != nil {
+		log.Printf("Error encoding response: %v", err)
+	}
 }
 
 func (h *RoomHandler) GetRoom(w http.ResponseWriter, r *http.Request) {
@@ -172,7 +175,9 @@ func (h *RoomHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 	h.db.Create(&userRoom)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "joined"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "joined"}); err != nil {
+		log.Printf("Error encoding response: %v", err)
+	}
 }
 
 func (h *RoomHandler) LeaveRoom(w http.ResponseWriter, r *http.Request) {
@@ -198,7 +203,9 @@ func (h *RoomHandler) LeaveRoom(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "left"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "left"}); err != nil {
+		log.Printf("Error encoding response: %v", err)
+	}
 }
 
 func (h *RoomHandler) roomToResponse(room *models.Room, userCount int) RoomResponse {
@@ -217,5 +224,7 @@ func (h *RoomHandler) roomToResponse(room *models.Room, userCount int) RoomRespo
 func (h *RoomHandler) sendRoomResponse(w http.ResponseWriter, room *models.Room, userCount int) {
 	response := h.roomToResponse(room, userCount)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("Error encoding response: %v", err)
+	}
 }
