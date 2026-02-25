@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -221,6 +222,80 @@ func (h *WebhookHandler) ToggleWebhook(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]bool{"is_active": webhook.IsActive}); err != nil {
 		log.Printf("Error encoding toggle response: %v", err)
+	}
+}
+
+type WebhookLogResponse struct {
+	ID           string `json:"id"`
+	WebhookID    string `json:"webhook_id"`
+	Event        string `json:"event"`
+	Payload      string `json:"payload"`
+	StatusCode   int    `json:"status_code"`
+	Success      bool   `json:"success"`
+	ErrorMessage string `json:"error_message"`
+	ResponseBody string `json:"response_body"`
+	CreatedAt    string `json:"created_at"`
+}
+
+func (h *WebhookHandler) GetWebhookLogs(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r)
+
+	webhookIDStr := strings.TrimPrefix(r.URL.Path, "/api/webhook/logs/")
+	if webhookIDStr == "" {
+		http.Error(w, "Webhook ID is required", http.StatusBadRequest)
+		return
+	}
+
+	webhookID, err := uuid.Parse(webhookIDStr)
+	if err != nil {
+		http.Error(w, "Invalid webhook ID", http.StatusBadRequest)
+		return
+	}
+
+	var webhook models.Webhook
+	if err := h.db.First(&webhook, webhookID).Error; err != nil {
+		http.Error(w, "Webhook not found", http.StatusNotFound)
+		return
+	}
+
+	var userRoom models.UserRoom
+	result := h.db.Where("user_id = ? AND room_id = ? AND role IN ?", userID, webhook.RoomID, []string{"owner", "admin", "moderator"}).First(&userRoom)
+	if result.Error != nil {
+		http.Error(w, "Access denied", http.StatusForbidden)
+		return
+	}
+
+	limit := 50
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 100 {
+			limit = l
+		}
+	}
+
+	var webhookLogs []models.WebhookLog
+	if err := h.db.Where("webhook_id = ?", webhookID).Order("created_at DESC").Limit(limit).Find(&webhookLogs).Error; err != nil {
+		http.Error(w, "Failed to fetch webhook logs", http.StatusInternalServerError)
+		return
+	}
+
+	response := make([]WebhookLogResponse, len(webhookLogs))
+	for i, log := range webhookLogs {
+		response[i] = WebhookLogResponse{
+			ID:           log.ID.String(),
+			WebhookID:    log.WebhookID.String(),
+			Event:        log.Event,
+			Payload:      log.Payload,
+			StatusCode:   log.StatusCode,
+			Success:      log.Success,
+			ErrorMessage: log.ErrorMessage,
+			ResponseBody: log.ResponseBody,
+			CreatedAt:    log.CreatedAt.Format(time.RFC3339),
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("Error encoding webhook logs response: %v", err)
 	}
 }
 

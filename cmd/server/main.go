@@ -114,6 +114,7 @@ func main() {
 	mux.HandleFunc("/api/webhook/create/:room_id", middleware.RequireAuth(authService, webhookHandler.CreateWebhook))
 	mux.HandleFunc("/api/webhook/:webhook_id", middleware.RequireAuth(authService, webhookHandler.DeleteWebhook))
 	mux.HandleFunc("/api/webhook/toggle/:webhook_id", middleware.RequireAuth(authService, webhookHandler.ToggleWebhook))
+	mux.HandleFunc("/api/webhook/logs/:webhook_id", middleware.RequireAuth(authService, webhookHandler.GetWebhookLogs))
 
 	mux.HandleFunc("/api/messages/search", middleware.RequireAuth(authService, messageHandler.SearchMessages))
 
