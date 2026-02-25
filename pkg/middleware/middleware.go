@@ -1,9 +1,11 @@
 package middleware
 
 import (
+	"compress/gzip"
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/enclavr/server/internal/auth"
 	"github.com/google/uuid"
@@ -12,9 +14,10 @@ import (
 type ContextKey string
 
 const (
-	UserIDKey   ContextKey = "user_id"
-	UsernameKey ContextKey = "username"
-	IsAdminKey  ContextKey = "is_admin"
+	UserIDKey    ContextKey = "user_id"
+	UsernameKey  ContextKey = "username"
+	IsAdminKey   ContextKey = "is_admin"
+	RequestIDKey ContextKey = "request_id"
 )
 
 func JWTAuth(authService *auth.AuthService) func(http.Handler) http.Handler {
@@ -57,6 +60,42 @@ func RequireAuth(authService *auth.AuthService, fn func(http.ResponseWriter, *ht
 	return middleware(http.HandlerFunc(fn)).ServeHTTP
 }
 
+func RequestTimeout(timeout time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx, cancel := context.WithTimeout(r.Context(), timeout)
+			defer cancel()
+
+			done := make(chan struct{})
+			go func() {
+				next.ServeHTTP(w, r.WithContext(ctx))
+				close(done)
+			}()
+
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				http.Error(w, "Request timeout", http.StatusRequestTimeout)
+			}
+		})
+	}
+}
+
+func RequestID() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestID := r.Header.Get("X-Request-ID")
+			if requestID == "" {
+				requestID = uuid.New().String()
+			}
+			w.Header().Set("X-Request-ID", requestID)
+			ctx := context.WithValue(r.Context(), RequestIDKey, requestID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
 func GetUserID(r *http.Request) uuid.UUID {
 	if userID, ok := r.Context().Value(UserIDKey).(uuid.UUID); ok {
 		return userID
@@ -76,4 +115,37 @@ func GetIsAdmin(r *http.Request) bool {
 		return isAdmin
 	}
 	return false
+}
+
+func GetRequestID(r *http.Request) string {
+	if requestID, ok := r.Context().Value(RequestIDKey).(string); ok {
+		return requestID
+	}
+	return ""
+}
+
+type gzipResponseWriter struct {
+	http.ResponseWriter
+	gw *gzip.Writer
+}
+
+func (g *gzipResponseWriter) Write(b []byte) (int, error) {
+	return g.gw.Write(b)
+}
+
+func GzipCompression() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			gw := gzip.NewWriter(w)
+			defer gw.Close()
+
+			w.Header().Set("Content-Encoding", "gzip")
+			next.ServeHTTP(&gzipResponseWriter{ResponseWriter: w, gw: gw}, r)
+		})
+	}
 }

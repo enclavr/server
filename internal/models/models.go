@@ -590,3 +590,122 @@ func (ca *ChannelActivity) BeforeCreate(tx *gorm.DB) error {
 	}
 	return nil
 }
+
+type AuditAction string
+
+const (
+	AuditActionMessageDelete  AuditAction = "message_delete"
+	AuditActionMessageEdit    AuditAction = "message_edit"
+	AuditActionUserKick       AuditAction = "user_kick"
+	AuditActionUserBan        AuditAction = "user_ban"
+	AuditActionUserUnban      AuditAction = "user_unban"
+	AuditActionRoleChange     AuditAction = "role_change"
+	AuditActionRoomCreate     AuditAction = "room_create"
+	AuditActionRoomDelete     AuditAction = "room_delete"
+	AuditActionRoomUpdate     AuditAction = "room_update"
+	AuditActionCategoryCreate AuditAction = "category_create"
+	AuditActionCategoryDelete AuditAction = "category_delete"
+	AuditActionInviteCreate   AuditAction = "invite_create"
+	AuditActionInviteRevoke   AuditAction = "invite_revoke"
+	AuditActionSettingsChange AuditAction = "settings_change"
+	AuditActionWebhookCreate  AuditAction = "webhook_create"
+	AuditActionWebhookDelete  AuditAction = "webhook_delete"
+)
+
+type AuditLog struct {
+	ID         uuid.UUID   `gorm:"type:uuid;primary_key" json:"id"`
+	UserID     uuid.UUID   `gorm:"type:uuid;not null;index" json:"user_id"`
+	Action     AuditAction `gorm:"type:varchar(50);not null;index" json:"action"`
+	TargetType string      `gorm:"size:50;not null" json:"target_type"`
+	TargetID   uuid.UUID   `gorm:"type:uuid;not null" json:"target_id"`
+	Details    string      `gorm:"type:text" json:"details"`
+	IPAddress  string      `gorm:"size:45" json:"ip_address"`
+	CreatedAt  time.Time   `json:"created_at"`
+
+	User User `gorm:"foreignKey:UserID" json:"-"`
+}
+
+func (al *AuditLog) BeforeCreate(tx *gorm.DB) error {
+	if al.ID == uuid.Nil {
+		al.ID = uuid.New()
+	}
+	if al.CreatedAt.IsZero() {
+		al.CreatedAt = time.Now()
+	}
+	return nil
+}
+
+type Ban struct {
+	ID        uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	UserID    uuid.UUID      `gorm:"type:uuid;not null;index" json:"user_id"`
+	RoomID    uuid.UUID      `gorm:"type:uuid;not null;index" json:"room_id"`
+	BannedBy  uuid.UUID      `gorm:"type:uuid;not null" json:"banned_by"`
+	Reason    string         `gorm:"size:500" json:"reason"`
+	ExpiresAt *time.Time     `json:"expires_at"`
+	CreatedAt time.Time      `json:"created_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	User   User `gorm:"foreignKey:UserID" json:"-"`
+	Room   Room `gorm:"foreignKey:RoomID" json:"-"`
+	Banned User `gorm:"foreignKey:UserID" json:"-"`
+}
+
+func (b *Ban) BeforeCreate(tx *gorm.DB) error {
+	if b.ID == uuid.Nil {
+		b.ID = uuid.New()
+	}
+	if b.CreatedAt.IsZero() {
+		b.CreatedAt = time.Now()
+	}
+	return nil
+}
+
+type ReportReason string
+
+const (
+	ReportReasonSpam           ReportReason = "spam"
+	ReportReasonHarassment     ReportReason = "harassment"
+	ReportReasonInappropriate  ReportReason = "inappropriate_content"
+	ReportReasonViolence       ReportReason = "violence"
+	ReportReasonMisinformation ReportReason = "misinformation"
+	ReportReasonOther          ReportReason = "other"
+)
+
+type ReportStatus string
+
+const (
+	ReportStatusPending   ReportStatus = "pending"
+	ReportStatusReviewed  ReportStatus = "reviewed"
+	ReportStatusResolved  ReportStatus = "resolved"
+	ReportStatusDismissed ReportStatus = "dismissed"
+)
+
+type Report struct {
+	ID          uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	ReporterID  uuid.UUID      `gorm:"type:uuid;not null;index" json:"reporter_id"`
+	ReportedID  uuid.UUID      `gorm:"type:uuid;not null;index" json:"reported_id"`
+	RoomID      uuid.UUID      `gorm:"type:uuid;not null;index" json:"room_id"`
+	MessageID   *uuid.UUID     `gorm:"type:uuid" json:"message_id"`
+	Reason      ReportReason   `gorm:"type:varchar(50);not null" json:"reason"`
+	Description string         `gorm:"type:text" json:"description"`
+	Status      ReportStatus   `gorm:"type:varchar(20);default:'pending'" json:"status"`
+	ReviewedBy  *uuid.UUID     `gorm:"type:uuid" json:"reviewed_by"`
+	ReviewNotes string         `gorm:"type:text" json:"review_notes"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+
+	Reporter User `gorm:"foreignKey:ReporterID" json:"-"`
+	Reported User `gorm:"foreignKey:ReportedID" json:"-"`
+	Room     Room `gorm:"foreignKey:RoomID" json:"-"`
+}
+
+func (r *Report) BeforeCreate(tx *gorm.DB) error {
+	if r.ID == uuid.Nil {
+		r.ID = uuid.New()
+	}
+	if r.CreatedAt.IsZero() {
+		r.CreatedAt = time.Now()
+	}
+	return nil
+}

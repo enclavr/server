@@ -12,6 +12,7 @@ type Config struct {
 	Database DatabaseConfig
 	Auth     AuthConfig
 	Voice    VoiceConfig
+	Push     PushConfig
 }
 
 type ServerConfig struct {
@@ -47,6 +48,12 @@ type VoiceConfig struct {
 	TURNServer string
 	TURNUser   string
 	TURNPass   string
+}
+
+type PushConfig struct {
+	VAPIDPublicKey  string
+	VAPIDPrivateKey string
+	VAPIDSubject    string
 }
 
 func Load() *Config {
@@ -87,6 +94,11 @@ func Load() *Config {
 			TURNServer: getEnv("TURN_SERVER", ""),
 			TURNUser:   getEnv("TURN_USER", ""),
 			TURNPass:   getEnv("TURN_PASS", ""),
+		},
+		Push: PushConfig{
+			VAPIDPublicKey:  getEnv("VAPID_PUBLIC_KEY", ""),
+			VAPIDPrivateKey: getEnv("VAPID_PRIVATE_KEY", ""),
+			VAPIDSubject:    getEnv("VAPID_SUBJECT", "mailto:admin@enclavr.local"),
 		},
 	}
 }

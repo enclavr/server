@@ -1,17 +1,22 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/enclavr/server/internal/auth"
 	"github.com/enclavr/server/internal/config"
 	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/internal/handlers"
+	"github.com/enclavr/server/internal/services"
 	"github.com/enclavr/server/internal/websocket"
 	"github.com/enclavr/server/pkg/middleware"
 )
+
+var startTime = time.Now()
 
 func main() {
 	cfg := config.Load()
@@ -50,6 +55,12 @@ func main() {
 	stickerHandler := handlers.NewStickerHandler(db)
 	soundboardHandler := handlers.NewSoundboardHandler(db, hub)
 	analyticsHandler := handlers.NewAnalyticsHandler(db)
+	auditHandler := handlers.NewAuditHandler(db)
+	exportHandler := handlers.NewExportHandler(db)
+	pushHandler := handlers.NewPushHandler(db)
+	banHandler := handlers.NewBanHandler(db)
+	reportHandler := handlers.NewReportHandler(db)
+	_ = services.NewPushService(db, cfg)
 
 	go hub.Run()
 
@@ -161,14 +172,52 @@ func main() {
 	mux.HandleFunc("/api/analytics/hourly", middleware.RequireAuth(authService, analyticsHandler.GetHourlyActivity))
 	mux.HandleFunc("/api/analytics/users", middleware.RequireAuth(authService, analyticsHandler.GetTopUsers))
 
+	mux.HandleFunc("/api/audit/logs", middleware.RequireAuth(authService, auditHandler.GetAuditLogs))
+	mux.HandleFunc("/api/export", middleware.RequireAuth(authService, exportHandler.ExportServer))
+
+	mux.HandleFunc("/api/push/subscribe", middleware.RequireAuth(authService, pushHandler.Subscribe))
+	mux.HandleFunc("/api/push/unsubscribe", middleware.RequireAuth(authService, pushHandler.Unsubscribe))
+	mux.HandleFunc("/api/push/subscriptions", middleware.RequireAuth(authService, pushHandler.GetSubscriptions))
+	mux.HandleFunc("/api/push/settings", middleware.RequireAuth(authService, pushHandler.GetNotificationSettings))
+	mux.HandleFunc("/api/push/settings/update", middleware.RequireAuth(authService, pushHandler.UpdateNotificationSettings))
+	mux.HandleFunc("/api/push/test", middleware.RequireAuth(authService, pushHandler.TestNotification))
+
+	mux.HandleFunc("/api/ban", middleware.RequireAuth(authService, banHandler.CreateBan))
+	mux.HandleFunc("/api/ban/room", middleware.RequireAuth(authService, banHandler.GetBans))
+	mux.HandleFunc("/api/ban/check", middleware.RequireAuth(authService, banHandler.CheckUserBan))
+	mux.HandleFunc("/api/ban/", middleware.RequireAuth(authService, banHandler.GetBan))
+	mux.HandleFunc("/api/ban/update", middleware.RequireAuth(authService, banHandler.UpdateBan))
+	mux.HandleFunc("/api/ban/delete", middleware.RequireAuth(authService, banHandler.DeleteBan))
+
+	mux.HandleFunc("/api/report", middleware.RequireAuth(authService, reportHandler.CreateReport))
+	mux.HandleFunc("/api/reports", middleware.RequireAuth(authService, reportHandler.GetReports))
+	mux.HandleFunc("/api/report/", middleware.RequireAuth(authService, reportHandler.GetReport))
+	mux.HandleFunc("/api/report/review", middleware.RequireAuth(authService, reportHandler.ReviewReport))
+	mux.HandleFunc("/api/report/delete", middleware.RequireAuth(authService, reportHandler.DeleteReport))
+	mux.HandleFunc("/api/reports/my", middleware.RequireAuth(authService, reportHandler.GetMyReports))
+
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "OK")
 	})
 
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		metrics := map[string]interface{}{
+			"uptime":         time.Since(startTime).String(),
+			"active_clients": hub.GetClientCount(),
+			"room_count":     hub.GetRoomCount(),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(metrics); err != nil {
+			log.Printf("Error encoding metrics: %v", err)
+		}
+	})
+
 	corsMiddleware := middleware.NewCORSMiddleware(cfg.Server.AllowedOrigins)
 
 	var handler http.Handler = mux
+	handler = middleware.RequestID()(handler)
+	handler = middleware.GzipCompression()(handler)
 	handler = corsMiddleware.Handler(handler)
 	handler = middleware.SecurityHeaders(handler)
 

@@ -52,8 +52,9 @@ func (h *VoiceHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	upgrader := ws.Upgrader{
-		ReadBufferSize:  1024,
-		WriteBufferSize: 1024,
+		ReadBufferSize:    1024,
+		WriteBufferSize:   1024,
+		EnableCompression: true,
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
 			if origin == "" {
