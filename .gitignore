@@ -1,0 +1,14 @@
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+.env
+.env.local
+*.log
+.DS_Store
+memory-bank/
