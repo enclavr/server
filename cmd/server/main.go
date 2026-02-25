@@ -1,19 +1,26 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	_ "net/http/pprof"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/enclavr/server/internal/auth"
 	"github.com/enclavr/server/internal/config"
 	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/internal/handlers"
+	"github.com/enclavr/server/internal/metrics"
 	"github.com/enclavr/server/internal/services"
 	"github.com/enclavr/server/internal/websocket"
 	"github.com/enclavr/server/pkg/middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var startTime = time.Now()
@@ -31,7 +38,25 @@ func main() {
 	}
 
 	authService := auth.NewAuthService(&cfg.Auth)
-	hub := websocket.NewHub()
+
+	var hub *websocket.Hub
+	if cfg.Redis.Host != "" && cfg.Redis.Host != "localhost" {
+		log.Printf("Initializing WebSocket hub with Redis pub/sub at %s", cfg.Redis.Host)
+		var err error
+		hub, err = websocket.NewHubWithRedis(cfg.Redis.Host, cfg.Redis.Password, cfg.Redis.DB)
+		if err != nil {
+			log.Printf("Failed to initialize Redis pub/sub, falling back to in-memory: %v", err)
+			hub = websocket.NewHub()
+		}
+	} else {
+		hub = websocket.NewHub()
+	}
+
+	if hub.IsRedisEnabled() {
+		metrics.RedisEnabled.Set(1)
+	} else {
+		metrics.RedisEnabled.Set(0)
+	}
 	inviteHandler := handlers.NewInviteHandler(db)
 
 	authHandler := handlers.NewAuthHandler(db, authService)
@@ -206,12 +231,21 @@ func main() {
 			"uptime":         time.Since(startTime).String(),
 			"active_clients": hub.GetClientCount(),
 			"room_count":     hub.GetRoomCount(),
+			"redis_enabled":  hub.IsRedisEnabled(),
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(metrics); err != nil {
 			log.Printf("Error encoding metrics: %v", err)
 		}
 	})
+
+	mux.Handle("/debug/pprof/", http.HandlerFunc(http.DefaultServeMux.ServeHTTP))
+	mux.Handle("/debug/pprof/heap", http.HandlerFunc(http.DefaultServeMux.ServeHTTP))
+	mux.Handle("/debug/pprof/goroutine", http.HandlerFunc(http.DefaultServeMux.ServeHTTP))
+	mux.Handle("/debug/pprof/block", http.HandlerFunc(http.DefaultServeMux.ServeHTTP))
+	mux.Handle("/debug/pprof/mutex", http.HandlerFunc(http.DefaultServeMux.ServeHTTP))
+
+	mux.Handle("/metrics", promhttp.Handler())
 
 	corsMiddleware := middleware.NewCORSMiddleware(cfg.Server.AllowedOrigins)
 
@@ -223,5 +257,39 @@ func main() {
 
 	addr := fmt.Sprintf(":%s", cfg.Server.Port)
 	log.Printf("Server starting on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, handler))
+
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      handler,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Failed to start server: %v", err)
+		}
+	}()
+
+	log.Printf("Server started successfully")
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Println("Shutting down server...")
+
+	hub.Shutdown()
+	if err := hub.ShutdownRedis(); err != nil {
+		log.Printf("Error shutting down Redis: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatalf("Server forced to shutdown: %v", err)
+	}
+
+	log.Println("Server exited properly")
 }

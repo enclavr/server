@@ -2,12 +2,42 @@
 
 The backend server for Enclavr, a self-hosted voice chat platform.
 
+## IMPORTANT: CLI Commands
+
+This project uses Go's standard tooling. Use these commands:
+
+```bash
+# Install dependencies
+go mod tidy
+
+# Run server
+go run ./cmd/server
+
+# Run tests
+go test -v ./...
+
+# Run with coverage
+go test -v -coverprofile=coverage.out ./...
+
+# Lint code
+golangci-lint run ./...
+
+# Build binary
+go build -o bin/server ./cmd/server
+
+# Format code
+go fmt ./...
+```
+
 ## Features
 
 - User authentication with JWT
 - Room-based voice chat
 - WebSocket-based real-time communication
 - PostgreSQL database
+- Redis pub/sub for horizontal scaling
+- Prometheus metrics
+- gRPC API support
 - Docker support
 
 ## API Endpoints
@@ -72,6 +102,32 @@ docker-compose up -d
 | TURN_SERVER | - | TURN server |
 | TURN_USER | - | TURN username |
 | TURN_PASS | - | TURN password |
+| REDIS_HOST | localhost | Redis host |
+| REDIS_PORT | 6379 | Redis port |
+| REDIS_PASSWORD | - | Redis password |
+| REDIS_DB | 0 | Redis database |
+
+## Testing
+
+Run tests with real SQLite in-memory database:
+
+```bash
+go test -v ./...
+go test -v -run TestAuthHandler ./...
+```
+
+Run with coverage:
+
+```bash
+go test -v -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out
+```
+
+## Linting
+
+```bash
+golangci-lint run ./...
+```
 
 ## License
 

@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/enclavr/server/internal/metrics"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
@@ -39,6 +40,9 @@ type Hub struct {
 	startedAt     time.Time
 	batchQueue    chan *batchItem
 	batchTicker   *time.Ticker
+
+	pubSub      *PubSubService
+	enableRedis bool
 }
 
 type batchItem struct {
@@ -106,6 +110,7 @@ type HubMetrics struct {
 	TotalMessages int64         `json:"total_messages"`
 	Uptime        time.Duration `json:"uptime"`
 	RoomCount     int           `json:"room_count"`
+	RedisEnabled  bool          `json:"redis_enabled"`
 }
 
 func NewHub() *Hub {
@@ -120,9 +125,31 @@ func NewHub() *Hub {
 		startedAt:       time.Now(),
 		batchQueue:      make(chan *batchItem, 512),
 		batchTicker:     time.NewTicker(50 * time.Millisecond),
+		enableRedis:     false,
 	}
 	go hub.processBatch()
 	return hub
+}
+
+func NewHubWithRedis(redisHost, redisPassword string, redisDB int) (*Hub, error) {
+	hub := NewHub()
+
+	hub.pubSub = NewPubSubService(redisHost, redisPassword, redisDB)
+	if err := hub.pubSub.Connect(); err != nil {
+		return nil, err
+	}
+
+	if err := hub.pubSub.Subscribe("broadcast"); err != nil {
+		log.Printf("Failed to subscribe to broadcast channel: %v", err)
+	}
+
+	hub.pubSub.RegisterHandler("user-message", hub.handleRedisUserMessage)
+	hub.pubSub.RegisterHandler("room-message", hub.handleRedisRoomMessage)
+
+	hub.enableRedis = true
+	log.Println("WebSocket hub initialized with Redis pub/sub support")
+
+	return hub, nil
 }
 
 func (h *Hub) Run() {
@@ -139,6 +166,7 @@ func (h *Hub) Run() {
 					mutex:   sync.RWMutex{},
 				}
 				h.roomMutexes[client.roomID] = &sync.RWMutex{}
+				metrics.WebSocketRoomsActive.Inc()
 			}
 			h.rooms[client.roomID].clients[client] = true
 			h.rooms[client.roomID].lastAccess = time.Now().Unix()
@@ -157,6 +185,7 @@ func (h *Hub) Run() {
 					if len(r.clients) == 0 {
 						delete(h.rooms, client.roomID)
 						delete(h.roomMutexes, client.roomID)
+						metrics.WebSocketRoomsActive.Dec()
 					}
 				}
 				r.mutex.Unlock()
@@ -164,6 +193,8 @@ func (h *Hub) Run() {
 			delete(h.userConnections, client.userID)
 			h.activeClients.Add(-1)
 			h.mutex.Unlock()
+			metrics.WebSocketConnections.Dec()
+			metrics.ActiveUsers.Dec()
 
 		case message := <-h.broadcast:
 			roomMutex := h.getRoomMutex(message.RoomID)
@@ -183,6 +214,8 @@ func (h *Hub) Run() {
 				}
 				r.mutex.RUnlock()
 				h.totalMessages.Add(1)
+				metrics.MessagesSent.Add(float64(len(r.clients)))
+				metrics.WebSocketMessagesTotal.WithLabelValues(message.Type, "sent").Add(float64(len(r.clients)))
 			}
 			if roomMutex != nil {
 				roomMutex.RUnlock()
@@ -300,7 +333,22 @@ func (h *Hub) gracefulShutdown() {
 }
 
 func (h *Hub) Shutdown() {
+	log.Println("Shutting down WebSocket hub...")
 	close(h.shutdown)
+
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+
+	for _, r := range h.rooms {
+		r.mutex.Lock()
+		for client := range r.clients {
+			close(client.send)
+			delete(r.clients, client)
+		}
+		r.mutex.Unlock()
+	}
+
+	log.Println("WebSocket hub shutdown complete")
 }
 
 func (h *Hub) GetMetrics() HubMetrics {
@@ -312,6 +360,7 @@ func (h *Hub) GetMetrics() HubMetrics {
 		TotalMessages: h.totalMessages.Load(),
 		Uptime:        time.Since(h.startedAt),
 		RoomCount:     len(h.rooms),
+		RedisEnabled:  h.enableRedis,
 	}
 }
 
@@ -336,6 +385,8 @@ func (h *Hub) RegisterClient(userID, roomID uuid.UUID, conn *websocket.Conn) *Cl
 	}
 
 	h.register <- client
+	metrics.WebSocketConnections.Inc()
+	metrics.ActiveUsers.Inc()
 	return client
 }
 
@@ -551,6 +602,9 @@ func (c *Client) handleMessage(msg *Message) {
 			Timestamp: time.Now(),
 		}
 		c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+		if c.hub.enableRedis {
+			c.hub.publishToRedis(notifyMsg)
+		}
 	case "user-left":
 		notifyMsg := &Message{
 			Type:      "user-left",
@@ -559,6 +613,9 @@ func (c *Client) handleMessage(msg *Message) {
 			Timestamp: time.Now(),
 		}
 		c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+		if c.hub.enableRedis {
+			c.hub.publishToRedis(notifyMsg)
+		}
 		c.hub.UnregisterClient(c)
 	case "typing":
 		notifyMsg := &Message{
@@ -568,6 +625,9 @@ func (c *Client) handleMessage(msg *Message) {
 			Timestamp: time.Now(),
 		}
 		c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+		if c.hub.enableRedis {
+			c.hub.publishToRedis(notifyMsg)
+		}
 	case "stop-typing":
 		notifyMsg := &Message{
 			Type:      "user-stopped-typing",
@@ -576,7 +636,77 @@ func (c *Client) handleMessage(msg *Message) {
 			Timestamp: time.Now(),
 		}
 		c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+		if c.hub.enableRedis {
+			c.hub.publishToRedis(notifyMsg)
+		}
 	default:
 		log.Printf("Unknown message type: %s", msg.Type)
 	}
+}
+
+func (h *Hub) handleRedisUserMessage(msg *PubSubMessage) {
+	h.sendToClient(msg.TargetUserID, &Message{
+		Type:         msg.Type,
+		UserID:       msg.UserID,
+		TargetUserID: msg.TargetUserID,
+		Payload:      msg.Payload,
+		Timestamp:    msg.Timestamp,
+	})
+}
+
+func (h *Hub) handleRedisRoomMessage(msg *PubSubMessage) {
+	h.broadcastToRoom(msg.RoomID, &Message{
+		Type:      msg.Type,
+		RoomID:    msg.RoomID,
+		UserID:    msg.UserID,
+		Payload:   msg.Payload,
+		Timestamp: msg.Timestamp,
+	}, msg.UserID)
+}
+
+func (h *Hub) publishToRedis(msg *Message) {
+	if h.pubSub == nil || !h.enableRedis {
+		return
+	}
+
+	psMsg := &PubSubMessage{
+		Type:      msg.Type,
+		RoomID:    msg.RoomID,
+		UserID:    msg.UserID,
+		Payload:   msg.Payload,
+		Timestamp: msg.Timestamp,
+	}
+
+	if msg.TargetUserID != (uuid.UUID{}) {
+		_ = h.pubSub.PublishToUser(msg.TargetUserID, psMsg)
+	}
+	if msg.RoomID != (uuid.UUID{}) {
+		_ = h.pubSub.PublishToRoom(msg.RoomID, psMsg)
+	}
+	_ = h.pubSub.PublishBroadcast(psMsg)
+}
+
+func (h *Hub) SubscribeToRoomRedis(roomID uuid.UUID) error {
+	if h.pubSub == nil || !h.enableRedis {
+		return nil
+	}
+	return h.pubSub.SubscribeToRoom(roomID)
+}
+
+func (h *Hub) SubscribeToUserRedis(userID uuid.UUID) error {
+	if h.pubSub == nil || !h.enableRedis {
+		return nil
+	}
+	return h.pubSub.SubscribeToUser(userID)
+}
+
+func (h *Hub) ShutdownRedis() error {
+	if h.pubSub != nil {
+		return h.pubSub.Disconnect()
+	}
+	return nil
+}
+
+func (h *Hub) IsRedisEnabled() bool {
+	return h.enableRedis
 }

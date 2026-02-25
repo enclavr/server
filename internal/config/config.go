@@ -13,6 +13,7 @@ type Config struct {
 	Auth     AuthConfig
 	Voice    VoiceConfig
 	Push     PushConfig
+	Redis    RedisConfig
 }
 
 type ServerConfig struct {
@@ -54,6 +55,13 @@ type PushConfig struct {
 	VAPIDPublicKey  string
 	VAPIDPrivateKey string
 	VAPIDSubject    string
+}
+
+type RedisConfig struct {
+	Host     string
+	Port     string
+	Password string
+	DB       int
 }
 
 func Load() *Config {
@@ -99,6 +107,12 @@ func Load() *Config {
 			VAPIDPublicKey:  getEnv("VAPID_PUBLIC_KEY", ""),
 			VAPIDPrivateKey: getEnv("VAPID_PRIVATE_KEY", ""),
 			VAPIDSubject:    getEnv("VAPID_SUBJECT", "mailto:admin@enclavr.local"),
+		},
+		Redis: RedisConfig{
+			Host:     getEnv("REDIS_HOST", "localhost"),
+			Port:     getEnv("REDIS_PORT", "6379"),
+			Password: getEnv("REDIS_PASSWORD", ""),
+			DB:       getEnvInt("REDIS_DB", 0),
 		},
 	}
 }

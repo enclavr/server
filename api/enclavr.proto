@@ -1,0 +1,167 @@
+syntax = "proto3";
+
+package api;
+
+option go_package = "github.com/enclavr/server/api";
+
+message Empty {}
+
+message UserProfile {
+  string id = 1;
+  string username = 2;
+  string email = 3;
+  string avatar_url = 4;
+  int64 created_at = 5;
+}
+
+message RegisterRequest {
+  string username = 1;
+  string email = 2;
+  string password = 3;
+}
+
+message LoginRequest {
+  string email = 1;
+  string password = 2;
+}
+
+message RefreshTokenRequest {
+  string token = 1;
+}
+
+message AuthResponse {
+  string token = 1;
+  string refresh_token = 2;
+  UserProfile user = 3;
+}
+
+message GetMeRequest {
+  string token = 1;
+}
+
+message GetRoomsRequest {
+  string token = 1;
+}
+
+message RoomInfo {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  int64 created_at = 4;
+  string category_id = 5;
+  int32 member_count = 6;
+}
+
+message GetRoomsResponse {
+  repeated RoomInfo rooms = 1;
+}
+
+message CreateRoomRequest {
+  string token = 1;
+  string name = 2;
+  string description = 3;
+  string category_id = 4;
+}
+
+message GetRoomRequest {
+  string token = 1;
+  string room_id = 2;
+}
+
+message JoinRoomRequest {
+  string token = 1;
+  string room_id = 2;
+}
+
+message LeaveRoomRequest {
+  string token = 1;
+  string room_id = 2;
+}
+
+message GetMessagesRequest {
+  string token = 1;
+  string room_id = 2;
+  int32 limit = 3;
+  int32 offset = 4;
+  string before = 5;
+}
+
+message ChatMessage {
+  string id = 1;
+  string room_id = 2;
+  string user_id = 3;
+  string username = 4;
+  string content = 5;
+  int64 created_at = 6;
+  int64 updated_at = 7;
+  bool is_edited = 8;
+}
+
+message GetMessagesResponse {
+  repeated ChatMessage messages = 1;
+}
+
+message SendMessageRequest {
+  string token = 1;
+  string room_id = 2;
+  string content = 3;
+}
+
+message UpdateMessageRequest {
+  string token = 1;
+  string message_id = 2;
+  string content = 3;
+}
+
+message DeleteMessageRequest {
+  string token = 1;
+  string message_id = 2;
+}
+
+message SearchMessagesRequest {
+  string token = 1;
+  string query = 2;
+  string room_id = 3;
+}
+
+message SearchUsersRequest {
+  string token = 1;
+  string query = 2;
+}
+
+message SearchUsersResponse {
+  repeated UserProfile users = 1;
+}
+
+message GetProfileRequest {
+  string token = 1;
+  string user_id = 2;
+}
+
+service AuthService {
+  rpc Register(RegisterRequest) returns (AuthResponse);
+  rpc Login(LoginRequest) returns (AuthResponse);
+  rpc RefreshToken(RefreshTokenRequest) returns (AuthResponse);
+  rpc GetMe(GetMeRequest) returns (UserProfile);
+}
+
+service RoomService {
+  rpc GetRooms(GetRoomsRequest) returns (GetRoomsResponse);
+  rpc CreateRoom(CreateRoomRequest) returns (RoomInfo);
+  rpc GetRoom(GetRoomRequest) returns (RoomInfo);
+  rpc JoinRoom(JoinRoomRequest) returns (RoomInfo);
+  rpc LeaveRoom(LeaveRoomRequest) returns (Empty);
+}
+
+service MessageService {
+  rpc GetMessages(GetMessagesRequest) returns (GetMessagesResponse);
+  rpc SendMessage(SendMessageRequest) returns (ChatMessage);
+  rpc UpdateMessage(UpdateMessageRequest) returns (ChatMessage);
+  rpc DeleteMessage(DeleteMessageRequest) returns (Empty);
+  rpc SearchMessages(SearchMessagesRequest) returns (GetMessagesResponse);
+}
+
+service UserService {
+  rpc SearchUsers(SearchUsersRequest) returns (SearchUsersResponse);
+  rpc GetProfile(GetProfileRequest) returns (UserProfile);
+}
