@@ -44,6 +44,12 @@ func main() {
 	roleHandler := handlers.NewRoleHandler(db)
 	webhookHandler := handlers.NewWebhookHandler(db)
 	fileHandler := handlers.NewFileHandler(db, cfg.Server.UploadDir, cfg.Server.MaxUploadSizeMB)
+	threadHandler := handlers.NewThreadHandler(db, hub)
+	pollHandler := handlers.NewPollHandler(db, hub)
+	emojiHandler := handlers.NewEmojiHandler(db)
+	stickerHandler := handlers.NewStickerHandler(db)
+	soundboardHandler := handlers.NewSoundboardHandler(db, hub)
+	analyticsHandler := handlers.NewAnalyticsHandler(db)
 
 	go hub.Run()
 
@@ -122,6 +128,38 @@ func main() {
 	mux.HandleFunc("/api/files", middleware.RequireAuth(authService, fileHandler.GetRoomFiles))
 	mux.HandleFunc("/api/files/delete", middleware.RequireAuth(authService, fileHandler.DeleteFile))
 	mux.HandleFunc("/api/files/", fileHandler.GetFile)
+
+	mux.HandleFunc("/api/thread/create", middleware.RequireAuth(authService, threadHandler.CreateThread))
+	mux.HandleFunc("/api/thread", middleware.RequireAuth(authService, threadHandler.GetThread))
+	mux.HandleFunc("/api/threads", middleware.RequireAuth(authService, threadHandler.GetThreadsForMessage))
+	mux.HandleFunc("/api/thread/message", middleware.RequireAuth(authService, threadHandler.AddThreadMessage))
+	mux.HandleFunc("/api/thread/message/update", middleware.RequireAuth(authService, threadHandler.UpdateThreadMessage))
+	mux.HandleFunc("/api/thread/message/delete", middleware.RequireAuth(authService, threadHandler.DeleteThreadMessage))
+
+	mux.HandleFunc("/api/poll/create", middleware.RequireAuth(authService, pollHandler.CreatePoll))
+	mux.HandleFunc("/api/polls", middleware.RequireAuth(authService, pollHandler.GetPolls))
+	mux.HandleFunc("/api/poll", middleware.RequireAuth(authService, pollHandler.GetPoll))
+	mux.HandleFunc("/api/poll/vote", middleware.RequireAuth(authService, pollHandler.Vote))
+	mux.HandleFunc("/api/poll/delete", middleware.RequireAuth(authService, pollHandler.DeletePoll))
+
+	mux.HandleFunc("/api/emoji", middleware.RequireAuth(authService, emojiHandler.GetEmojis))
+	mux.HandleFunc("/api/emoji/create", middleware.RequireAuth(authService, emojiHandler.CreateEmoji))
+	mux.HandleFunc("/api/emoji/delete", middleware.RequireAuth(authService, emojiHandler.DeleteEmoji))
+
+	mux.HandleFunc("/api/sticker", middleware.RequireAuth(authService, stickerHandler.GetStickers))
+	mux.HandleFunc("/api/sticker/create", middleware.RequireAuth(authService, stickerHandler.CreateSticker))
+	mux.HandleFunc("/api/sticker/delete", middleware.RequireAuth(authService, stickerHandler.DeleteSticker))
+
+	mux.HandleFunc("/api/soundboard", middleware.RequireAuth(authService, soundboardHandler.GetSounds))
+	mux.HandleFunc("/api/soundboard/create", middleware.RequireAuth(authService, soundboardHandler.CreateSound))
+	mux.HandleFunc("/api/soundboard/play", middleware.RequireAuth(authService, soundboardHandler.PlaySound))
+	mux.HandleFunc("/api/soundboard/delete", middleware.RequireAuth(authService, soundboardHandler.DeleteSound))
+
+	mux.HandleFunc("/api/analytics/overview", middleware.RequireAuth(authService, analyticsHandler.GetOverview))
+	mux.HandleFunc("/api/analytics/daily", middleware.RequireAuth(authService, analyticsHandler.GetDailyActivity))
+	mux.HandleFunc("/api/analytics/channels", middleware.RequireAuth(authService, analyticsHandler.GetChannelStats))
+	mux.HandleFunc("/api/analytics/hourly", middleware.RequireAuth(authService, analyticsHandler.GetHourlyActivity))
+	mux.HandleFunc("/api/analytics/users", middleware.RequireAuth(authService, analyticsHandler.GetTopUsers))
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
