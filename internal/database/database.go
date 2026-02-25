@@ -49,6 +49,11 @@ func (d *Database) Migrate() error {
 		&models.DirectMessage{},
 		&models.Webhook{},
 		&models.WebhookLog{},
+		&models.PinnedMessage{},
+		&models.MessageReaction{},
+		&models.ServerSettings{},
+		&models.Invite{},
+		&models.File{},
 	)
 	if err != nil {
 		return err

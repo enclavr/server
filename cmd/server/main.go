@@ -43,6 +43,7 @@ func main() {
 	settingsHandler := handlers.NewSettingsHandler(db)
 	roleHandler := handlers.NewRoleHandler(db)
 	webhookHandler := handlers.NewWebhookHandler(db)
+	fileHandler := handlers.NewFileHandler(db, cfg.Server.UploadDir, cfg.Server.MaxUploadSizeMB)
 
 	go hub.Run()
 
@@ -116,12 +117,23 @@ func main() {
 
 	mux.HandleFunc("/api/messages/search", middleware.RequireAuth(authService, messageHandler.SearchMessages))
 
+	mux.HandleFunc("/api/files/upload", middleware.RequireAuth(authService, fileHandler.UploadFile))
+	mux.HandleFunc("/api/files", middleware.RequireAuth(authService, fileHandler.GetRoomFiles))
+	mux.HandleFunc("/api/files/delete", middleware.RequireAuth(authService, fileHandler.DeleteFile))
+	mux.HandleFunc("/api/files/", fileHandler.GetFile)
+
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "OK")
 	})
 
+	corsMiddleware := middleware.NewCORSMiddleware(cfg.Server.AllowedOrigins)
+
+	var handler http.Handler = mux
+	handler = corsMiddleware.Handler(handler)
+	handler = middleware.SecurityHeaders(handler)
+
 	addr := fmt.Sprintf(":%s", cfg.Server.Port)
 	log.Printf("Server starting on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	log.Fatal(http.ListenAndServe(addr, handler))
 }

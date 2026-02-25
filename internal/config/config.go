@@ -1,7 +1,9 @@
 package config
 
 import (
+	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -13,9 +15,12 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Port         string
-	ReadTimeout  time.Duration
-	WriteTimeout time.Duration
+	Port            string
+	ReadTimeout     time.Duration
+	WriteTimeout    time.Duration
+	AllowedOrigins  []string
+	UploadDir       string
+	MaxUploadSizeMB int
 }
 
 type DatabaseConfig struct {
@@ -45,11 +50,20 @@ type VoiceConfig struct {
 }
 
 func Load() *Config {
+	allowedOriginsEnv := getEnv("ALLOWED_ORIGINS", "")
+	var allowedOrigins []string
+	if allowedOriginsEnv != "" {
+		allowedOrigins = strings.Split(allowedOriginsEnv, ",")
+	}
+
 	return &Config{
 		Server: ServerConfig{
-			Port:         getEnv("SERVER_PORT", "8080"),
-			ReadTimeout:  getDurationEnv("SERVER_READ_TIMEOUT", 30*time.Second),
-			WriteTimeout: getDurationEnv("SERVER_WRITE_TIMEOUT", 30*time.Second),
+			Port:            getEnv("SERVER_PORT", "8080"),
+			ReadTimeout:     getDurationEnv("SERVER_READ_TIMEOUT", 30*time.Second),
+			WriteTimeout:    getDurationEnv("SERVER_WRITE_TIMEOUT", 30*time.Second),
+			AllowedOrigins:  allowedOrigins,
+			UploadDir:       getEnv("UPLOAD_DIR", "./uploads"),
+			MaxUploadSizeMB: getEnvInt("MAX_UPLOAD_SIZE_MB", 10),
 		},
 		Database: DatabaseConfig{
 			Host:     getEnv("DB_HOST", "localhost"),
@@ -87,6 +101,16 @@ func getEnv(key, defaultValue string) string {
 func getEnvBool(key string, defaultValue bool) bool {
 	if value := os.Getenv(key); value != "" {
 		return value == "true" || value == "1"
+	}
+	return defaultValue
+}
+
+func getEnvInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		var intVal int
+		if _, err := fmt.Sscanf(value, "%d", &intVal); err == nil {
+			return intVal
+		}
 	}
 	return defaultValue
 }

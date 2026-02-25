@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/enclavr/server/internal/config"
 	"github.com/enclavr/server/internal/database"
@@ -54,7 +55,22 @@ func (h *VoiceHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
 		CheckOrigin: func(r *http.Request) bool {
-			return true
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				return true
+			}
+
+			allowedOrigins := h.config.Server.AllowedOrigins
+			if len(allowedOrigins) == 0 {
+				return true
+			}
+
+			for _, allowed := range allowedOrigins {
+				if allowed == "*" || strings.EqualFold(allowed, origin) {
+					return true
+				}
+			}
+			return false
 		},
 	}
 
