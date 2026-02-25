@@ -152,6 +152,10 @@ func (h *Hub) broadcastToRoom(roomID uuid.UUID, msg *Message, excludeUserID uuid
 	}
 }
 
+func (h *Hub) BroadcastToRoom(roomID uuid.UUID, msg *Message, excludeUserID uuid.UUID) {
+	h.broadcastToRoom(roomID, msg, excludeUserID)
+}
+
 func (m *Message) encode() []byte {
 	if m.Timestamp.IsZero() {
 		m.Timestamp = time.Now()
@@ -274,6 +278,22 @@ func (c *Client) handleMessage(msg *Message) {
 		}
 		c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
 		c.hub.UnregisterClient(c)
+	case "typing":
+		notifyMsg := &Message{
+			Type:      "user-typing",
+			RoomID:    c.roomID,
+			UserID:    c.userID,
+			Timestamp: time.Now(),
+		}
+		c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+	case "stop-typing":
+		notifyMsg := &Message{
+			Type:      "user-stopped-typing",
+			RoomID:    c.roomID,
+			UserID:    c.userID,
+			Timestamp: time.Now(),
+		}
+		c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
 	default:
 		log.Printf("Unknown message type: %s", msg.Type)
 	}

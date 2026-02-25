@@ -21,22 +21,24 @@ func NewRoomHandler(db *database.Database) *RoomHandler {
 }
 
 type CreateRoomRequest struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Password    string `json:"password"`
-	IsPrivate   bool   `json:"is_private"`
-	MaxUsers    int    `json:"max_users"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Password    string     `json:"password"`
+	IsPrivate   bool       `json:"is_private"`
+	MaxUsers    int        `json:"max_users"`
+	CategoryID  *uuid.UUID `json:"category_id"`
 }
 
 type RoomResponse struct {
-	ID          uuid.UUID `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	IsPrivate   bool      `json:"is_private"`
-	MaxUsers    int       `json:"max_users"`
-	CreatedBy   uuid.UUID `json:"created_by"`
-	CreatedAt   string    `json:"created_at"`
-	UserCount   int       `json:"user_count"`
+	ID          uuid.UUID  `json:"id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	IsPrivate   bool       `json:"is_private"`
+	MaxUsers    int        `json:"max_users"`
+	CreatedBy   uuid.UUID  `json:"created_by"`
+	CategoryID  *uuid.UUID `json:"category_id,omitempty"`
+	CreatedAt   string     `json:"created_at"`
+	UserCount   int        `json:"user_count"`
 }
 
 func (h *RoomHandler) CreateRoom(w http.ResponseWriter, r *http.Request) {
@@ -63,6 +65,7 @@ func (h *RoomHandler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 		IsPrivate:   req.IsPrivate,
 		MaxUsers:    req.MaxUsers,
 		CreatedBy:   userID,
+		CategoryID:  req.CategoryID,
 	}
 
 	if req.Password != "" {
@@ -216,6 +219,7 @@ func (h *RoomHandler) roomToResponse(room *models.Room, userCount int) RoomRespo
 		IsPrivate:   room.IsPrivate,
 		MaxUsers:    room.MaxUsers,
 		CreatedBy:   room.CreatedBy,
+		CategoryID:  room.CategoryID,
 		CreatedAt:   room.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UserCount:   userCount,
 	}

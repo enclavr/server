@@ -38,15 +38,24 @@ func (d *Database) Migrate() error {
 	err := d.AutoMigrate(
 		&models.User{},
 		&models.Room{},
+		&models.Category{},
 		&models.UserRoom{},
 		&models.Session{},
 		&models.RefreshToken{},
 		&models.VoiceSession{},
 		&models.RoomInvite{},
+		&models.Message{},
+		&models.Presence{},
+		&models.DirectMessage{},
+		&models.Webhook{},
+		&models.WebhookLog{},
 	)
 	if err != nil {
 		return err
 	}
+
+	d.Exec("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_messages_content_fts ON messages USING gin(to_tsvector('english', content))")
 
 	log.Println("Database migration completed")
 	return nil

@@ -47,3 +47,33 @@ func (ri *RoomInvite) BeforeCreate(tx *gorm.DB) error {
 	}
 	return nil
 }
+
+type PresenceStatus string
+
+const (
+	PresenceOnline  PresenceStatus = "online"
+	PresenceAway    PresenceStatus = "away"
+	PresenceBusy    PresenceStatus = "busy"
+	PresenceOffline PresenceStatus = "offline"
+)
+
+type Presence struct {
+	ID       uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	UserID   uuid.UUID      `gorm:"type:uuid;not null;uniqueIndex" json:"user_id"`
+	Status   PresenceStatus `gorm:"type:varchar(20);default:'offline'" json:"status"`
+	RoomID   *uuid.UUID     `gorm:"type:uuid" json:"room_id,omitempty"`
+	LastSeen time.Time      `json:"last_seen"`
+
+	User User `gorm:"foreignKey:UserID" json:"-"`
+	Room Room `gorm:"foreignKey:RoomID" json:"-"`
+}
+
+func (p *Presence) BeforeCreate(tx *gorm.DB) error {
+	if p.ID == uuid.Nil {
+		p.ID = uuid.New()
+	}
+	if p.LastSeen.IsZero() {
+		p.LastSeen = time.Now()
+	}
+	return nil
+}
