@@ -194,3 +194,38 @@ func TestAuditHandler_GetAuditLogs_UserNotFound(t *testing.T) {
 func decodeJSON(data []byte, v interface{}) error {
 	return json.Unmarshal(data, v)
 }
+
+func TestAuditHandler_LogAction(t *testing.T) {
+	handler, db, adminID := setupAuditHandlerWithUser(t, true)
+
+	room := models.Room{
+		ID:   uuid.New(),
+		Name: "Test Room",
+	}
+	db.Create(&room)
+
+	handler.LogAction(adminID, models.AuditActionRoomCreate, "room", room.ID, "Created a test room", "192.168.1.1")
+
+	var logs []models.AuditLog
+	db.Find(&logs)
+
+	if len(logs) != 1 {
+		t.Errorf("expected 1 audit log, got %d", len(logs))
+	}
+
+	if logs[0].UserID != adminID {
+		t.Errorf("expected user ID %s, got %s", adminID, logs[0].UserID)
+	}
+
+	if logs[0].Action != models.AuditActionRoomCreate {
+		t.Errorf("expected action %s, got %s", models.AuditActionRoomCreate, logs[0].Action)
+	}
+
+	if logs[0].TargetType != "room" {
+		t.Errorf("expected target type 'room', got %s", logs[0].TargetType)
+	}
+
+	if logs[0].IPAddress != "192.168.1.1" {
+		t.Errorf("expected IP address '192.168.1.1', got %s", logs[0].IPAddress)
+	}
+}

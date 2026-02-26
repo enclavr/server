@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -94,9 +95,15 @@ func RateLimit(next http.Handler) http.Handler {
 
 		userID := GetUserID(r)
 		if userID == uuid.Nil {
-			ip := r.RemoteAddr
-			ipStr := []byte(ip[len(ip)-15:])
-			newUserID, _ := uuid.FromBytes(ipStr)
+			host, _, err := net.SplitHostPort(r.RemoteAddr)
+			if err != nil {
+				host = r.RemoteAddr
+			}
+			ipHash := []byte(host)
+			if len(ipHash) > 16 {
+				ipHash = ipHash[:16]
+			}
+			newUserID, _ := uuid.FromBytes(ipHash)
 			userID = newUserID
 		}
 

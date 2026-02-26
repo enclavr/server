@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -503,5 +505,70 @@ func TestSecurityHeaders(t *testing.T) {
 	}
 	if w.Header().Get("Strict-Transport-Security") == "" {
 		t.Error("expected Strict-Transport-Security header")
+	}
+}
+
+func TestInitRateLimiter(t *testing.T) {
+	InitRateLimiter(60)
+	if globalLimiter == nil {
+		t.Error("expected globalLimiter to be initialized")
+	}
+	InitRateLimiter(30)
+}
+
+func TestRateLimit_NilLimiter(t *testing.T) {
+	globalLimiter = nil
+	handler := RateLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status OK, got %d", w.Code)
+	}
+}
+
+func TestGzipCompression(t *testing.T) {
+	handler := GzipCompression()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("test response"))
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Header().Get("Content-Encoding") != "gzip" {
+		t.Error("expected gzip content encoding")
+	}
+}
+
+func TestGzipCompression_NoGzip(t *testing.T) {
+	handler := GzipCompression()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("test response"))
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Header().Get("Content-Encoding") == "gzip" {
+		t.Error("did not expect gzip content encoding")
+	}
+}
+
+func TestGzipResponseWriter_Write(t *testing.T) {
+	buf := &bytes.Buffer{}
+	gw := &gzipResponseWriter{ResponseWriter: httptest.NewRecorder(), gw: gzip.NewWriter(buf)}
+
+	n, err := gw.Write([]byte("hello"))
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if n != 5 {
+		t.Errorf("expected 5 bytes written, got %d", n)
 	}
 }
