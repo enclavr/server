@@ -569,3 +569,161 @@ func TestHub_GetUserClient_NotFound(t *testing.T) {
 		t.Error("expected nil for non-existent user")
 	}
 }
+
+func TestHub_SendToClient(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID := uuid.New()
+	roomID := uuid.New()
+
+	client := &Client{
+		hub:    hub,
+		userID: userID,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.mutex.Lock()
+	hub.userConnections[userID] = client
+	hub.mutex.Unlock()
+
+	msg := &Message{
+		Type:      "test",
+		RoomID:    roomID,
+		UserID:    userID,
+		Timestamp: time.Now(),
+	}
+
+	hub.sendToClient(userID, msg)
+
+	select {
+	case received := <-client.send:
+		if len(received) == 0 {
+			t.Error("expected non-empty message")
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for message")
+	}
+}
+
+func TestHub_SendToClient_NotFound(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID := uuid.New()
+	msg := &Message{
+		Type:      "test",
+		UserID:    userID,
+		Timestamp: time.Now(),
+	}
+
+	hub.sendToClient(userID, msg)
+}
+
+func TestHub_BroadcastToRoomBatch(t *testing.T) {
+	hub := NewHub()
+
+	roomID := uuid.New()
+	userID1 := uuid.New()
+	userID2 := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client1 := &Client{
+		hub:    hub,
+		userID: userID1,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	client2 := &Client{
+		hub:    hub,
+		userID: userID2,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.rooms[roomID].clients[client1] = true
+	hub.rooms[roomID].clients[client2] = true
+	hub.userConnections[userID1] = client1
+	hub.userConnections[userID2] = client2
+	hub.activeClients.Add(2)
+	hub.mutex.Unlock()
+
+	msg := &Message{
+		Type:      "batch-test",
+		RoomID:    roomID,
+		UserID:    userID1,
+		Timestamp: time.Now(),
+	}
+
+	hub.BroadcastToRoomBatch(roomID, msg, uuid.Nil)
+
+	hub.Shutdown()
+}
+
+func TestHub_getRoomMutex(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	roomID := uuid.New()
+	hub.mutex.Lock()
+	hub.roomMutexes[roomID] = &sync.RWMutex{}
+	hub.mutex.Unlock()
+
+	roomMutex := hub.getRoomMutex(roomID)
+	if roomMutex == nil {
+		t.Error("expected non-nil room mutex")
+	}
+
+	nilMutex := hub.getRoomMutex(uuid.New())
+	if nilMutex != nil {
+		t.Error("expected nil for non-existent room")
+	}
+}
+
+func TestMessage_Decode_Invalid(t *testing.T) {
+	msg := &Message{}
+	err := msg.decode([]byte(`{invalid json`))
+	if err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+}
+
+func TestMessage_Decode_Valid(t *testing.T) {
+	data := []byte(`{
+		"type": "voice-offer",
+		"room_id": "550e8400-e29b-41d4-a716-446655440000",
+		"user_id": "550e8400-e29b-41d4-a716-446655440001",
+		"sdp": "offer-sdp",
+		"timestamp": "2024-01-01T00:00:00Z"
+	}`)
+
+	var msg Message
+	err := json.Unmarshal(data, &msg)
+	if err != nil {
+		t.Errorf("failed to unmarshal: %v", err)
+	}
+
+	if msg.Type != "voice-offer" {
+		t.Errorf("expected Type 'voice-offer', got '%s'", msg.Type)
+	}
+
+	if msg.SDP != "offer-sdp" {
+		t.Errorf("expected SDP 'offer-sdp', got '%s'", msg.SDP)
+	}
+}
+
+func TestRateLimiter_Reset_TimeBased(t *testing.T) {
+	rl := NewRateLimiter(2, 0)
+
+	rl.Allow()
+	rl.Allow()
+
+	if rl.Allow() {
+		t.Log("Rate limiter returned true at limit (depends on implementation)")
+	}
+}

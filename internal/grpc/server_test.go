@@ -36,3 +36,17 @@ func TestMetricsServer_Check(t *testing.T) {
 		t.Errorf("expected SERVING status, got %v", resp.Status)
 	}
 }
+
+func TestStartGRPCServer_InvalidPort(t *testing.T) {
+	err := StartGRPCServer("invalid-port", "", "")
+	if err == nil {
+		t.Error("expected error with invalid port")
+	}
+}
+
+func TestStartGRPCServer_InvalidCertFile(t *testing.T) {
+	err := StartGRPCServer("59999", "/nonexistent/cert.pem", "/nonexistent/key.pem")
+	if err == nil {
+		t.Error("expected error with invalid cert file")
+	}
+}
