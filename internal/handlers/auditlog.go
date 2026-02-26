@@ -49,7 +49,7 @@ func (h *AuditHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var user models.User
-	if err := h.db.DB.First(&user, "id = ?", userID).Error; err != nil {
+	if err := h.db.First(&user, "id = ?", userID).Error; err != nil {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
 	}
@@ -79,7 +79,7 @@ func (h *AuditHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 	offset := (page - 1) * pageSize
 
 	var logs []models.AuditLog
-	query := h.db.DB.Model(&models.AuditLog{}).Order("created_at DESC").Offset(offset).Limit(pageSize)
+	query := h.db.Model(&models.AuditLog{}).Order("created_at DESC").Offset(offset).Limit(pageSize)
 
 	if actionFilter != "" {
 		query = query.Where("action = ?", actionFilter)
@@ -91,7 +91,7 @@ func (h *AuditHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var total int64
-	countQuery := h.db.DB.Model(&models.AuditLog{})
+	countQuery := h.db.Model(&models.AuditLog{})
 	if actionFilter != "" {
 		countQuery = countQuery.Where("action = ?", actionFilter)
 	}
@@ -100,7 +100,7 @@ func (h *AuditHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 	logResponses := make([]AuditLogResponse, len(logs))
 	for i, log := range logs {
 		var username string
-		h.db.DB.Model(&models.User{}).Where("id = ?", log.UserID).Pluck("username", &username)
+		h.db.Model(&models.User{}).Where("id = ?", log.UserID).Pluck("username", &username)
 
 		logResponses[i] = AuditLogResponse{
 			ID:         log.ID,
@@ -145,7 +145,7 @@ func (h *AuditHandler) LogAction(userID uuid.UUID, action models.AuditAction, ta
 		IPAddress:  ipAddress,
 	}
 
-	if err := h.db.DB.Create(&log).Error; err != nil {
+	if err := h.db.Create(&log).Error; err != nil {
 		logger.Error("Failed to create audit log", map[string]interface{}{"error": err.Error()})
 	}
 }

@@ -500,8 +500,8 @@ func TestSendMessage(t *testing.T) {
 func TestUpdateMessage(t *testing.T) {
 	handler, testDB, userID, roomID := setupMessageHandlerWithUserRoom(t)
 
-	testDB.DB.Create(&models.Room{ID: roomID, Name: "test-room"})
-	testDB.DB.Create(&models.UserRoom{UserID: userID, RoomID: roomID})
+	testDB.Create(&models.Room{ID: roomID, Name: "test-room"})
+	testDB.Create(&models.UserRoom{UserID: userID, RoomID: roomID})
 
 	msg := models.Message{
 		ID:      uuid.New(),
@@ -509,7 +509,7 @@ func TestUpdateMessage(t *testing.T) {
 		UserID:  userID,
 		Content: "Original",
 	}
-	testDB.DB.Create(&msg)
+	testDB.Create(&msg)
 
 	tests := []struct {
 		name           string
@@ -580,8 +580,8 @@ func TestUpdateMessage(t *testing.T) {
 func TestDeleteMessage(t *testing.T) {
 	handler, testDB, userID, roomID := setupMessageHandlerWithUserRoom(t)
 
-	testDB.DB.Create(&models.Room{ID: roomID, Name: "test-room"})
-	testDB.DB.Create(&models.UserRoom{UserID: userID, RoomID: roomID})
+	testDB.Create(&models.Room{ID: roomID, Name: "test-room"})
+	testDB.Create(&models.UserRoom{UserID: userID, RoomID: roomID})
 
 	msg := models.Message{
 		ID:      uuid.New(),
@@ -589,14 +589,14 @@ func TestDeleteMessage(t *testing.T) {
 		UserID:  userID,
 		Content: "To be deleted",
 	}
-	testDB.DB.Create(&msg)
+	testDB.Create(&msg)
 
 	otherUser := models.User{
 		ID:       uuid.New(),
 		Username: "otheruser",
 		Email:    "other@example.com",
 	}
-	testDB.DB.Create(&otherUser)
+	testDB.Create(&otherUser)
 
 	otherMsg := models.Message{
 		ID:      uuid.New(),
@@ -604,7 +604,7 @@ func TestDeleteMessage(t *testing.T) {
 		UserID:  otherUser.ID,
 		Content: "Other message",
 	}
-	testDB.DB.Create(&otherMsg)
+	testDB.Create(&otherMsg)
 
 	tests := []struct {
 		name           string
@@ -666,7 +666,7 @@ func TestSearchMessages(t *testing.T) {
 		UserID:  userID,
 		Content: "Searchable content",
 	}
-	testDB.DB.Create(&msg)
+	testDB.Create(&msg)
 
 	tests := []struct {
 		name           string

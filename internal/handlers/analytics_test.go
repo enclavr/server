@@ -428,7 +428,7 @@ func TestRequireAdmin(t *testing.T) {
 				Email:    "test" + uuid.New().String()[:8] + "@example.com",
 				IsAdmin:  true,
 			}
-			testDB.DB.Create(&user)
+			testDB.Create(&user)
 			testUserID := user.ID
 
 			tt.setupUser(testDB, testUserID)
