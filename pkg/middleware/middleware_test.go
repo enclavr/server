@@ -389,3 +389,119 @@ func TestRequestTimeout(t *testing.T) {
 		t.Errorf("expected status 408, got %d", w.Code)
 	}
 }
+
+func TestNewCORSMiddleware(t *testing.T) {
+	tests := []struct {
+		name           string
+		allowedOrigins []string
+		expectedOrigin string
+	}{
+		{
+			name:           "default allow all",
+			allowedOrigins: []string{},
+			expectedOrigin: "*",
+		},
+		{
+			name:           "specific origin",
+			allowedOrigins: []string{"https://example.com"},
+			expectedOrigin: "https://example.com",
+		},
+		{
+			name:           "multiple origins",
+			allowedOrigins: []string{"https://example.com", "https://test.com"},
+			expectedOrigin: "https://example.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			middleware := NewCORSMiddleware(tt.allowedOrigins)
+			if len(tt.allowedOrigins) == 0 {
+				if len(middleware.allowedOrigins) != 1 || middleware.allowedOrigins[0] != "*" {
+					t.Errorf("expected default * origin")
+				}
+			} else {
+				if len(middleware.allowedOrigins) != len(tt.allowedOrigins) {
+					t.Errorf("expected %d origins, got %d", len(tt.allowedOrigins), len(middleware.allowedOrigins))
+				}
+			}
+		})
+	}
+}
+
+func TestCORSMiddleware_Options(t *testing.T) {
+	middleware := NewCORSMiddleware([]string{"https://example.com"})
+	handler := middleware.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodOptions, "/test", nil)
+	req.Header.Set("Origin", "https://example.com")
+	req.Header.Set("Access-Control-Request-Method", "GET")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Errorf("expected status 204, got %d", w.Code)
+	}
+
+	if w.Header().Get("Access-Control-Allow-Methods") == "" {
+		t.Error("expected Access-Control-Allow-Methods header")
+	}
+}
+
+func TestCORSMiddleware_NonOptions(t *testing.T) {
+	middleware := NewCORSMiddleware([]string{"https://example.com"})
+	handler := middleware.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Origin", "https://example.com")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+
+	if w.Header().Get("Access-Control-Allow-Origin") != "https://example.com" {
+		t.Error("expected Access-Control-Allow-Origin header")
+	}
+}
+
+func TestCORSMiddleware_Wildcard(t *testing.T) {
+	middleware := NewCORSMiddleware([]string{})
+	handler := middleware.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Origin", "https://any-origin.com")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Header().Get("Access-Control-Allow-Origin") != "*" {
+		t.Error("expected * origin for wildcard")
+	}
+}
+
+func TestSecurityHeaders(t *testing.T) {
+	handler := SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Error("expected X-Content-Type-Options header")
+	}
+	if w.Header().Get("X-Frame-Options") != "DENY" {
+		t.Error("expected X-Frame-Options header")
+	}
+	if w.Header().Get("Strict-Transport-Security") == "" {
+		t.Error("expected Strict-Transport-Security header")
+	}
+}

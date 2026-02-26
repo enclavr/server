@@ -105,7 +105,135 @@ func TestPushHandler_Subscribe(t *testing.T) {
 }
 
 func TestPushHandler_Unsubscribe(t *testing.T) {
-	t.Skip("Unsubscribe requires subscription ID path parameter, skipping")
+	handler, testDB, userID := setupPushHandler(t)
+
+	subscription := models.PushSubscription{
+		ID:       uuid.New(),
+		UserID:   userID,
+		Endpoint: "https://example.com/push",
+		P256DH:   "test-p256dh",
+		Auth:     "test-auth",
+		IsActive: true,
+	}
+	testDB.Create(&subscription)
+
+	tests := []struct {
+		name           string
+		subscriptionID string
+		expectedStatus int
+	}{
+		{
+			name:           "successful unsubscribe",
+			subscriptionID: subscription.ID.String(),
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "invalid subscription ID",
+			subscriptionID: "invalid-id",
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "missing subscription ID",
+			subscriptionID: "",
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "subscription not found",
+			subscriptionID: uuid.New().String(),
+			expectedStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := "/api/push/" + tt.subscriptionID
+			if tt.name == "missing subscription ID" {
+				url = "/api/push/"
+			}
+			req := httptest.NewRequest(http.MethodDelete, url, nil)
+			req = req.WithContext(context.WithValue(context.Background(), middleware.UserIDKey, userID))
+
+			w := httptest.NewRecorder()
+			handler.Unsubscribe(w, req)
+
+			if tt.name == "missing subscription ID" {
+				if w.Code != tt.expectedStatus && w.Code != http.StatusBadRequest {
+					t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+				}
+			} else if w.Code != tt.expectedStatus {
+				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+			}
+		})
+	}
+}
+
+func TestPushHandler_GetSubscriptions(t *testing.T) {
+	handler, testDB, userID := setupPushHandler(t)
+
+	subscription := models.PushSubscription{
+		ID:       uuid.New(),
+		UserID:   userID,
+		Endpoint: "https://example.com/push",
+		P256DH:   "test-p256dh",
+		Auth:     "test-auth",
+		IsActive: true,
+	}
+	testDB.Create(&subscription)
+
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions", nil)
+	req = req.WithContext(context.WithValue(context.Background(), middleware.UserIDKey, userID))
+
+	w := httptest.NewRecorder()
+	handler.GetSubscriptions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+}
+
+func TestPushHandler_TestNotification(t *testing.T) {
+	handler, testDB, userID := setupPushHandler(t)
+
+	subscription := models.PushSubscription{
+		ID:       uuid.New(),
+		UserID:   userID,
+		Endpoint: "https://example.com/push",
+		P256DH:   "test-p256dh",
+		Auth:     "test-auth",
+		IsActive: true,
+	}
+	testDB.Create(&subscription)
+
+	tests := []struct {
+		name           string
+		expectedStatus int
+		setupUser      func() uuid.UUID
+	}{
+		{
+			name:           "successful test notification",
+			expectedStatus: http.StatusOK,
+			setupUser:      func() uuid.UUID { return userID },
+		},
+		{
+			name:           "no subscriptions",
+			expectedStatus: http.StatusBadRequest,
+			setupUser:      func() uuid.UUID { return uuid.New() },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/test", nil)
+			req = req.WithContext(context.WithValue(context.Background(), middleware.UserIDKey, tt.setupUser()))
+
+			w := httptest.NewRecorder()
+			handler.TestNotification(w, req)
+
+			if w.Code != tt.expectedStatus {
+				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+			}
+		})
+	}
 }
 
 func TestPushHandler_GetNotificationSettings(t *testing.T) {

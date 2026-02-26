@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"github.com/enclavr/server/internal/config"
 	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/internal/models"
+	"github.com/google/uuid"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -171,6 +173,116 @@ func TestLogin(t *testing.T) {
 			w := httptest.NewRecorder()
 
 			handler.Login(w, req)
+
+			if w.Code != tt.expectedStatus {
+				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+			}
+		})
+	}
+}
+
+func TestRefreshToken(t *testing.T) {
+	handler := setupTestHandler(t)
+
+	registerBody := RegisterRequest{
+		Username: "testuser",
+		Email:    "test@example.com",
+		Password: "password123",
+	}
+	body, _ := json.Marshal(registerBody)
+	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.Register(w, req)
+
+	var resp AuthResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+
+	tests := []struct {
+		name           string
+		refreshToken   string
+		expectedStatus int
+	}{
+		{
+			name:           "valid refresh token",
+			refreshToken:   resp.RefreshToken,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "invalid refresh token",
+			refreshToken:   "invalid-token",
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "empty refresh token",
+			refreshToken:   "",
+			expectedStatus: http.StatusUnauthorized,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, _ := json.Marshal(struct {
+				RefreshToken string `json:"refresh_token"`
+			}{RefreshToken: tt.refreshToken})
+			req := httptest.NewRequest(http.MethodPost, "/refresh", bytes.NewBuffer(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			handler.RefreshToken(w, req)
+
+			if w.Code != tt.expectedStatus {
+				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+			}
+		})
+	}
+}
+
+func TestGetMe(t *testing.T) {
+	handler := setupTestHandler(t)
+
+	registerBody := RegisterRequest{
+		Username: "testuser",
+		Email:    "test@example.com",
+		Password: "password123",
+	}
+	body, _ := json.Marshal(registerBody)
+	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.Register(w, req)
+
+	var resp AuthResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+
+	userID, _ := uuid.Parse(resp.User.ID.String())
+
+	tests := []struct {
+		name           string
+		userID         uuid.UUID
+		expectedStatus int
+	}{
+		{
+			name:           "valid user",
+			userID:         userID,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "invalid user",
+			userID:         uuid.Nil,
+			expectedStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/me", nil)
+			//nolint:staticcheck // Using same key as handler for consistency
+			ctx := context.WithValue(req.Context(), "user_id", tt.userID)
+			req = req.WithContext(ctx)
+			w := httptest.NewRecorder()
+
+			handler.GetMe(w, req)
 
 			if w.Code != tt.expectedStatus {
 				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)

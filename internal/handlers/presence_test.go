@@ -163,3 +163,57 @@ func TestPresenceHandler_GetPresence_NotFound(t *testing.T) {
 		t.Errorf("expected status %d or %d, got %d", http.StatusForbidden, http.StatusOK, w.Code)
 	}
 }
+
+func TestPresenceHandler_GetUserPresence(t *testing.T) {
+	handler, db, userID := setupPresenceHandler(t)
+
+	presence := models.Presence{
+		UserID:   userID,
+		Status:   models.PresenceOnline,
+		LastSeen: time.Now(),
+	}
+	db.Create(&presence)
+
+	tests := []struct {
+		name           string
+		targetUserID   uuid.UUID
+		expectedStatus int
+	}{
+		{
+			name:           "valid user presence",
+			targetUserID:   userID,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "user not found",
+			targetUserID:   uuid.New(),
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "missing user_id",
+			targetUserID:   uuid.Nil,
+			expectedStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := "/presence/user?user_id=" + tt.targetUserID.String()
+			if tt.name == "missing user_id" {
+				url = "/presence/user"
+			}
+			req := httptest.NewRequest(http.MethodGet, url, nil)
+			w := httptest.NewRecorder()
+
+			handler.GetUserPresence(w, req)
+
+			if tt.name == "missing user_id" {
+				if w.Code != tt.expectedStatus && w.Code != http.StatusBadRequest {
+					t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+				}
+			} else if w.Code != tt.expectedStatus {
+				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+			}
+		})
+	}
+}
