@@ -102,16 +102,16 @@ func (h *AnalyticsHandler) GetDailyActivity(w http.ResponseWriter, r *http.Reque
 	since := time.Now().AddDate(0, 0, -days)
 
 	type dailyCount struct {
-		Date         time.Time `json:"date"`
-		MessageCount int       `json:"message_count"`
-		UserCount    int       `json:"user_count"`
+		Date         string `json:"date"`
+		MessageCount int    `json:"message_count"`
+		UserCount    int    `json:"user_count"`
 	}
 
 	var results []dailyCount
 	err := h.db.Model(&models.Message{}).
-		Select("DATE(created_at) as date, COUNT(*) as message_count, COUNT(DISTINCT user_id) as user_count").
+		Select("date(created_at) as date, COUNT(*) as message_count, COUNT(DISTINCT user_id) as user_count").
 		Where("created_at >= ?", since).
-		Group("DATE(created_at)").
+		Group("date(created_at)").
 		Order("date ASC").
 		Scan(&results).Error
 
@@ -123,11 +123,7 @@ func (h *AnalyticsHandler) GetDailyActivity(w http.ResponseWriter, r *http.Reque
 
 	var response []DailyActivity
 	for _, r := range results {
-		response = append(response, DailyActivity{
-			Date:         r.Date.Format("2006-01-02"),
-			MessageCount: r.MessageCount,
-			UserCount:    r.UserCount,
-		})
+		response = append(response, DailyActivity(r))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -196,9 +192,9 @@ func (h *AnalyticsHandler) GetHourlyActivity(w http.ResponseWriter, r *http.Requ
 
 	var results []hourlyData
 	err := h.db.Model(&models.Message{}).
-		Select("EXTRACT(HOUR FROM created_at) as hour, COUNT(*) as message_count, COUNT(DISTINCT user_id) as user_count").
+		Select("CAST(strftime('%H', created_at) AS INTEGER) as hour, COUNT(*) as message_count, COUNT(DISTINCT user_id) as user_count").
 		Where("created_at >= ?", since).
-		Group("EXTRACT(HOUR FROM created_at)").
+		Group("CAST(strftime('%H', created_at) AS INTEGER)").
 		Order("hour ASC").
 		Scan(&results).Error
 
