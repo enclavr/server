@@ -95,6 +95,15 @@ func TestRegister(t *testing.T) {
 			},
 			expectedStatus: http.StatusBadRequest,
 		},
+		{
+			name: "duplicate username",
+			body: RegisterRequest{
+				Username: "testuser2",
+				Email:    "test2@example.com",
+				Password: "password123",
+			},
+			expectedStatus: http.StatusOK,
+		},
 	}
 
 	for _, tt := range tests {
@@ -110,6 +119,20 @@ func TestRegister(t *testing.T) {
 				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 			}
 		})
+	}
+}
+
+func TestRegister_InvalidJSON(t *testing.T) {
+	handler := setupTestHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer([]byte("invalid json")))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.Register(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
 	}
 }
 
