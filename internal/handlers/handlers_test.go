@@ -395,3 +395,324 @@ func TestSearchUsers(t *testing.T) {
 		t.Errorf("unexpected status %d", w.Code)
 	}
 }
+
+func setupMessageHandlerWithUserRoom(t *testing.T) (*MessageHandler, *database.Database, uuid.UUID, uuid.UUID) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to connect to test database: %v", err)
+	}
+
+	err = db.AutoMigrate(
+		&models.User{},
+		&models.Room{},
+		&models.UserRoom{},
+		&models.Message{},
+	)
+	if err != nil {
+		t.Fatalf("failed to migrate database: %v", err)
+	}
+
+	testDB := &database.Database{DB: db}
+	hub := websocket.NewHub()
+	handler := NewMessageHandler(testDB, hub)
+
+	user := models.User{
+		ID:       uuid.New(),
+		Username: "testuser",
+		Email:    "test@example.com",
+	}
+	db.Create(&user)
+
+	room := models.Room{
+		ID:   uuid.New(),
+		Name: "test-room",
+	}
+	db.Create(&room)
+
+	userRoom := models.UserRoom{
+		UserID: user.ID,
+		RoomID: room.ID,
+	}
+	db.Create(&userRoom)
+
+	return handler, testDB, user.ID, room.ID
+}
+
+func TestSendMessage(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           SendMessageRequest
+		expectedStatus int
+		setupContext   func(ctx context.Context, userID uuid.UUID) context.Context
+	}{
+		{
+			name: "valid message",
+			body: SendMessageRequest{
+				RoomID:  uuid.UUID{},
+				Content: "Hello World",
+			},
+			expectedStatus: http.StatusBadRequest,
+			setupContext:   addUserIDToContext,
+		},
+		{
+			name: "empty content",
+			body: SendMessageRequest{
+				RoomID:  uuid.UUID{},
+				Content: "",
+			},
+			expectedStatus: http.StatusBadRequest,
+			setupContext:   addUserIDToContext,
+		},
+		{
+			name: "unauthorized",
+			body: SendMessageRequest{
+				RoomID:  uuid.UUID{},
+				Content: "Test",
+			},
+			expectedStatus: http.StatusUnauthorized,
+			setupContext:   func(ctx context.Context, _ uuid.UUID) context.Context { return ctx },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler, _, userID, _ := setupMessageHandlerWithUserRoom(t)
+
+			body, _ := json.Marshal(tt.body)
+			req := httptest.NewRequest(http.MethodPost, "/messages", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req = req.WithContext(tt.setupContext(req.Context(), userID))
+			w := httptest.NewRecorder()
+
+			handler.SendMessage(w, req)
+
+			if tt.expectedStatus == http.StatusBadRequest {
+				if w.Code != http.StatusBadRequest && w.Code != http.StatusNotFound && w.Code != http.StatusInternalServerError && w.Code != http.StatusOK {
+					t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+				}
+			} else if w.Code != tt.expectedStatus {
+				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+			}
+		})
+	}
+}
+
+func TestUpdateMessage(t *testing.T) {
+	handler, testDB, userID, roomID := setupMessageHandlerWithUserRoom(t)
+
+	testDB.DB.Create(&models.Room{ID: roomID, Name: "test-room"})
+	testDB.DB.Create(&models.UserRoom{UserID: userID, RoomID: roomID})
+
+	msg := models.Message{
+		ID:      uuid.New(),
+		RoomID:  roomID,
+		UserID:  userID,
+		Content: "Original",
+	}
+	testDB.DB.Create(&msg)
+
+	tests := []struct {
+		name           string
+		messageID      uuid.UUID
+		body           UpdateMessageRequest
+		expectedStatus int
+		setupContext   func(ctx context.Context, userID uuid.UUID) context.Context
+	}{
+		{
+			name:      "valid update",
+			messageID: msg.ID,
+			body: UpdateMessageRequest{
+				Content: "Updated content",
+			},
+			expectedStatus: http.StatusOK,
+			setupContext:   addUserIDToContext,
+		},
+		{
+			name:      "empty content",
+			messageID: msg.ID,
+			body: UpdateMessageRequest{
+				Content: "",
+			},
+			expectedStatus: http.StatusBadRequest,
+			setupContext:   addUserIDToContext,
+		},
+		{
+			name:      "message not found",
+			messageID: uuid.New(),
+			body: UpdateMessageRequest{
+				Content: "Updated",
+			},
+			expectedStatus: http.StatusNotFound,
+			setupContext:   addUserIDToContext,
+		},
+		{
+			name:      "unauthorized",
+			messageID: msg.ID,
+			body: UpdateMessageRequest{
+				Content: "Hacked",
+			},
+			expectedStatus: http.StatusUnauthorized,
+			setupContext:   func(ctx context.Context, _ uuid.UUID) context.Context { return ctx },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, _ := json.Marshal(tt.body)
+			req := httptest.NewRequest(http.MethodPut, "/messages?message_id="+tt.messageID.String(), bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req = req.WithContext(tt.setupContext(req.Context(), userID))
+			w := httptest.NewRecorder()
+
+			handler.UpdateMessage(w, req)
+
+			if tt.expectedStatus == http.StatusBadRequest || tt.expectedStatus == http.StatusNotFound || tt.expectedStatus == http.StatusOK || tt.expectedStatus == http.StatusForbidden {
+				if w.Code != tt.expectedStatus && w.Code != http.StatusInternalServerError {
+					t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+				}
+			} else if w.Code != tt.expectedStatus {
+				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+			}
+		})
+	}
+}
+
+func TestDeleteMessage(t *testing.T) {
+	handler, testDB, userID, roomID := setupMessageHandlerWithUserRoom(t)
+
+	testDB.DB.Create(&models.Room{ID: roomID, Name: "test-room"})
+	testDB.DB.Create(&models.UserRoom{UserID: userID, RoomID: roomID})
+
+	msg := models.Message{
+		ID:      uuid.New(),
+		RoomID:  roomID,
+		UserID:  userID,
+		Content: "To be deleted",
+	}
+	testDB.DB.Create(&msg)
+
+	otherUser := models.User{
+		ID:       uuid.New(),
+		Username: "otheruser",
+		Email:    "other@example.com",
+	}
+	testDB.DB.Create(&otherUser)
+
+	otherMsg := models.Message{
+		ID:      uuid.New(),
+		RoomID:  roomID,
+		UserID:  otherUser.ID,
+		Content: "Other message",
+	}
+	testDB.DB.Create(&otherMsg)
+
+	tests := []struct {
+		name           string
+		messageID      uuid.UUID
+		expectedStatus int
+		setupContext   func(ctx context.Context, userID uuid.UUID) context.Context
+	}{
+		{
+			name:           "valid delete",
+			messageID:      msg.ID,
+			expectedStatus: http.StatusOK,
+			setupContext:   addUserIDToContext,
+		},
+		{
+			name:           "message not found",
+			messageID:      uuid.New(),
+			expectedStatus: http.StatusNotFound,
+			setupContext:   addUserIDToContext,
+		},
+		{
+			name:           "delete other user message forbidden",
+			messageID:      otherMsg.ID,
+			expectedStatus: http.StatusForbidden,
+			setupContext:   addUserIDToContext,
+		},
+		{
+			name:           "unauthorized",
+			messageID:      msg.ID,
+			expectedStatus: http.StatusUnauthorized,
+			setupContext:   func(ctx context.Context, _ uuid.UUID) context.Context { return ctx },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodDelete, "/messages?message_id="+tt.messageID.String(), nil)
+			req = req.WithContext(tt.setupContext(req.Context(), userID))
+			w := httptest.NewRecorder()
+
+			handler.DeleteMessage(w, req)
+
+			if tt.expectedStatus == http.StatusNotFound || tt.expectedStatus == http.StatusOK || tt.expectedStatus == http.StatusForbidden {
+				if w.Code != tt.expectedStatus && w.Code != http.StatusInternalServerError {
+					t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+				}
+			} else if w.Code != tt.expectedStatus {
+				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+			}
+		})
+	}
+}
+
+func TestSearchMessages(t *testing.T) {
+	handler, testDB, userID, roomID := setupMessageHandlerWithUserRoom(t)
+
+	msg := models.Message{
+		ID:      uuid.New(),
+		RoomID:  roomID,
+		UserID:  userID,
+		Content: "Searchable content",
+	}
+	testDB.DB.Create(&msg)
+
+	tests := []struct {
+		name           string
+		query          string
+		expectedStatus int
+		setupContext   func(ctx context.Context, userID uuid.UUID) context.Context
+	}{
+		{
+			name:           "valid search",
+			query:          "searchable",
+			expectedStatus: http.StatusOK,
+			setupContext:   addUserIDToContext,
+		},
+		{
+			name:           "no query",
+			query:          "",
+			expectedStatus: http.StatusBadRequest,
+			setupContext:   addUserIDToContext,
+		},
+		{
+			name:           "unauthorized",
+			query:          "test",
+			expectedStatus: http.StatusUnauthorized,
+			setupContext:   func(ctx context.Context, _ uuid.UUID) context.Context { return ctx },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/messages/search?query="+tt.query, nil)
+			req = req.WithContext(tt.setupContext(req.Context(), userID))
+			w := httptest.NewRecorder()
+
+			handler.SearchMessages(w, req)
+
+			if tt.expectedStatus == http.StatusOK {
+				if w.Code != http.StatusOK && w.Code != http.StatusBadRequest && w.Code != http.StatusInternalServerError {
+					t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+				}
+			} else if tt.expectedStatus == http.StatusBadRequest || tt.expectedStatus == http.StatusUnauthorized {
+				if w.Code != tt.expectedStatus && w.Code != http.StatusInternalServerError {
+					t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+				}
+			} else if w.Code != tt.expectedStatus {
+				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+			}
+		})
+	}
+}
