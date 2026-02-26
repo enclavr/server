@@ -572,3 +572,121 @@ func TestGzipResponseWriter_Write(t *testing.T) {
 		t.Errorf("expected 5 bytes written, got %d", n)
 	}
 }
+
+func TestRequireAuth(t *testing.T) {
+	cfg := &config.Config{
+		Auth: config.AuthConfig{
+			JWTSecret:         "test-secret",
+			JWTExpiration:     time.Hour,
+			RefreshExpiration: time.Hour * 24 * 7,
+		},
+	}
+	authService := auth.NewAuthService(&cfg.Auth)
+
+	handler := RequireAuth(authService, func(w http.ResponseWriter, r *http.Request) {
+		userID := GetUserID(r)
+		_, _ = w.Write([]byte(userID.String()))
+	})
+
+	tests := []struct {
+		name           string
+		authHeader     string
+		expectedStatus int
+	}{
+		{
+			name:           "missing authorization header",
+			authHeader:     "",
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "invalid authorization format",
+			authHeader:     "InvalidToken",
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "valid token",
+			authHeader:     "Bearer validtoken",
+			expectedStatus: http.StatusUnauthorized,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			if tt.authHeader != "" {
+				req.Header.Set("Authorization", tt.authHeader)
+			}
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+
+			if w.Code != tt.expectedStatus {
+				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+			}
+		})
+	}
+}
+
+func TestGetRequestID_EmptyContext(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	result := GetRequestID(req)
+	if result != "" {
+		t.Errorf("expected empty string, got %s", result)
+	}
+}
+
+func TestGetRequestID_FromContext(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	ctx := context.WithValue(req.Context(), RequestIDKey, "test-request-id")
+	req = req.WithContext(ctx)
+
+	result := GetRequestID(req)
+	if result != "test-request-id" {
+		t.Errorf("expected 'test-request-id', got %s", result)
+	}
+}
+
+func TestRateLimit_WithLimiter(t *testing.T) {
+	limiter := NewRateLimiter(1, time.Minute)
+	globalLimiter = limiter
+
+	handler := RateLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.RemoteAddr = "192.168.1.1:12345"
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status OK, got %d", w.Code)
+	}
+
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req)
+
+	if w2.Code != http.StatusTooManyRequests {
+		t.Errorf("expected status TooManyRequests, got %d", w2.Code)
+	}
+}
+
+func TestRateLimit_WithUserID(t *testing.T) {
+	limiter := NewRateLimiter(2, time.Minute)
+	globalLimiter = limiter
+
+	handler := RateLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	userID := uuid.New()
+	ctx := context.WithValue(context.Background(), UserIDKey, userID)
+	req := httptest.NewRequest(http.MethodGet, "/test", nil).WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status OK, got %d", w.Code)
+	}
+}
