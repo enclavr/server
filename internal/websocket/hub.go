@@ -496,7 +496,9 @@ func (m *Message) decode(data []byte) error {
 func (c *Client) ReadPump() {
 	defer func() {
 		c.hub.unregister <- c
-		c.conn.Close()
+		if closeErr := c.conn.Close(); closeErr != nil {
+			log.Printf("Error closing connection: %v", closeErr)
+		}
 	}()
 
 	c.conn.SetReadLimit(512 * 1024)
@@ -546,7 +548,9 @@ func (c *Client) WritePump() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer func() {
 		ticker.Stop()
-		c.conn.Close()
+		if closeErr := c.conn.Close(); closeErr != nil {
+			log.Printf("Error closing connection: %v", closeErr)
+		}
 	}()
 
 	for {

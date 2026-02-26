@@ -92,7 +92,7 @@ func (s *PushService) sendPush(endpoint string, payload PushPayload) {
 		log.Printf("Error sending push notification: %v", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		log.Printf("Push notification failed with status: %d", resp.StatusCode)

@@ -78,7 +78,9 @@ func (p *PubSubService) Disconnect() error {
 		}
 	}
 
-	p.client.Close()
+	if err := p.client.Close(); err != nil {
+		log.Printf("Error closing Redis client: %v", err)
+	}
 	p.connected = false
 	log.Println("Redis pub/sub disconnected")
 	return nil

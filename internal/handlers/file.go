@@ -82,7 +82,7 @@ func (h *FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to get file", http.StatusBadRequest)
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	if header.Size > h.maxFileSize || header.Size > int64(settings.MaxUploadSizeMB)*1024*1024 {
 		http.Error(w, "File too large", http.StatusBadRequest)
@@ -149,11 +149,13 @@ func (h *FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to save file", http.StatusInternalServerError)
 		return
 	}
-	defer dst.Close()
+	defer func() { _ = dst.Close() }()
 
 	if _, err := io.Copy(dst, file); err != nil {
 		log.Printf("Error copying file: %v", err)
-		os.Remove(storagePath)
+		if rmErr := os.Remove(storagePath); rmErr != nil {
+			log.Printf("Error removing file: %v", rmErr)
+		}
 		http.Error(w, "Failed to save file", http.StatusInternalServerError)
 		return
 	}
@@ -171,7 +173,9 @@ func (h *FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.db.Create(&fileRecord).Error; err != nil {
 		log.Printf("Error creating file record: %v", err)
-		os.Remove(storagePath)
+		if rmErr := os.Remove(storagePath); rmErr != nil {
+			log.Printf("Error removing file: %v", rmErr)
+		}
 		http.Error(w, "Failed to save file metadata", http.StatusInternalServerError)
 		return
 	}
@@ -321,7 +325,7 @@ func (h *FileHandler) UploadToWebhook(url, fileField, fileName, fileContentType 
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)

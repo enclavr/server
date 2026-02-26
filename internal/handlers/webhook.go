@@ -387,7 +387,9 @@ func (h *WebhookHandler) sendWebhook(webhook models.Webhook, event string, data 
 			log.Printf("Error reading webhook response: %v", err)
 		}
 		webhookLog.ResponseBody = buf.String()
-		resp.Body.Close()
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.Printf("Error closing webhook response body: %v", closeErr)
+		}
 	}
 
 	h.db.Create(&webhookLog)
