@@ -236,9 +236,10 @@ func TestThreadHandler_GetThread(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			url := "/thread?thread_id=" + tt.threadID.String()
-			if tt.name == "missing thread_id" {
+			switch tt.name {
+			case "missing thread_id":
 				url = "/thread"
-			} else if tt.name == "invalid thread_id" {
+			case "invalid thread_id":
 				url = "/thread?thread_id=invalid"
 			}
 			req := httptest.NewRequest(http.MethodGet, url, nil)
@@ -251,7 +252,7 @@ func TestThreadHandler_GetThread(t *testing.T) {
 				if w.Code != http.StatusOK && w.Code != http.StatusInternalServerError {
 					t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 				}
-			} else if w.Code != tt.expectedStatus && !(tt.name == "invalid thread_id" && w.Code == http.StatusBadRequest) {
+			} else if w.Code != tt.expectedStatus && (tt.name != "invalid thread_id" || w.Code != http.StatusBadRequest) {
 				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 			}
 		})
@@ -332,9 +333,10 @@ func TestThreadHandler_GetThreadsForMessage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			url := "/threads?message_id=" + tt.messageID.String()
-			if tt.name == "missing message_id" {
+			switch tt.name {
+			case "missing message_id":
 				url = "/threads"
-			} else if tt.name == "invalid message_id" {
+			case "invalid message_id":
 				url = "/threads?message_id=invalid"
 			}
 			req := httptest.NewRequest(http.MethodGet, url, nil)
@@ -347,7 +349,7 @@ func TestThreadHandler_GetThreadsForMessage(t *testing.T) {
 				if w.Code != http.StatusOK && w.Code != http.StatusInternalServerError {
 					t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 				}
-			} else if w.Code != tt.expectedStatus && !(tt.name == "invalid message_id" && w.Code == http.StatusBadRequest) {
+			} else if w.Code != tt.expectedStatus && (tt.name != "invalid message_id" || w.Code != http.StatusBadRequest) {
 				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 			}
 		})
@@ -427,9 +429,10 @@ func TestThreadHandler_AddThreadMessage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			url := "/threads/messages?thread_id=" + tt.threadID.String()
-			if tt.name == "missing thread_id" {
+			switch tt.name {
+			case "missing thread_id":
 				url = "/threads/messages"
-			} else if tt.name == "invalid thread_id" {
+			case "invalid thread_id":
 				url = "/threads/messages?thread_id=invalid"
 			}
 			body, _ := json.Marshal(tt.body)
@@ -444,7 +447,7 @@ func TestThreadHandler_AddThreadMessage(t *testing.T) {
 				if w.Code != http.StatusOK && w.Code != http.StatusInternalServerError {
 					t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 				}
-			} else if w.Code != tt.expectedStatus && !(tt.name == "invalid thread_id" && w.Code == http.StatusBadRequest) {
+			} else if w.Code != tt.expectedStatus && (tt.name != "invalid thread_id" || w.Code != http.StatusBadRequest) {
 				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 			}
 		})
@@ -556,9 +559,10 @@ func TestThreadHandler_UpdateThreadMessage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			url := "/threads/messages?message_id=" + tt.messageID.String()
-			if tt.name == "missing message_id" {
+			switch tt.name {
+			case "missing message_id":
 				url = "/threads/messages"
-			} else if tt.name == "invalid message_id" {
+			case "invalid message_id":
 				url = "/threads/messages?message_id=invalid"
 			}
 			body, _ := json.Marshal(tt.body)
@@ -573,7 +577,7 @@ func TestThreadHandler_UpdateThreadMessage(t *testing.T) {
 				if w.Code != http.StatusOK && w.Code != http.StatusInternalServerError {
 					t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 				}
-			} else if w.Code != tt.expectedStatus && !(tt.name == "invalid message_id" && w.Code == http.StatusBadRequest) {
+			} else if w.Code != tt.expectedStatus && (tt.name != "invalid message_id" || w.Code != http.StatusBadRequest) {
 				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 			}
 		})
@@ -661,9 +665,10 @@ func TestThreadHandler_DeleteThreadMessage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			url := "/threads/messages?message_id=" + tt.messageID.String()
-			if tt.name == "missing message_id" {
+			switch tt.name {
+			case "missing message_id":
 				url = "/threads/messages"
-			} else if tt.name == "invalid message_id" {
+			case "invalid message_id":
 				url = "/threads/messages?message_id=invalid"
 			}
 			req := httptest.NewRequest(http.MethodDelete, url, nil)
@@ -676,7 +681,7 @@ func TestThreadHandler_DeleteThreadMessage(t *testing.T) {
 				if w.Code != http.StatusOK && w.Code != http.StatusInternalServerError {
 					t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 				}
-			} else if w.Code != tt.expectedStatus && !(tt.name == "invalid message_id" && w.Code == http.StatusBadRequest) {
+			} else if w.Code != tt.expectedStatus && (tt.name != "invalid message_id" || w.Code != http.StatusBadRequest) {
 				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 			}
 		})

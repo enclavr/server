@@ -305,9 +305,10 @@ func TestPinnedMessageHandler_GetPinnedMessages(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			url := "/messages/pinned?room_id=" + tt.roomID.String()
-			if tt.name == "missing room_id" {
+			switch tt.name {
+			case "missing room_id":
 				url = "/messages/pinned"
-			} else if tt.name == "invalid room_id" {
+			case "invalid room_id":
 				url = "/messages/pinned?room_id=invalid"
 			}
 			req := httptest.NewRequest(http.MethodGet, url, nil)
@@ -320,7 +321,7 @@ func TestPinnedMessageHandler_GetPinnedMessages(t *testing.T) {
 				if w.Code != http.StatusOK && w.Code != http.StatusInternalServerError {
 					t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 				}
-			} else if w.Code != tt.expectedStatus && !(tt.name == "invalid room_id" && w.Code == http.StatusBadRequest) {
+			} else if w.Code != tt.expectedStatus && (tt.name != "invalid room_id" || w.Code != http.StatusBadRequest) {
 				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 			}
 		})

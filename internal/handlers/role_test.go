@@ -93,9 +93,10 @@ func TestRoleHandler_GetMembers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			url := "/roles/members?room_id=" + tt.roomID.String()
-			if tt.name == "missing room_id" {
+			switch tt.name {
+			case "missing room_id":
 				url = "/roles/members"
-			} else if tt.name == "invalid room_id" {
+			case "invalid room_id":
 				url = "/roles/members?room_id=invalid"
 			}
 			req := httptest.NewRequest(http.MethodGet, url, nil)
@@ -108,7 +109,7 @@ func TestRoleHandler_GetMembers(t *testing.T) {
 				if w.Code != http.StatusOK && w.Code != http.StatusInternalServerError {
 					t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 				}
-			} else if w.Code != tt.expectedStatus && !(tt.name == "invalid room_id" && w.Code == http.StatusBadRequest) {
+			} else if w.Code != tt.expectedStatus && (tt.name != "invalid room_id" || w.Code != http.StatusBadRequest) {
 				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 			}
 		})
@@ -379,7 +380,7 @@ func TestRoleHandler_GetUserRole(t *testing.T) {
 				if w.Code != tt.expectedStatus && w.Code != http.StatusInternalServerError {
 					t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 				}
-			} else if w.Code != tt.expectedStatus && !(tt.name == "missing room_id" && w.Code == http.StatusBadRequest) {
+			} else if w.Code != tt.expectedStatus && (tt.name != "missing room_id" || w.Code != http.StatusBadRequest) {
 				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 			}
 		})

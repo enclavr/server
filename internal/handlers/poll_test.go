@@ -240,7 +240,7 @@ func TestPollHandler_GetPolls(t *testing.T) {
 				if w.Code != http.StatusOK && w.Code != http.StatusBadRequest && w.Code != http.StatusInternalServerError {
 					t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 				}
-			} else if w.Code != tt.expectedStatus && !(tt.name == "invalid room_id" && w.Code == http.StatusBadRequest) {
+			} else if w.Code != tt.expectedStatus && (tt.name != "invalid room_id" || w.Code != http.StatusBadRequest) {
 				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 			}
 		})
@@ -322,9 +322,10 @@ func TestPollHandler_GetPoll(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			url := "/poll?poll_id=" + tt.pollID.String()
-			if tt.name == "missing poll_id" {
+			switch tt.name {
+			case "missing poll_id":
 				url = "/poll"
-			} else if tt.name == "invalid poll_id" {
+			case "invalid poll_id":
 				url = "/poll?poll_id=invalid"
 			}
 			req := httptest.NewRequest(http.MethodGet, url, nil)
@@ -337,7 +338,7 @@ func TestPollHandler_GetPoll(t *testing.T) {
 				if w.Code != http.StatusOK && w.Code != http.StatusInternalServerError {
 					t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 				}
-			} else if w.Code != tt.expectedStatus && !(tt.name == "invalid poll_id" && w.Code == http.StatusBadRequest) {
+			} else if w.Code != tt.expectedStatus && (tt.name != "invalid poll_id" || w.Code != http.StatusBadRequest) {
 				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 			}
 		})
@@ -528,9 +529,10 @@ func TestPollHandler_DeletePoll(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			url := "/polls/delete?poll_id=" + tt.pollID.String()
-			if tt.name == "missing poll_id" {
+			switch tt.name {
+			case "missing poll_id":
 				url = "/polls/delete"
-			} else if tt.name == "invalid poll_id" {
+			case "invalid poll_id":
 				url = "/polls/delete?poll_id=invalid"
 			}
 			req := httptest.NewRequest(http.MethodDelete, url, nil)
@@ -547,7 +549,7 @@ func TestPollHandler_DeletePoll(t *testing.T) {
 				if w.Code != tt.expectedStatus && w.Code != http.StatusInternalServerError && w.Code != http.StatusNotFound {
 					t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 				}
-			} else if w.Code != tt.expectedStatus && !(tt.name == "invalid poll_id" && w.Code == http.StatusBadRequest) {
+			} else if w.Code != tt.expectedStatus && (tt.name != "invalid poll_id" || w.Code != http.StatusBadRequest) {
 				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
 			}
 		})
