@@ -129,6 +129,14 @@ go tool cover -html=coverage.out
 golangci-lint run ./...
 ```
 
+## Refactoring
+
+When the codebase grows too large (>50 files in a module), refactor into smaller sub-modules:
+- Create new Go modules using `go mod init` and `go mod tidy`
+- Maintain clean boundaries between sub-modules
+- Push new sub-module repositories to GitHub and link them in parent repo
+- Update this README with new sub-modules
+
 ## License
 
 MIT
