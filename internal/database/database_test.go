@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func TestNew_WithSQLite(t *testing.T) {
@@ -412,5 +413,40 @@ func TestDatabase_Find(t *testing.T) {
 
 	if len(results) != 3 {
 		t.Errorf("expected 3 users, got %d", len(results))
+	}
+}
+
+func TestDatabase_Migrate(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("failed to connect to sqlite: %v", err)
+	}
+
+	database := &Database{db}
+
+	err = database.Migrate()
+	if err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+
+	expectedTables := []string{
+		"users", "rooms", "categories", "user_rooms", "sessions",
+		"refresh_tokens", "voice_sessions", "room_invites", "messages",
+		"presences", "direct_messages", "webhooks", "webhook_logs",
+		"pinned_messages", "message_reactions", "server_settings",
+		"invites", "files", "push_subscriptions", "user_notification_settings",
+	}
+
+	var missingTables []string
+	for _, table := range expectedTables {
+		if !db.Migrator().HasTable(table) {
+			missingTables = append(missingTables, table)
+		}
+	}
+
+	if len(missingTables) > 0 {
+		t.Errorf("missing tables after migration: %v", missingTables)
 	}
 }
