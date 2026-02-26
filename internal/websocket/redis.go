@@ -100,6 +100,10 @@ func (p *PubSubService) Subscribe(channel string) error {
 	pubsub := p.client.Subscribe(p.ctx, channel)
 	ch := pubsub.Channel()
 
+	p.mu.Lock()
+	p.pubsub = pubsub
+	p.mu.Unlock()
+
 	go func() {
 		for {
 			select {
@@ -130,10 +134,6 @@ func (p *PubSubService) Subscribe(channel string) error {
 			}
 		}
 	}()
-
-	p.mu.Lock()
-	p.pubsub = pubsub
-	p.mu.Unlock()
 
 	log.Printf("Subscribed to channel: %s", channel)
 	return nil
