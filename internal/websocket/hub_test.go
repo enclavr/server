@@ -727,3 +727,35 @@ func TestRateLimiter_Reset_TimeBased(t *testing.T) {
 		t.Log("Rate limiter returned true at limit (depends on implementation)")
 	}
 }
+
+func TestHub_Run_GracefulShutdown(t *testing.T) {
+	hub := NewHub()
+
+	done := make(chan struct{})
+	go func() {
+		hub.Run()
+		close(done)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	hub.Shutdown()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Error("hub.Run() did not exit after shutdown")
+	}
+}
+
+func TestHub_BroadcastToRoom_NotFound(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	roomID := uuid.New()
+	msg := &Message{
+		Type:   "test",
+		RoomID: roomID,
+	}
+
+	hub.BroadcastToRoom(roomID, msg, uuid.Nil)
+}
