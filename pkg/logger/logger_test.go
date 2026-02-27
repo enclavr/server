@@ -121,3 +121,20 @@ func TestLogger_Concurrent(t *testing.T) {
 		<-done
 	}
 }
+
+func TestLogger_Fatal_Output(t *testing.T) {
+	buf := &bytes.Buffer{}
+	SetOutput(buf)
+
+	Init()
+
+	logEntry(ErrorLevel, "fatal test", map[string]interface{}{"level": "error"})
+
+	output := buf.String()
+	if !strings.Contains(output, "ERROR") {
+		t.Errorf("expected ERROR level in output, got: %s", output)
+	}
+	if !strings.Contains(output, "fatal test") {
+		t.Errorf("expected message in output, got: %s", output)
+	}
+}

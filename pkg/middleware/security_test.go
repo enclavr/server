@@ -228,3 +228,14 @@ func TestCORSMiddleware_EmptyOrigins(t *testing.T) {
 		t.Error("Empty origins should default to wildcard")
 	}
 }
+
+func TestDistributedRateLimiter_Shutdown(t *testing.T) {
+	store := &mockStore{data: make(map[string]*RateLimiterData)}
+	limiter := NewDistributedRateLimiter(store, 10, time.Minute)
+
+	limiter.Allow("test_user")
+
+	limiter.Shutdown()
+
+	limiter.Allow("test_user2")
+}
