@@ -161,6 +161,17 @@ func TestOIDCHandler_findOrCreateUser(t *testing.T) {
 			wantErr:   false,
 		},
 		{
+			name: "create new user with no email - uses UUID",
+			claims: oidcClaims{
+				Sub:               "oauth2|noemail",
+				Name:              "",
+				Email:             "",
+				PreferredUsername: "",
+			},
+			setupUser: false,
+			wantErr:   false,
+		},
+		{
 			name: "find existing user - SQLite column naming issue",
 			claims: oidcClaims{
 				Sub:               "oauth2|findme",

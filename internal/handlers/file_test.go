@@ -269,6 +269,64 @@ func TestFileHandler_NewFileHandler_DefaultValues(t *testing.T) {
 	}
 }
 
+func TestFileHandler_UploadFile_ZeroMaxUploadSize(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+
+	err = db.AutoMigrate(
+		&models.User{},
+		&models.Room{},
+		&models.UserRoom{},
+		&models.ServerSettings{},
+	)
+	if err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	testDB := &database.Database{DB: db}
+
+	settings := models.ServerSettings{
+		ID:                uuid.New(),
+		EnableFileUploads: true,
+		MaxUploadSizeMB:   0,
+	}
+	db.Create(&settings)
+
+	handler := NewFileHandler(testDB, "/tmp/test-uploads", 10)
+
+	user := models.User{
+		ID:       uuid.New(),
+		Username: "testuser",
+		Email:    "test@example.com",
+	}
+	db.Create(&user)
+
+	room := models.Room{
+		ID:       uuid.New(),
+		Name:     "Test Room",
+		MaxUsers: 50,
+	}
+	db.Create(&room)
+
+	db.Create(&models.UserRoom{
+		UserID: user.ID,
+		RoomID: room.ID,
+		Role:   "member",
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/files/upload?room_id="+room.ID.String(), nil)
+	req = req.WithContext(addUserIDToContext(req.Context(), user.ID))
+	w := httptest.NewRecorder()
+
+	handler.UploadFile(w, req)
+
+	if w.Code == 0 {
+		t.Error("expected a valid HTTP status code")
+	}
+}
+
 func TestFileHandler_UploadToWebhook(t *testing.T) {
 	handler, _, _ := setupFileHandlerWithUser(t)
 

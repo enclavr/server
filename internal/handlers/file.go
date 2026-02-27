@@ -67,7 +67,11 @@ func (h *FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.ContentLength > h.maxFileSize || r.ContentLength > int64(settings.MaxUploadSizeMB)*1024*1024 {
+	maxUploadSize := int64(settings.MaxUploadSizeMB)
+	if maxUploadSize == 0 {
+		maxUploadSize = 10
+	}
+	if r.ContentLength > h.maxFileSize || r.ContentLength > maxUploadSize*1024*1024 {
 		http.Error(w, "File too large", http.StatusBadRequest)
 		return
 	}

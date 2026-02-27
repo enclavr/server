@@ -221,8 +221,11 @@ func (h *OIDCHandler) findOrCreateUser(claims struct {
 	if username == "" {
 		username = claims.Name
 	}
-	if username == "" {
+	if username == "" && claims.Email != "" {
 		username = strings.Split(claims.Email, "@")[0]
+	}
+	if username == "" {
+		username = "user_" + uuid.New().String()[:8]
 	}
 
 	user = models.User{
