@@ -690,3 +690,50 @@ func TestRateLimit_WithUserID(t *testing.T) {
 		t.Errorf("expected status OK, got %d", w.Code)
 	}
 }
+
+func TestRateLimiter_Allow_AtLimit(t *testing.T) {
+	limiter := NewRateLimiter(3, time.Minute)
+	userID := uuid.New()
+
+	for i := 0; i < 3; i++ {
+		if !limiter.Allow(userID) {
+			t.Errorf("expected request %d to be allowed", i+1)
+		}
+	}
+
+	if limiter.Allow(userID) {
+		t.Error("expected request 4 to be rate limited")
+	}
+}
+
+func TestRateLimiter_Allow_EmptyMap(t *testing.T) {
+	limiter := NewRateLimiter(2, time.Minute)
+	userID := uuid.New()
+
+	if !limiter.Allow(userID) {
+		t.Error("expected first request to be allowed")
+	}
+	if !limiter.Allow(userID) {
+		t.Error("expected second request to be allowed")
+	}
+}
+
+func TestGzipCompression_ErrorClose(t *testing.T) {
+	handler := GzipCompression()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("test"))
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status OK, got %d", w.Code)
+	}
+	if w.Header().Get("Content-Encoding") != "gzip" {
+		t.Error("expected Content-Encoding: gzip")
+	}
+}
