@@ -1,6 +1,6 @@
 module github.com/enclavr/server
 
-go 1.25.0
+go 1.24
 
 require (
 	github.com/coreos/go-oidc/v3 v3.17.0
