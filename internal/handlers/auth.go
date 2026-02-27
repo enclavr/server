@@ -173,7 +173,11 @@ func (h *AuthHandler) sendAuthResponse(w http.ResponseWriter, user *models.User)
 }
 
 func (h *AuthHandler) GetMe(w http.ResponseWriter, r *http.Request) {
-	userID := r.Context().Value("user_id").(uuid.UUID)
+	userID, ok := r.Context().Value("user_id").(uuid.UUID)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
 
 	var user models.User
 	if err := h.db.First(&user, userID).Error; err != nil {
