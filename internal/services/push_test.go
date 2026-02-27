@@ -310,3 +310,71 @@ func TestPushService_isQuietHours_WithinRange(t *testing.T) {
 		t.Logf("isQuietHours returned: %v (may vary based on current time)", result)
 	}
 }
+
+func TestPushService_SendNotification_WithActiveSubscription(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to connect to sqlite: %v", err)
+	}
+
+	if err := db.AutoMigrate(&models.UserNotificationSettings{}, &models.PushSubscription{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	userID := uuid.New()
+	db.Create(&models.UserNotificationSettings{
+		UserID:            userID,
+		EnablePush:        true,
+		QuietHoursEnabled: false,
+	})
+
+	sub := models.PushSubscription{
+		UserID:   userID,
+		Endpoint: "https://example.com/push",
+		P256DH:   "test-p256dh",
+		Auth:     "test-auth",
+		IsActive: true,
+	}
+	db.Create(&sub)
+
+	dbase := &database.Database{DB: db}
+	cfg := &config.Config{}
+	svc := NewPushService(dbase, cfg)
+
+	payload := PushPayload{
+		Title: "Test",
+		Body:  "Test body",
+	}
+
+	err = svc.SendNotification(userID, payload)
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+}
+
+func TestPushService_NotifyNewMessage_Complete(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to connect to sqlite: %v", err)
+	}
+
+	if err := db.AutoMigrate(&models.UserNotificationSettings{}, &models.PushSubscription{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	userID := uuid.New()
+	db.Create(&models.UserNotificationSettings{
+		UserID:            userID,
+		EnablePush:        true,
+		QuietHoursEnabled: false,
+	})
+
+	dbase := &database.Database{DB: db}
+	cfg := &config.Config{}
+	svc := NewPushService(dbase, cfg)
+
+	err = svc.NotifyNewMessage(userID, "TestRoom", "TestSender", "Hello")
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+}

@@ -429,3 +429,74 @@ func TestWebhookHandler_GetWebhookLogs(t *testing.T) {
 		})
 	}
 }
+
+func TestWebhookHandler_TriggerEvent_NoWebhooks(t *testing.T) {
+	handler, _, _, _ := setupWebhookHandler(t)
+
+	roomID := uuid.New()
+	handler.TriggerEvent(roomID, "message_create", map[string]string{"test": "data"})
+}
+
+func TestWebhookHandler_TriggerEvent_WithWebhooks(t *testing.T) {
+	_, db, _, roomID := setupWebhookHandler(t)
+
+	webhook := models.Webhook{
+		ID:       uuid.New(),
+		RoomID:   roomID,
+		URL:      "https://example.com/webhook",
+		Secret:   "secret",
+		Events:   "message_create",
+		IsActive: true,
+	}
+	db.Create(&webhook)
+
+	handler := NewWebhookHandler(&database.Database{DB: db.DB})
+	handler.TriggerEvent(roomID, "message_create", map[string]string{"test": "data"})
+}
+
+func TestWebhookHandler_TriggerEvent_WrongEvent(t *testing.T) {
+	_, db, _, roomID := setupWebhookHandler(t)
+
+	webhook := models.Webhook{
+		ID:       uuid.New(),
+		RoomID:   roomID,
+		URL:      "https://example.com/webhook",
+		Secret:   "secret",
+		Events:   "user_join",
+		IsActive: true,
+	}
+	db.Create(&webhook)
+
+	handler := NewWebhookHandler(&database.Database{DB: db.DB})
+	handler.TriggerEvent(roomID, "message_create", map[string]string{"test": "data"})
+}
+
+func TestGenerateSecret(t *testing.T) {
+	secret1 := generateSecret()
+	secret2 := generateSecret()
+
+	if secret1 == "" {
+		t.Error("expected non-empty secret")
+	}
+
+	if secret1 == secret2 {
+		t.Error("expected different secrets")
+	}
+}
+
+func TestWebhookPayload_Structure(t *testing.T) {
+	payload := WebhookPayload{
+		Event:     "message_create",
+		RoomID:    uuid.New().String(),
+		Timestamp: "2024-01-01T00:00:00Z",
+		Data:      map[string]string{"key": "value"},
+	}
+
+	if payload.Event != "message_create" {
+		t.Errorf("expected Event message_create, got %s", payload.Event)
+	}
+
+	if payload.Data == nil {
+		t.Error("expected non-nil Data")
+	}
+}

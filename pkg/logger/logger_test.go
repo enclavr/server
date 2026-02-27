@@ -2,6 +2,8 @@ package logger
 
 import (
 	"bytes"
+	"fmt"
+	"log"
 	"strings"
 	"testing"
 )
@@ -137,4 +139,33 @@ func TestLogger_Fatal_Output(t *testing.T) {
 	if !strings.Contains(output, "fatal test") {
 		t.Errorf("expected message in output, got: %s", output)
 	}
+}
+
+func TestLogger_LogEntry_EmptyFields(t *testing.T) {
+	buf := &bytes.Buffer{}
+	SetOutput(buf)
+
+	logEntry(InfoLevel, "test message", nil)
+
+	output := buf.String()
+	if !strings.Contains(output, "test message") {
+		t.Errorf("expected message in output, got: %s", output)
+	}
+}
+
+func TestLogger_LogEntry_MarshalError(t *testing.T) {
+	originalLogger := defaultLogger
+	defaultLogger = &Logger{
+		logger: log.New(&writerThatFails{}, "", 0),
+	}
+
+	logEntry(InfoLevel, "test", nil)
+
+	defaultLogger = originalLogger
+}
+
+type writerThatFails struct{}
+
+func (w *writerThatFails) Write(p []byte) (n int, err error) {
+	return 0, fmt.Errorf("write failed")
 }
