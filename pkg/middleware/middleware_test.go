@@ -737,3 +737,22 @@ func TestGzipCompression_ErrorClose(t *testing.T) {
 		t.Error("expected Content-Encoding: gzip")
 	}
 }
+
+func TestRateLimiter_ExpiredEntries(t *testing.T) {
+	rl := NewRateLimiter(3, 50*time.Millisecond)
+	userID := uuid.New()
+
+	rl.Allow(userID)
+	rl.Allow(userID)
+	rl.Allow(userID)
+
+	if rl.Allow(userID) {
+		t.Error("expected rate limit to be applied")
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	if !rl.Allow(userID) {
+		t.Error("expected rate limit to be reset after window expiration")
+	}
+}

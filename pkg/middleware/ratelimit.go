@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"crypto/sha256"
 	"net"
 	"net/http"
 	"sync"
@@ -99,12 +100,8 @@ func RateLimit(next http.Handler) http.Handler {
 			if err != nil {
 				host = r.RemoteAddr
 			}
-			ipHash := []byte(host)
-			if len(ipHash) > 16 {
-				ipHash = ipHash[:16]
-			}
-			newUserID, _ := uuid.FromBytes(ipHash)
-			userID = newUserID
+			hash := sha256.Sum256([]byte(host))
+			userID = uuid.UUID(hash[:16])
 		}
 
 		if !globalLimiter.Allow(userID) {
