@@ -32,7 +32,7 @@ func (h *UserHandler) SearchUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var users []models.User
-	if err := h.db.Where("username ILIKE ?", "%"+query+"%").Limit(10).Find(&users).Error; err != nil {
+	if err := h.db.Where("LOWER(username) LIKE ?", "%"+query+"%").Limit(10).Find(&users).Error; err != nil {
 		http.Error(w, "Failed to search users", http.StatusInternalServerError)
 		return
 	}

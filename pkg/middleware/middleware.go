@@ -93,9 +93,7 @@ func RequestTimeout(timeout time.Duration) func(http.Handler) http.Handler {
 			case <-done:
 				return
 			case <-ctx.Done():
-				if !ht.written {
-					w.WriteHeader(http.StatusRequestTimeout)
-				}
+				ht.WriteHeader(http.StatusRequestTimeout)
 			}
 		})
 	}
