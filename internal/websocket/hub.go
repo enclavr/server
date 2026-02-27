@@ -318,11 +318,13 @@ func (h *Hub) gracefulShutdown() {
 
 	for _, r := range h.rooms {
 		r.mutex.Lock()
+		clientCount := len(r.clients)
 		for client := range r.clients {
 			close(client.send)
 		}
 		r.clients = make(map[*Client]bool)
 		r.mutex.Unlock()
+		h.activeClients.Add(-int64(clientCount))
 	}
 
 	h.rooms = make(map[uuid.UUID]*room)

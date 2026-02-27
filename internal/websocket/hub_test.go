@@ -129,7 +129,7 @@ func TestRateLimiter_Concurrent(t *testing.T) {
 	wg.Wait()
 }
 
-func TestHub_RegisterClient(t *testing.T) {
+func TestHub_GetUserClient_Integration(t *testing.T) {
 	hub := NewHub()
 	defer hub.Shutdown()
 
@@ -758,4 +758,590 @@ func TestHub_BroadcastToRoom_NotFound(t *testing.T) {
 	}
 
 	hub.BroadcastToRoom(roomID, msg, uuid.Nil)
+}
+
+func TestHub_RegisterClient(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	go hub.Run()
+
+	userID := uuid.New()
+	roomID := uuid.New()
+
+	client := hub.RegisterClient(userID, roomID, nil)
+
+	if client == nil {
+		t.Fatal("expected non-nil client")
+	}
+
+	if client.userID != userID {
+		t.Errorf("expected userID %s, got %s", userID, client.userID)
+	}
+
+	if client.roomID != roomID {
+		t.Errorf("expected roomID %s, got %s", roomID, client.roomID)
+	}
+
+	if client.rateLimit == nil {
+		t.Error("expected rate limiter to be set")
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	if hub.GetClientCount() != 1 {
+		t.Errorf("expected 1 client, got %d", hub.GetClientCount())
+	}
+
+	roomCount := hub.GetRoomClients(roomID)
+	if len(roomCount) != 1 {
+		t.Errorf("expected 1 client in room, got %d", len(roomCount))
+	}
+}
+
+func TestHub_UnregisterClient(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	userID := uuid.New()
+	roomID := uuid.New()
+
+	client := hub.RegisterClient(userID, roomID, nil)
+
+	time.Sleep(50 * time.Millisecond)
+
+	if hub.GetClientCount() != 1 {
+		t.Fatalf("expected 1 client before unregister, got %d", hub.GetClientCount())
+	}
+
+	hub.UnregisterClient(client)
+
+	time.Sleep(50 * time.Millisecond)
+
+	if hub.GetClientCount() != 0 {
+		t.Errorf("expected 0 clients after unregister, got %d", hub.GetClientCount())
+	}
+
+	hub.Shutdown()
+}
+
+func TestClient_HandleMessage_VoiceOffer(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID1 := uuid.New()
+	userID2 := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client1 := &Client{
+		hub:    hub,
+		userID: userID1,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.rooms[roomID].clients[client1] = true
+	hub.userConnections[userID1] = client1
+	hub.userConnections[userID2] = &Client{
+		hub:    hub,
+		userID: userID2,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	hub.activeClients.Add(2)
+	hub.mutex.Unlock()
+
+	msg := &Message{
+		Type:         "voice-offer",
+		UserID:       userID1,
+		TargetUserID: userID2,
+		SDP:          "offer-sdp",
+		RoomID:       roomID,
+		Timestamp:    time.Now(),
+	}
+
+	client1.handleMessage(msg)
+
+	select {
+	case received := <-hub.userConnections[userID2].send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Errorf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "voice-offer" {
+			t.Errorf("expected voice-offer, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for voice offer")
+	}
+}
+
+func TestClient_HandleMessage_VoiceMute(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID1 := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client1 := &Client{
+		hub:    hub,
+		userID: userID1,
+		roomID: roomID,
+		send:   make(chan []byte, 256),
+	}
+
+	hub.rooms[roomID].clients[client1] = true
+	hub.userConnections[userID1] = client1
+	hub.activeClients.Add(1)
+	hub.mutex.Unlock()
+
+	msg := &Message{
+		Type:      "voice-mute",
+		UserID:    userID1,
+		RoomID:    roomID,
+		Timestamp: time.Now(),
+	}
+
+	client1.handleMessage(msg)
+}
+
+func TestClient_HandleMessage_UserJoined(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID1 := uuid.New()
+	userID2 := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client1 := &Client{
+		hub:    hub,
+		userID: userID1,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	client2 := &Client{
+		hub:    hub,
+		userID: userID2,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.rooms[roomID].clients[client1] = true
+	hub.rooms[roomID].clients[client2] = true
+	hub.userConnections[userID1] = client1
+	hub.userConnections[userID2] = client2
+	hub.activeClients.Add(2)
+	hub.mutex.Unlock()
+
+	msg := &Message{
+		Type:      "user-joined",
+		UserID:    userID1,
+		RoomID:    roomID,
+		Timestamp: time.Now(),
+	}
+
+	client1.handleMessage(msg)
+
+	select {
+	case received := <-client2.send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Errorf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "user-joined" {
+			t.Errorf("expected user-joined, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for user-joined message")
+	}
+}
+
+func TestClient_HandleMessage_UserLeft(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	userID1 := uuid.New()
+	userID2 := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client1 := &Client{
+		hub:    hub,
+		userID: userID1,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	client2 := &Client{
+		hub:    hub,
+		userID: userID2,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	hub.rooms[roomID].clients[client1] = true
+	hub.rooms[roomID].clients[client2] = true
+	hub.userConnections[userID1] = client1
+	hub.userConnections[userID2] = client2
+	hub.activeClients.Add(2)
+	hub.mutex.Unlock()
+
+	msg := &Message{
+		Type:      "user-left",
+		UserID:    userID1,
+		RoomID:    roomID,
+		Timestamp: time.Now(),
+	}
+
+	client1.handleMessage(msg)
+
+	time.Sleep(50 * time.Millisecond)
+
+	if hub.GetClientCount() != 1 {
+		t.Errorf("expected 1 client after user-left, got %d", hub.GetClientCount())
+	}
+
+	hub.Shutdown()
+}
+
+func TestClient_HandleMessage_Typing(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID1 := uuid.New()
+	userID2 := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client1 := &Client{
+		hub:    hub,
+		userID: userID1,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	client2 := &Client{
+		hub:    hub,
+		userID: userID2,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.rooms[roomID].clients[client1] = true
+	hub.rooms[roomID].clients[client2] = true
+	hub.userConnections[userID1] = client1
+	hub.userConnections[userID2] = client2
+	hub.activeClients.Add(2)
+	hub.mutex.Unlock()
+
+	msg := &Message{
+		Type:      "typing",
+		UserID:    userID1,
+		RoomID:    roomID,
+		Timestamp: time.Now(),
+	}
+
+	client1.handleMessage(msg)
+
+	select {
+	case received := <-client2.send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Errorf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "user-typing" {
+			t.Errorf("expected user-typing, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for typing message")
+	}
+}
+
+func TestClient_HandleMessage_StopTyping(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID1 := uuid.New()
+	userID2 := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client1 := &Client{
+		hub:    hub,
+		userID: userID1,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	client2 := &Client{
+		hub:    hub,
+		userID: userID2,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.rooms[roomID].clients[client1] = true
+	hub.rooms[roomID].clients[client2] = true
+	hub.userConnections[userID1] = client1
+	hub.userConnections[userID2] = client2
+	hub.activeClients.Add(2)
+	hub.mutex.Unlock()
+
+	msg := &Message{
+		Type:      "stop-typing",
+		UserID:    userID1,
+		RoomID:    roomID,
+		Timestamp: time.Now(),
+	}
+
+	client1.handleMessage(msg)
+
+	select {
+	case received := <-client2.send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Errorf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "user-stopped-typing" {
+			t.Errorf("expected user-stopped-typing, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for stop-typing message")
+	}
+}
+
+func TestClient_HandleMessage_UnknownType(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client := &Client{
+		hub:    hub,
+		userID: userID,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.rooms[roomID].clients[client] = true
+	hub.userConnections[userID] = client
+	hub.activeClients.Add(1)
+	hub.mutex.Unlock()
+
+	msg := &Message{
+		Type:      "unknown-type",
+		UserID:    userID,
+		RoomID:    roomID,
+		Timestamp: time.Now(),
+	}
+
+	client.handleMessage(msg)
+}
+
+func TestHub_HandleRedisUserMessage(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID := uuid.New()
+	targetUserID := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.userConnections[targetUserID] = &Client{
+		hub:    hub,
+		userID: targetUserID,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	hub.activeClients.Add(1)
+	hub.mutex.Unlock()
+
+	msg := &PubSubMessage{
+		Type:         "test-message",
+		UserID:       userID,
+		TargetUserID: targetUserID,
+		Payload:      json.RawMessage(`{"key":"value"}`),
+		Timestamp:    time.Now(),
+	}
+
+	hub.handleRedisUserMessage(msg)
+
+	select {
+	case received := <-hub.userConnections[targetUserID].send:
+		if len(received) == 0 {
+			t.Error("expected non-empty message")
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for message")
+	}
+}
+
+func TestHub_HandleRedisRoomMessage(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	senderID := uuid.New()
+	userID := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+	hub.roomMutexes[roomID] = &sync.RWMutex{}
+
+	client := &Client{
+		hub:    hub,
+		userID: userID,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.rooms[roomID].clients[client] = true
+	hub.userConnections[userID] = client
+	hub.activeClients.Add(1)
+	hub.mutex.Unlock()
+
+	msg := &PubSubMessage{
+		Type:      "room-message",
+		RoomID:    roomID,
+		UserID:    senderID,
+		Payload:   json.RawMessage(`{"key":"value"}`),
+		Timestamp: time.Now(),
+	}
+
+	hub.handleRedisRoomMessage(msg)
+
+	select {
+	case received := <-client.send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Errorf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "room-message" {
+			t.Errorf("expected room-message, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for message")
+	}
+}
+
+func TestHub_PublishToRedis_Disabled(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	msg := &Message{
+		Type:      "test",
+		RoomID:    uuid.New(),
+		UserID:    uuid.New(),
+		Timestamp: time.Now(),
+	}
+
+	hub.publishToRedis(msg)
+}
+
+func TestHub_SubscribeToRoomRedis_Disabled(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	err := hub.SubscribeToRoomRedis(uuid.New())
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+}
+
+func TestHub_SubscribeToUserRedis_Disabled(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	err := hub.SubscribeToUserRedis(uuid.New())
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+}
+
+func TestHub_ShutdownRedis_Nil(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	err := hub.ShutdownRedis()
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+}
+
+func TestHub_BroadcastToRoom_EmptyRoom(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	roomID := uuid.New()
+	msg := &Message{
+		Type:      "test",
+		RoomID:    roomID,
+		Timestamp: time.Now(),
+	}
+
+	hub.BroadcastToRoom(roomID, msg, uuid.Nil)
+}
+
+func TestHub_GracefulShutdown(t *testing.T) {
+	hub := NewHub()
+
+	roomID := uuid.New()
+	userID := uuid.New()
+
+	client := &Client{
+		hub:    hub,
+		userID: userID,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+	hub.rooms[roomID].clients[client] = true
+	hub.userConnections[userID] = client
+	hub.activeClients.Add(1)
+	hub.mutex.Unlock()
+
+	hub.gracefulShutdown()
+
+	if hub.GetClientCount() != 0 {
+		t.Errorf("expected 0 clients after shutdown, got %d", hub.GetClientCount())
+	}
+
+	if hub.GetRoomCount() != 0 {
+		t.Errorf("expected 0 rooms after shutdown, got %d", hub.GetRoomCount())
+	}
 }
