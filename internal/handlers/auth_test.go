@@ -136,6 +136,34 @@ func TestRegister_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestRegister_DuplicateEmail(t *testing.T) {
+	handler := setupTestHandler(t)
+
+	registerBody := RegisterRequest{
+		Username: "testuser",
+		Email:    "test@example.com",
+		Password: "password123",
+	}
+	body, _ := json.Marshal(registerBody)
+	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.Register(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected first registration to succeed, got %d", w.Code)
+	}
+
+	req2 := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(body))
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	handler.Register(w2, req2)
+
+	if w2.Code != http.StatusInternalServerError && w2.Code != http.StatusConflict {
+		t.Errorf("expected duplicate email to return error status, got %d", w2.Code)
+	}
+}
+
 func TestLogin(t *testing.T) {
 	handler := setupTestHandler(t)
 
