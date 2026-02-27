@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/enclavr/server/internal/auth"
@@ -61,15 +62,30 @@ func RequireAuth(authService *auth.AuthService, fn func(http.ResponseWriter, *ht
 	return middleware(http.HandlerFunc(fn)).ServeHTTP
 }
 
+type headerTracker struct {
+	http.ResponseWriter
+	written bool
+	once    sync.Once
+}
+
+func (h *headerTracker) WriteHeader(code int) {
+	h.once.Do(func() {
+		h.ResponseWriter.WriteHeader(code)
+		h.written = true
+	})
+}
+
 func RequestTimeout(timeout time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx, cancel := context.WithTimeout(r.Context(), timeout)
 			defer cancel()
 
+			ht := &headerTracker{ResponseWriter: w, written: false}
 			done := make(chan struct{})
+
 			go func() {
-				next.ServeHTTP(w, r.WithContext(ctx))
+				next.ServeHTTP(ht, r.WithContext(ctx))
 				close(done)
 			}()
 
@@ -77,7 +93,9 @@ func RequestTimeout(timeout time.Duration) func(http.Handler) http.Handler {
 			case <-done:
 				return
 			case <-ctx.Done():
-				http.Error(w, "Request timeout", http.StatusRequestTimeout)
+				if !ht.written {
+					w.WriteHeader(http.StatusRequestTimeout)
+				}
 			}
 		})
 	}

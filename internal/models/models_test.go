@@ -588,3 +588,383 @@ func TestFile_BeforeCreate(t *testing.T) {
 		t.Error("expected CreatedAt to be set")
 	}
 }
+
+func TestPoll_BeforeCreate(t *testing.T) {
+	db := setupTestDB(t)
+	if err := db.AutoMigrate(&Poll{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	expiresAt := time.Now().Add(24 * time.Hour)
+	poll := &Poll{
+		Question:  "Test poll?",
+		RoomID:    uuid.New(),
+		CreatedBy: uuid.New(),
+		ExpiresAt: &expiresAt,
+	}
+
+	err := db.Create(poll).Error
+	if err != nil {
+		t.Fatalf("failed to create poll: %v", err)
+	}
+
+	if poll.ID == uuid.Nil {
+		t.Error("expected poll ID to be set")
+	}
+
+	if poll.CreatedAt.IsZero() {
+		t.Error("expected CreatedAt to be set")
+	}
+}
+
+func TestPollOption_BeforeCreate(t *testing.T) {
+	db := setupTestDB(t)
+	if err := db.AutoMigrate(&Poll{}, &PollOption{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	pollID := uuid.New()
+	db.Create(&Poll{ID: pollID, Question: "Test", RoomID: uuid.New(), CreatedBy: uuid.New()})
+
+	opt := &PollOption{
+		PollID: pollID,
+		Text:   "Option 1",
+	}
+
+	err := db.Create(opt).Error
+	if err != nil {
+		t.Fatalf("failed to create poll option: %v", err)
+	}
+
+	if opt.ID == uuid.Nil {
+		t.Error("expected poll option ID to be set")
+	}
+
+	if opt.CreatedAt.IsZero() {
+		t.Error("expected CreatedAt to be set")
+	}
+}
+
+func TestPollVote_BeforeCreate(t *testing.T) {
+	db := setupTestDB(t)
+	if err := db.AutoMigrate(&Poll{}, &PollOption{}, &PollVote{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	pollID := uuid.New()
+	optID := uuid.New()
+	userID := uuid.New()
+	db.Create(&Poll{ID: pollID, Question: "Test", RoomID: uuid.New(), CreatedBy: userID})
+	db.Create(&PollOption{ID: optID, PollID: pollID, Text: "Option"})
+
+	vote := &PollVote{
+		PollID:   pollID,
+		OptionID: optID,
+		UserID:   userID,
+	}
+
+	err := db.Create(vote).Error
+	if err != nil {
+		t.Fatalf("failed to create poll vote: %v", err)
+	}
+
+	if vote.ID == uuid.Nil {
+		t.Error("expected poll vote ID to be set")
+	}
+
+	if vote.CreatedAt.IsZero() {
+		t.Error("expected CreatedAt to be set")
+	}
+}
+
+func TestServerEmoji_BeforeCreate(t *testing.T) {
+	db := setupTestDB(t)
+	if err := db.AutoMigrate(&ServerEmoji{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	emoji := &ServerEmoji{
+		Name:      "smile",
+		ImageURL:  "https://example.com/emoji.png",
+		CreatedBy: uuid.New(),
+	}
+
+	err := db.Create(emoji).Error
+	if err != nil {
+		t.Fatalf("failed to create emoji: %v", err)
+	}
+
+	if emoji.ID == uuid.Nil {
+		t.Error("expected emoji ID to be set")
+	}
+
+	if emoji.CreatedAt.IsZero() {
+		t.Error("expected CreatedAt to be set")
+	}
+}
+
+func TestServerSticker_BeforeCreate(t *testing.T) {
+	db := setupTestDB(t)
+	if err := db.AutoMigrate(&ServerSticker{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	sticker := &ServerSticker{
+		Name:      "funny",
+		ImageURL:  "https://example.com/sticker.png",
+		CreatedBy: uuid.New(),
+	}
+
+	err := db.Create(sticker).Error
+	if err != nil {
+		t.Fatalf("failed to create sticker: %v", err)
+	}
+
+	if sticker.ID == uuid.Nil {
+		t.Error("expected sticker ID to be set")
+	}
+
+	if sticker.CreatedAt.IsZero() {
+		t.Error("expected CreatedAt to be set")
+	}
+}
+
+func TestSoundboardSound_BeforeCreate(t *testing.T) {
+	db := setupTestDB(t)
+	if err := db.AutoMigrate(&SoundboardSound{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	sound := &SoundboardSound{
+		Name:      "ping",
+		AudioURL:  "https://example.com/ping.mp3",
+		CreatedBy: uuid.New(),
+	}
+
+	err := db.Create(sound).Error
+	if err != nil {
+		t.Fatalf("failed to create soundboard sound: %v", err)
+	}
+
+	if sound.ID == uuid.Nil {
+		t.Error("expected sound ID to be set")
+	}
+
+	if sound.CreatedAt.IsZero() {
+		t.Error("expected CreatedAt to be set")
+	}
+}
+
+func TestDailyAnalytics_BeforeCreate(t *testing.T) {
+	db := setupTestDB(t)
+	if err := db.AutoMigrate(&DailyAnalytics{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	analytics := &DailyAnalytics{
+		Date:          time.Now().Truncate(24 * time.Hour),
+		TotalMessages: 100,
+		TotalUsers:    10,
+	}
+
+	err := db.Create(analytics).Error
+	if err != nil {
+		t.Fatalf("failed to create daily analytics: %v", err)
+	}
+
+	if analytics.ID == uuid.Nil {
+		t.Error("expected analytics ID to be set")
+	}
+
+	if analytics.CreatedAt.IsZero() {
+		t.Error("expected CreatedAt to be set")
+	}
+}
+
+func TestHourlyActivity_BeforeCreate(t *testing.T) {
+	db := setupTestDB(t)
+	if err := db.AutoMigrate(&HourlyActivity{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	activity := &HourlyActivity{
+		Hour:         12,
+		Date:         time.Now().Truncate(24 * time.Hour),
+		MessageCount: 50,
+		UserCount:    5,
+	}
+
+	err := db.Create(activity).Error
+	if err != nil {
+		t.Fatalf("failed to create hourly activity: %v", err)
+	}
+
+	if activity.ID == uuid.Nil {
+		t.Error("expected activity ID to be set")
+	}
+
+	if activity.CreatedAt.IsZero() {
+		t.Error("expected CreatedAt to be set")
+	}
+}
+
+func TestChannelActivity_BeforeCreate(t *testing.T) {
+	db := setupTestDB(t)
+	if err := db.AutoMigrate(&ChannelActivity{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	activity := &ChannelActivity{
+		RoomID:       uuid.New(),
+		Date:         time.Now().Truncate(24 * time.Hour),
+		MessageCount: 50,
+		UserCount:    5,
+	}
+
+	err := db.Create(activity).Error
+	if err != nil {
+		t.Fatalf("failed to create channel activity: %v", err)
+	}
+
+	if activity.ID == uuid.Nil {
+		t.Error("expected activity ID to be set")
+	}
+
+	if activity.CreatedAt.IsZero() {
+		t.Error("expected CreatedAt to be set")
+	}
+}
+
+func TestAuditLog_BeforeCreate(t *testing.T) {
+	db := setupTestDB(t)
+	if err := db.AutoMigrate(&AuditLog{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	log := &AuditLog{
+		UserID:     uuid.New(),
+		Action:     AuditActionUserBan,
+		TargetType: "user",
+		TargetID:   uuid.New(),
+		Details:    `{"reason": "spam"}`,
+	}
+
+	err := db.Create(log).Error
+	if err != nil {
+		t.Fatalf("failed to create audit log: %v", err)
+	}
+
+	if log.ID == uuid.Nil {
+		t.Error("expected audit log ID to be set")
+	}
+
+	if log.CreatedAt.IsZero() {
+		t.Error("expected CreatedAt to be set")
+	}
+}
+
+func TestBan_BeforeCreate(t *testing.T) {
+	db := setupTestDB(t)
+	if err := db.AutoMigrate(&Ban{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	ban := &Ban{
+		UserID:   uuid.New(),
+		RoomID:   uuid.New(),
+		BannedBy: uuid.New(),
+		Reason:   "violation",
+	}
+
+	err := db.Create(ban).Error
+	if err != nil {
+		t.Fatalf("failed to create ban: %v", err)
+	}
+
+	if ban.ID == uuid.Nil {
+		t.Error("expected ban ID to be set")
+	}
+
+	if ban.CreatedAt.IsZero() {
+		t.Error("expected CreatedAt to be set")
+	}
+}
+
+func TestReport_BeforeCreate(t *testing.T) {
+	db := setupTestDB(t)
+	if err := db.AutoMigrate(&Report{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	report := &Report{
+		ReporterID: uuid.New(),
+		ReportedID: uuid.New(),
+		RoomID:     uuid.New(),
+		Reason:     "inappropriate content",
+		Status:     "pending",
+	}
+
+	err := db.Create(report).Error
+	if err != nil {
+		t.Fatalf("failed to create report: %v", err)
+	}
+
+	if report.ID == uuid.Nil {
+		t.Error("expected report ID to be set")
+	}
+
+	if report.CreatedAt.IsZero() {
+		t.Error("expected CreatedAt to be set")
+	}
+}
+
+func TestPushSubscription_BeforeCreate(t *testing.T) {
+	db := setupTestDB(t)
+	if err := db.AutoMigrate(&PushSubscription{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	sub := &PushSubscription{
+		UserID:   uuid.New(),
+		Endpoint: "https://example.com/push",
+		P256DH:   "testp256dh",
+		Auth:     "testauth",
+	}
+
+	err := db.Create(sub).Error
+	if err != nil {
+		t.Fatalf("failed to create push subscription: %v", err)
+	}
+
+	if sub.ID == uuid.Nil {
+		t.Error("expected subscription ID to be set")
+	}
+
+	if sub.CreatedAt.IsZero() {
+		t.Error("expected CreatedAt to be set")
+	}
+}
+
+func TestUserNotificationSettings_BeforeCreate(t *testing.T) {
+	db := setupTestDB(t)
+	if err := db.AutoMigrate(&UserNotificationSettings{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	settings := &UserNotificationSettings{
+		UserID: uuid.New(),
+	}
+
+	err := db.Create(settings).Error
+	if err != nil {
+		t.Fatalf("failed to create notification settings: %v", err)
+	}
+
+	if settings.ID == uuid.Nil {
+		t.Error("expected settings ID to be set")
+	}
+
+	if settings.CreatedAt.IsZero() {
+		t.Error("expected CreatedAt to be set")
+	}
+}

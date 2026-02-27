@@ -71,10 +71,20 @@ func TestDistributedRateLimiter_DifferentKeys(t *testing.T) {
 func TestDistributedRateLimiter_CleanupOldRequests(t *testing.T) {
 	store := &mockStore{data: make(map[string]*RateLimiterData)}
 	limiter := NewDistributedRateLimiter(store, 3, 50*time.Millisecond)
+	defer func() {
+		// Let cleanup goroutine finish before test ends
+		time.Sleep(10 * time.Millisecond)
+	}()
 
-	limiter.Allow("user1")
-	limiter.Allow("user1")
-	limiter.Allow("user1")
+	if !limiter.Allow("user1") {
+		t.Error("First request should be allowed")
+	}
+	if !limiter.Allow("user1") {
+		t.Error("Second request should be allowed")
+	}
+	if !limiter.Allow("user1") {
+		t.Error("Third request should be allowed")
+	}
 
 	if limiter.Allow("user1") {
 		t.Error("Should be rate limited initially")

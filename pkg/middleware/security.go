@@ -102,17 +102,21 @@ type RateLimiterData struct {
 }
 
 type DistributedRateLimiter struct {
-	store  RateLimiterStore
-	mu     sync.Map
-	limit  int
-	window time.Duration
+	store       RateLimiterStore
+	data        map[string]*RateLimiterData
+	mu          sync.RWMutex
+	limit       int
+	window      time.Duration
+	stopCleanup chan bool
 }
 
 func NewDistributedRateLimiter(store RateLimiterStore, limit int, window time.Duration) *DistributedRateLimiter {
 	rl := &DistributedRateLimiter{
-		store:  store,
-		limit:  limit,
-		window: window,
+		store:       store,
+		data:        make(map[string]*RateLimiterData),
+		limit:       limit,
+		window:      window,
+		stopCleanup: make(chan bool),
 	}
 	go rl.cleanup()
 	return rl
@@ -122,11 +126,15 @@ func (rl *DistributedRateLimiter) cleanup() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		rl.mu.Range(func(key, value any) bool {
-			rl.mu.Delete(key)
-			return true
-		})
+	for {
+		select {
+		case <-ticker.C:
+			rl.mu.Lock()
+			rl.data = make(map[string]*RateLimiterData)
+			rl.mu.Unlock()
+		case <-rl.stopCleanup:
+			return
+		}
 	}
 }
 
@@ -134,30 +142,39 @@ func (rl *DistributedRateLimiter) Allow(key string) bool {
 	now := time.Now()
 	windowStart := now.Add(-rl.window)
 
+	rl.mu.RLock()
 	var valid []time.Time
-	if data, ok := rl.mu.Load(key); ok {
-		rateData := data.(*RateLimiterData)
-		for _, t := range rateData.requests {
+	if data, ok := rl.data[key]; ok {
+		for _, t := range data.requests {
 			if t.After(windowStart) {
 				valid = append(valid, t)
 			}
 		}
 	}
+	rl.mu.RUnlock()
 
 	if len(valid) >= rl.limit {
-		rl.mu.Store(key, &RateLimiterData{
+		rl.mu.Lock()
+		rl.data[key] = &RateLimiterData{
 			requests: valid,
 			limit:    rl.limit,
 			window:   rl.window,
-		})
+		}
+		rl.mu.Unlock()
 		return false
 	}
 
 	valid = append(valid, now)
-	rl.mu.Store(key, &RateLimiterData{
+	rl.mu.Lock()
+	rl.data[key] = &RateLimiterData{
 		requests: valid,
 		limit:    rl.limit,
 		window:   rl.window,
-	})
+	}
+	rl.mu.Unlock()
 	return true
+}
+
+func (rl *DistributedRateLimiter) Shutdown() {
+	close(rl.stopCleanup)
 }
