@@ -269,16 +269,25 @@ func TestRefreshToken(t *testing.T) {
 			refreshToken:   "",
 			expectedStatus: http.StatusUnauthorized,
 		},
+		{
+			name:           "malformed JSON body",
+			refreshToken:   "",
+			expectedStatus: http.StatusBadRequest,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			body, _ := json.Marshal(struct {
-				RefreshToken string `json:"refresh_token"`
-			}{RefreshToken: tt.refreshToken})
-			req := httptest.NewRequest(http.MethodPost, "/refresh", bytes.NewBuffer(body))
+			if tt.name == "malformed JSON body" {
+				req = httptest.NewRequest(http.MethodPost, "/refresh", bytes.NewBuffer([]byte("{invalid")))
+			} else {
+				body, _ = json.Marshal(struct {
+					RefreshToken string `json:"refresh_token"`
+				}{RefreshToken: tt.refreshToken})
+				req = httptest.NewRequest(http.MethodPost, "/refresh", bytes.NewBuffer(body))
+			}
 			req.Header.Set("Content-Type", "application/json")
-			w := httptest.NewRecorder()
+			w = httptest.NewRecorder()
 
 			handler.RefreshToken(w, req)
 
