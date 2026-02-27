@@ -378,19 +378,23 @@ func (h *WebhookHandler) sendWebhook(webhook models.Webhook, event string, data 
 
 	if err != nil {
 		webhookLog.ErrorMessage = err.Error()
-	} else {
-		webhookLog.StatusCode = resp.StatusCode
-		webhookLog.Success = resp.StatusCode >= 200 && resp.StatusCode < 300
-
-		buf := new(bytes.Buffer)
-		if _, err := buf.ReadFrom(resp.Body); err != nil {
-			log.Printf("Error reading webhook response: %v", err)
-		}
-		webhookLog.ResponseBody = buf.String()
+		h.db.Create(&webhookLog)
+		return
+	}
+	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
 			log.Printf("Error closing webhook response body: %v", closeErr)
 		}
+	}()
+
+	webhookLog.StatusCode = resp.StatusCode
+	webhookLog.Success = resp.StatusCode >= 200 && resp.StatusCode < 300
+
+	buf := new(bytes.Buffer)
+	if _, err := buf.ReadFrom(resp.Body); err != nil {
+		log.Printf("Error reading webhook response: %v", err)
 	}
+	webhookLog.ResponseBody = buf.String()
 
 	h.db.Create(&webhookLog)
 }

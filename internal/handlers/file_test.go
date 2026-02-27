@@ -223,3 +223,71 @@ func TestFileHandler_GetRoomFiles_MissingRoomID(t *testing.T) {
 		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
 	}
 }
+
+func TestFileHandler_GetFile_PathTraversal(t *testing.T) {
+	handler, _, userID := setupFileHandlerWithUser(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/files/../../../etc/passwd", nil)
+	req = req.WithContext(addUserIDToContext(req.Context(), userID))
+	w := httptest.NewRecorder()
+
+	handler.GetFile(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d for path traversal attempt, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestFileHandler_GetFile_PathTraversalWithDot(t *testing.T) {
+	handler, _, userID := setupFileHandlerWithUser(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/files/room/2024/01/01/../test.png", nil)
+	req = req.WithContext(addUserIDToContext(req.Context(), userID))
+	w := httptest.NewRecorder()
+
+	handler.GetFile(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d for path traversal attempt, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestFileHandler_NewFileHandler_DefaultValues(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	testDB := &database.Database{DB: db}
+
+	handler := NewFileHandler(testDB, "", 0)
+
+	if handler.uploadDir != "./uploads" {
+		t.Errorf("expected uploadDir ./uploads, got %s", handler.uploadDir)
+	}
+	if handler.maxFileSize != 10*1024*1024 {
+		t.Errorf("expected maxFileSize 10485760, got %d", handler.maxFileSize)
+	}
+}
+
+func TestFileHandler_UploadToWebhook(t *testing.T) {
+	handler, _, _ := setupFileHandlerWithUser(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	err := handler.UploadToWebhook(server.URL, "file", "test.txt", "text/plain", []byte("test content"))
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestFileHandler_UploadToWebhook_Error(t *testing.T) {
+	handler, _, _ := setupFileHandlerWithUser(t)
+
+	err := handler.UploadToWebhook("http://invalid-host-that-does-not-exist.example.com", "file", "test.txt", "text/plain", []byte("test content"))
+	if err == nil {
+		t.Error("expected error for invalid URL")
+	}
+}

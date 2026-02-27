@@ -199,8 +199,22 @@ func (h *FileHandler) GetFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	for _, part := range parts {
+		if part == ".." || strings.Contains(part, "..") {
+			http.Error(w, "Invalid file path", http.StatusBadRequest)
+			return
+		}
+	}
+
 	storageKey := strings.Join(parts, "/")
 	filePath := filepath.Join(h.uploadDir, storageKey)
+
+	absUploadDir, _ := filepath.Abs(h.uploadDir)
+	absFilePath, _ := filepath.Abs(filePath)
+	if !strings.HasPrefix(absFilePath, absUploadDir) {
+		http.Error(w, "Invalid file path", http.StatusBadRequest)
+		return
+	}
 
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		http.Error(w, "File not found", http.StatusNotFound)
