@@ -82,6 +82,35 @@ pkg/
 - Use status codes correctly
 - Version APIs: `/api/v1/`, `/api/v2/`
 
+## CI/CD
+
+The CI workflow is in `.github/workflows/ci.yml` and runs:
+- Lint (golangci-lint)
+- Tests with coverage
+- Build
+- Docker image build
+
+### Running Locally with `act`
+
+```bash
+# Run all CI jobs
+act push
+
+# Run specific job
+act -j test
+
+# Dry run
+act --dryrun push
+```
+
+### Fixing CI Failures
+
+When CI breaks:
+1. Run `act push` locally to reproduce
+2. Fix the actual issue, not the workflow file
+3. Run `golangci-lint run ./... && go test ./...` to verify
+4. Commit and push
+
 ## Important Notes
 
 - Keep files under 500 lines
