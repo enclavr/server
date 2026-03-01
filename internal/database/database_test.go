@@ -4,16 +4,18 @@ import (
 	"fmt"
 	"testing"
 
+	"fmt"
 	"github.com/enclavr/server/internal/config"
 	"github.com/enclavr/server/internal/models"
 	"github.com/google/uuid"
-	"gorm.io/driver/sqlite"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+	"os"
 )
 
 func TestNew_WithSQLite(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -25,7 +27,7 @@ func TestNew_WithSQLite(t *testing.T) {
 }
 
 func TestDatabase_AutoMigrate(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -72,7 +74,7 @@ func TestDatabase_AutoMigrate(t *testing.T) {
 }
 
 func TestDatabase_InsertAndQuery(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -110,7 +112,7 @@ func TestDatabase_InsertAndQuery(t *testing.T) {
 }
 
 func TestDatabase_Transaction(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -132,7 +134,7 @@ func TestDatabase_Transaction(t *testing.T) {
 }
 
 func TestDatabase_Transaction_Rollback(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -190,7 +192,7 @@ func TestDatabase_ConfigDSN_WithSSL(t *testing.T) {
 }
 
 func TestDatabase_Create(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -215,7 +217,7 @@ func TestDatabase_Create(t *testing.T) {
 }
 
 func TestDatabase_First(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -242,7 +244,7 @@ func TestDatabase_First(t *testing.T) {
 }
 
 func TestDatabase_Where(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -271,7 +273,7 @@ func TestDatabase_Where(t *testing.T) {
 }
 
 func TestDatabase_Save(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -300,7 +302,7 @@ func TestDatabase_Save(t *testing.T) {
 }
 
 func TestDatabase_Delete(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -328,7 +330,7 @@ func TestDatabase_Delete(t *testing.T) {
 }
 
 func TestDatabase_Count(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -356,7 +358,7 @@ func TestDatabase_Count(t *testing.T) {
 }
 
 func TestDatabase_Updates(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -388,7 +390,7 @@ func TestDatabase_Updates(t *testing.T) {
 }
 
 func TestDatabase_Find(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -417,7 +419,7 @@ func TestDatabase_Find(t *testing.T) {
 }
 
 func TestDatabase_Migrate(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
 	if err != nil {
@@ -449,4 +451,22 @@ func TestDatabase_Migrate(t *testing.T) {
 	if len(missingTables) > 0 {
 		t.Errorf("missing tables after migration: %v", missingTables)
 	}
+}
+
+func getTestDSN() string {
+	host := getEnv("DB_HOST", "localhost")
+	port := getEnv("DB_PORT", "5432")
+	user := getEnv("DB_USER", "enclavr")
+	password := getEnv("DB_PASSWORD", "enclavr")
+	dbname := getEnv("DB_NAME", "enclavr_test")
+	sslmode := getEnv("DB_SSLMODE", "disable")
+	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		host, port, user, password, dbname, sslmode)
+}
+
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }

@@ -3,12 +3,14 @@ package services
 import (
 	"testing"
 
+	"fmt"
 	"github.com/enclavr/server/internal/config"
 	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/internal/models"
 	"github.com/google/uuid"
-	"gorm.io/driver/sqlite"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"os"
 )
 
 func TestNewPushService(t *testing.T) {
@@ -85,7 +87,7 @@ func TestPushNotification_Fields(t *testing.T) {
 }
 
 func TestPushService_SendNotification_NoUserSettings(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -112,7 +114,7 @@ func TestPushService_SendNotification_NoUserSettings(t *testing.T) {
 }
 
 func TestPushService_SendNotification_DisabledPush(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -144,7 +146,7 @@ func TestPushService_SendNotification_DisabledPush(t *testing.T) {
 }
 
 func TestPushService_SendNotification_QuietHours(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -178,7 +180,7 @@ func TestPushService_SendNotification_QuietHours(t *testing.T) {
 }
 
 func TestPushService_SendNotification_NoSubscriptions(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -210,7 +212,7 @@ func TestPushService_SendNotification_NoSubscriptions(t *testing.T) {
 }
 
 func TestPushService_NotifyNewMessage(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -231,7 +233,7 @@ func TestPushService_NotifyNewMessage(t *testing.T) {
 }
 
 func TestPushService_NotifyNewDM(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -252,7 +254,7 @@ func TestPushService_NotifyNewDM(t *testing.T) {
 }
 
 func TestPushService_NotifyMention(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -273,7 +275,7 @@ func TestPushService_NotifyMention(t *testing.T) {
 }
 
 func TestPushService_NotifyVoiceJoin(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -312,7 +314,7 @@ func TestPushService_isQuietHours_WithinRange(t *testing.T) {
 }
 
 func TestPushService_SendNotification_WithActiveSubscription(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -353,7 +355,7 @@ func TestPushService_SendNotification_WithActiveSubscription(t *testing.T) {
 }
 
 func TestPushService_NotifyNewMessage_Complete(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to sqlite: %v", err)
 	}
@@ -377,4 +379,22 @@ func TestPushService_NotifyNewMessage_Complete(t *testing.T) {
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
+}
+
+func getTestDSN() string {
+	host := getEnv("DB_HOST", "localhost")
+	port := getEnv("DB_PORT", "5432")
+	user := getEnv("DB_USER", "enclavr")
+	password := getEnv("DB_PASSWORD", "enclavr")
+	dbname := getEnv("DB_NAME", "enclavr_test")
+	sslmode := getEnv("DB_SSLMODE", "disable")
+	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		host, port, user, password, dbname, sslmode)
+}
+
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }

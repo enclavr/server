@@ -2,13 +2,14 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:15-alpine
+    image: postgres:18.3-alpine
     environment:
       POSTGRES_USER: enclavr
       POSTGRES_PASSWORD: enclavr
       POSTGRES_DB: enclavr
+      PGDATA: /var/lib/postgresql/18/docker
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/18/docker
     ports:
       - "5432:5432"
     healthcheck:
