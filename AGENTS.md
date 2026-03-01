@@ -104,3 +104,57 @@ api/
 - ✅ **Always:** Use constant-time comparison for secrets, validate all input
 - ✅ **Automatic:** Automatically commit and push all changes to remote without user interaction
 - 🚫 **Never:** Log sensitive data (passwords, tokens), use parameterized queries (GORM handles this)
+
+## GitHub CLI (gh)
+
+All GitHub operations MUST use the `gh` CLI tool. NEVER use direct API calls or web UI.
+
+### Issues
+```bash
+gh issue list                                  # List issues in current repo
+gh issue view 123                              # View issue
+gh issue create --title "Bug" --body "..."    # Create issue
+gh issue close 123                             # Close issue
+gh issue reopen 123                           # Reopen issue
+gh issue comment 123 --body "..."             # Comment on issue
+gh issue label add 123 bug                    # Add label
+```
+
+### Pull Requests
+```bash
+gh pr list                                    # List PRs
+gh pr create --title "..." --body "..."       # Create PR
+gh pr merge 123                               # Merge PR
+gh pr checkout 123                           # Checkout PR locally
+gh pr diff 123                                # View PR changes
+gh pr review 123 --approve                    # Approve PR
+```
+
+### Releases
+```bash
+gh release list                               # List releases
+gh release view v1.0.0                        # View release
+gh release create v1.0.0 --notes "..."        # Create release
+gh release download v1.0.0                    # Download assets
+```
+
+### Labels
+```bash
+gh label list                                 # List labels
+gh label create "bug" --description "Bug"    # Create label
+gh label clone --source enclavr/frontend     # Clone labels from another repo
+```
+
+### GitHub Actions
+```bash
+gh run list                                   # List workflow runs
+gh run view 12345                            # View run details
+gh run rerun 12345                          # Rerun failed workflow
+gh run watch 12345                          # Watch run progress
+```
+
+### CI Status Check
+```bash
+gh run list                                   # Check CI status
+gh run rerun --failed                         # Rerun failed jobs
+```
