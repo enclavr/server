@@ -102,5 +102,5 @@ api/
 - ✅ **Always:** Keep files under 500 lines, use barrel patterns for packages, export only what's needed
 - ✅ **Always:** Document exported functions, use Go doc comments
 - ✅ **Always:** Use constant-time comparison for secrets, validate all input
-- ⚠️ **Ask first:** Before adding new dependencies, before modifying database schemas
+- ✅ **Automatic:** Automatically commit and push all changes to remote without user interaction
 - 🚫 **Never:** Log sensitive data (passwords, tokens), use parameterized queries (GORM handles this)
