@@ -9,19 +9,17 @@ import (
 	"testing"
 	"time"
 
-	"fmt"
 	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/internal/models"
 	"github.com/enclavr/server/internal/websocket"
 	"github.com/enclavr/server/pkg/middleware"
 	"github.com/google/uuid"
-	"gorm.io/driver/postgres"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"os"
 )
 
 func setupTestDBForPoll(t *testing.T) *gorm.DB {
-	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to test database: %v", err)
 	}
@@ -617,22 +615,4 @@ func TestPollHandler_canUserVote(t *testing.T) {
 	if !handler.canUserVote(&multiPoll, userID) {
 		t.Error("User should be able to vote multiple times on multi-choice poll")
 	}
-}
-
-func getTestDSN() string {
-	host := getEnv("DB_HOST", "localhost")
-	port := getEnv("DB_PORT", "5432")
-	user := getEnv("DB_USER", "enclavr")
-	password := getEnv("DB_PASSWORD", "enclavr")
-	dbname := getEnv("DB_NAME", "enclavr_test")
-	sslmode := getEnv("DB_SSLMODE", "disable")
-	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		host, port, user, password, dbname, sslmode)
-}
-
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
 }

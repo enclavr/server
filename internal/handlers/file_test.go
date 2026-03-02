@@ -5,17 +5,15 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"fmt"
 	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/internal/models"
 	"github.com/google/uuid"
-	"gorm.io/driver/postgres"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"os"
 )
 
 func setupTestDBForFile(t *testing.T) *gorm.DB {
-	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to test database: %v", err)
 	}
@@ -255,7 +253,7 @@ func TestFileHandler_GetFile_PathTraversalWithDot(t *testing.T) {
 }
 
 func TestFileHandler_NewFileHandler_DefaultValues(t *testing.T) {
-	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect: %v", err)
 	}
@@ -272,7 +270,7 @@ func TestFileHandler_NewFileHandler_DefaultValues(t *testing.T) {
 }
 
 func TestFileHandler_UploadFile_ZeroMaxUploadSize(t *testing.T) {
-	db, err := gorm.Open(postgres.Open(getTestDSN()), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect: %v", err)
 	}
@@ -350,22 +348,4 @@ func TestFileHandler_UploadToWebhook_Error(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for invalid URL")
 	}
-}
-
-func getTestDSN() string {
-	host := getEnv("DB_HOST", "localhost")
-	port := getEnv("DB_PORT", "5432")
-	user := getEnv("DB_USER", "enclavr")
-	password := getEnv("DB_PASSWORD", "enclavr")
-	dbname := getEnv("DB_NAME", "enclavr_test")
-	sslmode := getEnv("DB_SSLMODE", "disable")
-	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		host, port, user, password, dbname, sslmode)
-}
-
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
 }
