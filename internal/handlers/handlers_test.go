@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -18,7 +19,7 @@ import (
 )
 
 func getTestDSN() string {
-	return "file::memory:?cache=shared"
+	return fmt.Sprintf("file:%s?mode=memory&cache=shared", uuid.New().String())
 }
 
 func setupTestDBForRoom(t *testing.T) *gorm.DB {

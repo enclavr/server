@@ -1,6 +1,7 @@
 package models
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -970,5 +971,5 @@ func TestUserNotificationSettings_BeforeCreate(t *testing.T) {
 }
 
 func getTestDSN() string {
-	return "file::memory:?cache=shared"
+	return fmt.Sprintf("file:%s?mode=memory&cache=shared", uuid.New().String())
 }

@@ -1,6 +1,7 @@
 package services
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/enclavr/server/internal/config"
@@ -380,5 +381,5 @@ func TestPushService_NotifyNewMessage_Complete(t *testing.T) {
 }
 
 func getTestDSN() string {
-	return "file::memory:?cache=shared"
+	return fmt.Sprintf("file:%s?mode=memory&cache=shared", uuid.New().String())
 }

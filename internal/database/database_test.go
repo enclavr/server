@@ -12,6 +12,10 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+func getTestDSN() string {
+	return fmt.Sprintf("file:%s?mode=memory&cache=shared", uuid.New().String())
+}
+
 func TestNew_WithSQLite(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
 	if err != nil {
@@ -449,8 +453,4 @@ func TestDatabase_Migrate(t *testing.T) {
 	if len(missingTables) > 0 {
 		t.Errorf("missing tables after migration: %v", missingTables)
 	}
-}
-
-func getTestDSN() string {
-	return "file::memory:?cache=shared"
 }
