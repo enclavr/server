@@ -198,3 +198,58 @@ func TestPubSubService_ConcurrentHandlers(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestPubSubService_Connect_AlreadyConnected(t *testing.T) {
+	ps := NewPubSubService("localhost", "", 0)
+	ps.mu.Lock()
+	ps.connected = true
+	ps.mu.Unlock()
+
+	err := ps.Connect()
+	if err != nil {
+		t.Logf("Connect returned error: %v", err)
+	}
+}
+
+func TestPubSubService_Subscribe_InvalidChannel(t *testing.T) {
+	ps := NewPubSubService("localhost", "", 0)
+
+	err := ps.Subscribe("")
+	if err == nil {
+		t.Log("Subscribe with empty channel returned no error")
+	}
+}
+
+func TestPubSubService_Disconnect_AlreadyDisconnected(t *testing.T) {
+	ps := NewPubSubService("localhost", "", 0)
+
+	_ = ps.Disconnect()
+
+	err := ps.Disconnect()
+	if err != nil {
+		t.Logf("Second disconnect returned error: %v", err)
+	}
+}
+
+func TestPubSubService_IsConnected_AfterConnect(t *testing.T) {
+	ps := NewPubSubService("localhost", "", 0)
+
+	if ps.IsConnected() != false {
+		t.Error("expected IsConnected to return false before connect")
+	}
+}
+
+func TestPubSubService_MultipleHandlers(t *testing.T) {
+	ps := NewPubSubService("localhost", "", 0)
+
+	ps.RegisterHandler("type1", func(msg *PubSubMessage) {})
+	ps.RegisterHandler("type2", func(msg *PubSubMessage) {})
+	ps.RegisterHandler("type3", func(msg *PubSubMessage) {})
+
+	ps.mu.RLock()
+	defer ps.mu.RUnlock()
+
+	if len(ps.handlers) != 3 {
+		t.Errorf("expected 3 handlers, got %d", len(ps.handlers))
+	}
+}

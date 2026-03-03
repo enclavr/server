@@ -32,22 +32,27 @@ func (rl *RateLimiter) cleanup() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		rl.mu.Lock()
-		now := time.Now()
-		for userID, times := range rl.requests {
-			var valid []time.Time
-			for _, t := range times {
-				if now.Sub(t) < rl.window {
-					valid = append(valid, t)
-				}
-			}
-			if len(valid) == 0 {
-				delete(rl.requests, userID)
-			} else {
-				rl.requests[userID] = valid
+		rl.cleanupOnce()
+	}
+}
+
+func (rl *RateLimiter) cleanupOnce() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	for userID, times := range rl.requests {
+		var valid []time.Time
+		for _, t := range times {
+			if now.Sub(t) < rl.window {
+				valid = append(valid, t)
 			}
 		}
-		rl.mu.Unlock()
+		if len(valid) == 0 {
+			delete(rl.requests, userID)
+		} else {
+			rl.requests[userID] = valid
+		}
 	}
 }
 

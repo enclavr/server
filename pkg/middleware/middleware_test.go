@@ -756,3 +756,35 @@ func TestRateLimiter_ExpiredEntries(t *testing.T) {
 		t.Error("expected rate limit to be reset after window expiration")
 	}
 }
+
+func TestRateLimiter_CleanupOnce(t *testing.T) {
+	rl := NewRateLimiter(10, time.Minute)
+	userID1 := uuid.New()
+	userID2 := uuid.New()
+
+	rl.Allow(userID1)
+	rl.Allow(userID1)
+	rl.Allow(userID2)
+
+	rl.mu.Lock()
+	rl.requests[userID1] = []time.Time{time.Now().Add(-2 * time.Minute)}
+	rl.requests[userID2] = []time.Time{time.Now()}
+	rl.mu.Unlock()
+
+	rl.cleanupOnce()
+
+	rl.mu.RLock()
+	_, hasUser1 := rl.requests[userID1]
+	timesUser2, hasUser2 := rl.requests[userID2]
+	rl.mu.RUnlock()
+
+	if hasUser1 {
+		t.Error("expected user1 to be removed after cleanup")
+	}
+	if !hasUser2 {
+		t.Error("expected user2 to remain after cleanup")
+	}
+	if len(timesUser2) != 1 {
+		t.Errorf("expected user2 to have 1 time entry, got %d", len(timesUser2))
+	}
+}
