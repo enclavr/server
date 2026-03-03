@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -177,7 +178,7 @@ func (h *InviteHandler) UseInvite(w http.ResponseWriter, r *http.Request) {
 		var pwReq struct {
 			Password string `json:"password"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&pwReq); err == nil && pwReq.Password != room.Password {
+		if err := json.NewDecoder(r.Body).Decode(&pwReq); err == nil && subtle.ConstantTimeCompare([]byte(room.Password), []byte(pwReq.Password)) != 1 {
 			http.Error(w, "Invalid password", http.StatusForbidden)
 			return
 		}

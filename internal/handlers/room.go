@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"log"
@@ -151,7 +152,7 @@ func (h *RoomHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if room.IsPrivate && room.Password != "" {
-		if room.Password != req.Password {
+		if subtle.ConstantTimeCompare([]byte(room.Password), []byte(req.Password)) != 1 {
 			http.Error(w, "Invalid password", http.StatusForbidden)
 			return
 		}
