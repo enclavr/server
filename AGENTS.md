@@ -5,15 +5,33 @@ description: Server agent for Enclavr - Go backend with PostgreSQL, WebSocket
 
 You are an expert backend developer specializing in Go, PostgreSQL, and real-time systems for the Enclavr voice chat platform.
 
+## Memory Bank
+
+This repository maintains a `memory-bank/` directory for agent context. It is **local-only** and gitignored.
+
+### Required Files (6 files)
+- `activeContext.md` - Current work focus, latest changes
+- `progress.md` - What works, what's left to build
+- `productContext.md` - Product purpose, features
+- `projectbrief.md` - Project goals, requirements
+- `systemPatterns.md` - Code patterns, conventions
+- `techContext.md` - Technologies, CLI commands
+
+### Update Frequency
+- `activeContext.md` - At the start of every work session
+- `progress.md` - When features are completed
+- `techContext.md` - When dependencies change
+
 ## Tech Stack
 
-- **Language:** Go 1.25
+- **Language:** Go 1.25 (August 2025)
 - **Web Framework:** Go net/http with gorilla/mux
-- **Database:** PostgreSQL 15 + GORM ORM
+- **Database:** PostgreSQL 18 (September 2025) + GORM ORM
 - **WebSocket:** gorilla/websocket
 - **Real-time:** WebSocket with Redis pub/sub for scaling
 - **Auth:** JWT + bcrypt + OIDC
 - **Testing:** Go built-in testing with SQLite in-memory
+- **Migrations:** golang-migrate
 
 ## Tools You Can Use
 
@@ -89,6 +107,99 @@ api/
 - Place test files next to source files (`handler.go` → `handler_test.go`)
 - Use table-driven tests
 - Name test functions: `Test<FunctionName>_<Scenario>`
+
+## Database Migrations
+
+Use **golang-migrate** for schema version control.
+
+### Project Structure
+```
+migrations/
+  ├── 001_create_users.up.sql
+  ├── 001_create_users.down.sql
+  ├── 002_add_rooms_table.up.sql
+  └── 002_add_rooms_table.down.sql
+```
+
+### Commands
+```bash
+# Install golang-migrate
+go install github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+
+# Create migration
+migrate create -ext sql -dir migrations create_users_table
+
+# Run migrations
+migrate -path migrations -database "postgres://user:pass@localhost:5432/db?sslmode=disable" up
+
+# Rollback last migration
+migrate -path migrations -database "postgres://user:pass@localhost:5432/db?sslmode=disable" down
+
+# Force version (if out of sync)
+migrate -path migrations -database "postgres://user:pass@localhost:5432/db?sslmode=disable" force 1
+```
+
+### Best Practices
+- **Always write paired up/down migrations** - every change must be reversible
+- **Use sequential versioning** - `001`, `002`, etc.
+- **Make migrations idempotent** - safe to re-run
+- **Never modify existing migrations** - create new ones to fix
+- **Test rollbacks locally** before deploying
+- **Use transactions** for multi-step schema changes
+
+## Rollback Strategies
+
+### 1. Migration Rollbacks
+```bash
+# Rollback N migrations
+migrate -path migrations -database "$DATABASE_URL" down N
+
+# Rollback to specific version
+migrate -path migrations -database "$DATABASE_URL" goto 1
+```
+
+### 2. Emergency Rollback (Data Preservation)
+If a migration fails and data must be preserved:
+1. Do NOT run `down` - it may lose data
+2. Create a new migration to fix the issue
+3. Use `FORCE` to set version if migration table is out of sync
+
+### 3. Database Backup Rollback
+```bash
+# Restore from backup before migration
+psql -h localhost -U user dbname < backup_pre_migration.sql
+
+# Then re-run migrations from correct version
+```
+
+### 4. Application-Level Rollback
+- Keep backward-compatible API during transitions
+- Use feature flags for schema changes
+- Deploy application changes before schema changes when possible
+
+### CI/CD Integration
+```yaml
+# Run migrations before tests
+- name: Run migrations
+  run: |
+    migrate -path migrations -database "$DATABASE_URL" up
+
+- name: Run tests
+  run: go test -v ./...
+
+# Automatic rollback on failure
+- name: Rollback on failure
+  if: failure()
+  run: migrate -path migrations -database "$DATABASE_URL" down
+```
+
+### Decision Tree for Rollbacks
+| Scenario | Action |
+|----------|--------|
+| Migration failed mid-way | Run `down` to rollback |
+| Migration succeeded, app fails | Restore from backup + fix app |
+| Data corruption after migration | Restore from backup + create new migration |
+| Schema incompatibility | Use `force` to sync version table |
 
 ## API Design
 

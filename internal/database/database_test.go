@@ -12,6 +12,36 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+func TestNew_InvalidDSN(t *testing.T) {
+	cfg := &config.DatabaseConfig{
+		Host:     "invalid-host",
+		Port:     "9999",
+		User:     "invalid",
+		Password: "invalid",
+		DBName:   "invalid",
+		SSLMode:  "disable",
+	}
+
+	_, err := New(cfg)
+	if err == nil {
+		t.Error("expected error with invalid DSN")
+	}
+}
+
+func TestGetEnv(t *testing.T) {
+	t.Setenv("TEST_KEY", "test_value")
+
+	result := getEnv("TEST_KEY", "default")
+	if result != "test_value" {
+		t.Errorf("expected test_value, got %s", result)
+	}
+
+	result = getEnv("NON_EXISTENT", "default")
+	if result != "default" {
+		t.Errorf("expected default, got %s", result)
+	}
+}
+
 func getTestDSN() string {
 	return fmt.Sprintf("file:%s?mode=memory&cache=shared", uuid.New().String())
 }
