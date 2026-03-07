@@ -2,6 +2,7 @@ package services
 
 import (
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/enclavr/server/internal/config"
@@ -381,5 +382,21 @@ func TestPushService_NotifyNewMessage_Complete(t *testing.T) {
 }
 
 func getTestDSN() string {
+	if host := os.Getenv("NEON_DB_HOST"); host != "" {
+		return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=require",
+			host,
+			getEnvOrDefault("NEON_DB_PORT", "5432"),
+			getEnvOrDefault("NEON_DB_USER", "neondb_owner"),
+			getEnvOrDefault("NEON_DB_PASSWORD", ""),
+			getEnvOrDefault("NEON_DB_NAME", "neondb"),
+		)
+	}
 	return fmt.Sprintf("file:%s?mode=memory&cache=shared", uuid.New().String())
+}
+
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }

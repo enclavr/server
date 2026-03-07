@@ -12,17 +12,13 @@ import (
 	"github.com/enclavr/server/internal/models"
 	"github.com/enclavr/server/pkg/middleware"
 	"github.com/google/uuid"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 func setupTestDBForWebhook(t *testing.T) *gorm.DB {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect to test database: %v", err)
-	}
+	db := openTestDB(t)
 
-	err = db.AutoMigrate(
+	err := db.AutoMigrate(
 		&models.User{},
 		&models.Room{},
 		&models.Webhook{},

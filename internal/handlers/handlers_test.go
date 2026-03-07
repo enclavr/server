@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/enclavr/server/internal/database"
@@ -14,21 +15,51 @@ import (
 	"github.com/enclavr/server/internal/websocket"
 	"github.com/enclavr/server/pkg/middleware"
 	"github.com/google/uuid"
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 func getTestDSN() string {
+	if host := os.Getenv("NEON_DB_HOST"); host != "" {
+		return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=require",
+			host,
+			getEnvOrDefault("NEON_DB_PORT", "5432"),
+			getEnvOrDefault("NEON_DB_USER", "neondb_owner"),
+			getEnvOrDefault("NEON_DB_PASSWORD", ""),
+			getEnvOrDefault("NEON_DB_NAME", "neondb"),
+		)
+	}
 	return fmt.Sprintf("file:%s?mode=memory&cache=shared", uuid.New().String())
 }
 
-func setupTestDBForRoom(t *testing.T) *gorm.DB {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+func openTestDB(t *testing.T) *gorm.DB {
+	dsn := getTestDSN()
+	var db *gorm.DB
+	var err error
+
+	if os.Getenv("NEON_DB_HOST") != "" {
+		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	} else {
+		db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	}
 	if err != nil {
 		t.Fatalf("failed to connect to test database: %v", err)
 	}
+	return db
+}
 
-	err = db.AutoMigrate(
+func setupTestDBForRoom(t *testing.T) *gorm.DB {
+	db := openTestDB(t)
+
+	err := db.AutoMigrate(
 		&models.User{},
 		&models.Room{},
 		&models.UserRoom{},
@@ -280,12 +311,9 @@ func TestLeaveRoom(t *testing.T) {
 }
 
 func setupTestDBForMessage(t *testing.T) *gorm.DB {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect to test database: %v", err)
-	}
+	db := openTestDB(t)
 
-	err = db.AutoMigrate(
+	err := db.AutoMigrate(
 		&models.User{},
 		&models.Room{},
 		&models.UserRoom{},
@@ -354,12 +382,9 @@ func TestGetMessages(t *testing.T) {
 }
 
 func setupTestDBForUser(t *testing.T) *gorm.DB {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect to test database: %v", err)
-	}
+	db := openTestDB(t)
 
-	err = db.AutoMigrate(
+	err := db.AutoMigrate(
 		&models.User{},
 	)
 	if err != nil {
@@ -402,12 +427,9 @@ func TestSearchUsers(t *testing.T) {
 }
 
 func setupMessageHandlerWithUserRoom(t *testing.T) (*MessageHandler, *database.Database, uuid.UUID, uuid.UUID) {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect to test database: %v", err)
-	}
+	db := openTestDB(t)
 
-	err = db.AutoMigrate(
+	err := db.AutoMigrate(
 		&models.User{},
 		&models.Room{},
 		&models.UserRoom{},

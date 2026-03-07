@@ -10,17 +10,12 @@ import (
 	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/internal/models"
 	"github.com/google/uuid"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 func setupReportHandlerTest(t *testing.T) (*ReportHandler, *database.Database, uuid.UUID, uuid.UUID, uuid.UUID) {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect to test database: %v", err)
-	}
+	db := openTestDB(t)
 
-	err = db.AutoMigrate(
+	err := db.AutoMigrate(
 		&models.User{},
 		&models.Room{},
 		&models.Report{},

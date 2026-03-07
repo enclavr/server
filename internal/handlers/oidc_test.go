@@ -9,17 +9,13 @@ import (
 	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/internal/models"
 	"github.com/google/uuid"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 func setupTestDBForOIDC(t *testing.T) *gorm.DB {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect to test database: %v", err)
-	}
+	db := openTestDB(t)
 
-	err = db.AutoMigrate(&models.User{})
+	err := db.AutoMigrate(&models.User{})
 	if err != nil {
 		t.Fatalf("failed to migrate database: %v", err)
 	}

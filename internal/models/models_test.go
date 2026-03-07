@@ -2,18 +2,32 @@ package models
 
 import (
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 func setupTestDB(t *testing.T) *gorm.DB {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
+	return openTestDB(t)
+}
+
+func openTestDB(t *testing.T) *gorm.DB {
+	dsn := getTestDSN()
+	var db *gorm.DB
+	var err error
+
+	if os.Getenv("NEON_DB_HOST") != "" {
+		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	} else {
+		db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	}
 	if err != nil {
-		t.Fatalf("failed to connect to sqlite: %v", err)
+		t.Fatalf("failed to connect to test database: %v", err)
 	}
 	return db
 }
@@ -971,5 +985,21 @@ func TestUserNotificationSettings_BeforeCreate(t *testing.T) {
 }
 
 func getTestDSN() string {
+	if host := os.Getenv("NEON_DB_HOST"); host != "" {
+		return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=require",
+			host,
+			getEnvOrDefault("NEON_DB_PORT", "5432"),
+			getEnvOrDefault("NEON_DB_USER", "neondb_owner"),
+			getEnvOrDefault("NEON_DB_PASSWORD", ""),
+			getEnvOrDefault("NEON_DB_NAME", "neondb"),
+		)
+	}
 	return fmt.Sprintf("file:%s?mode=memory&cache=shared", uuid.New().String())
+}
+
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }

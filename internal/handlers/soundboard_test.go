@@ -11,17 +11,12 @@ import (
 	"github.com/enclavr/server/internal/models"
 	"github.com/enclavr/server/internal/websocket"
 	"github.com/google/uuid"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 func setupSoundboardHandlerTest(t *testing.T) (*SoundboardHandler, *database.Database, *websocket.Hub, uuid.UUID) {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect to test database: %v", err)
-	}
+	db := openTestDB(t)
 
-	err = db.AutoMigrate(&models.SoundboardSound{})
+	err := db.AutoMigrate(&models.SoundboardSound{})
 	if err != nil {
 		t.Fatalf("failed to migrate database: %v", err)
 	}

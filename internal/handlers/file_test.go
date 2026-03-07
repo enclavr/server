@@ -8,17 +8,13 @@ import (
 	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/internal/models"
 	"github.com/google/uuid"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 func setupTestDBForFile(t *testing.T) *gorm.DB {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect to test database: %v", err)
-	}
+	db := openTestDB(t)
 
-	err = db.AutoMigrate(
+	err := db.AutoMigrate(
 		&models.User{},
 		&models.Room{},
 		&models.UserRoom{},
@@ -253,10 +249,7 @@ func TestFileHandler_GetFile_PathTraversalWithDot(t *testing.T) {
 }
 
 func TestFileHandler_NewFileHandler_DefaultValues(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect: %v", err)
-	}
+	db := openTestDB(t)
 	testDB := &database.Database{DB: db}
 
 	handler := NewFileHandler(testDB, "", 0)
@@ -270,12 +263,9 @@ func TestFileHandler_NewFileHandler_DefaultValues(t *testing.T) {
 }
 
 func TestFileHandler_UploadFile_ZeroMaxUploadSize(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect: %v", err)
-	}
+	db := openTestDB(t)
 
-	err = db.AutoMigrate(
+	err := db.AutoMigrate(
 		&models.User{},
 		&models.Room{},
 		&models.UserRoom{},

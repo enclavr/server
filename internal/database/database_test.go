@@ -2,14 +2,15 @@ package database
 
 import (
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/enclavr/server/internal/config"
 	"github.com/enclavr/server/internal/models"
 	"github.com/google/uuid"
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 func TestNew_InvalidDSN(t *testing.T) {
@@ -43,14 +44,43 @@ func TestGetEnv(t *testing.T) {
 }
 
 func getTestDSN() string {
+	if host := os.Getenv("NEON_DB_HOST"); host != "" {
+		return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=require",
+			host,
+			getEnvOrDefault("NEON_DB_PORT", "5432"),
+			getEnvOrDefault("NEON_DB_USER", "neondb_owner"),
+			getEnvOrDefault("NEON_DB_PASSWORD", ""),
+			getEnvOrDefault("NEON_DB_NAME", "neondb"),
+		)
+	}
 	return fmt.Sprintf("file:%s?mode=memory&cache=shared", uuid.New().String())
 }
 
-func TestNew_WithSQLite(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect to sqlite: %v", err)
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
 	}
+	return defaultValue
+}
+
+func openTestDB(t *testing.T) *gorm.DB {
+	dsn := getTestDSN()
+	var db *gorm.DB
+	var err error
+
+	if os.Getenv("NEON_DB_HOST") != "" {
+		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	} else {
+		db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	}
+	if err != nil {
+		t.Fatalf("failed to connect to test database: %v", err)
+	}
+	return db
+}
+
+func TestNew_WithSQLite(t *testing.T) {
+	db := openTestDB(t)
 
 	database := &Database{db}
 	if database.DB == nil {
@@ -59,12 +89,9 @@ func TestNew_WithSQLite(t *testing.T) {
 }
 
 func TestDatabase_AutoMigrate(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect to sqlite: %v", err)
-	}
+	db := openTestDB(t)
 
-	err = db.AutoMigrate(
+	err := db.AutoMigrate(
 		&models.User{},
 		&models.Room{},
 		&models.Category{},
@@ -106,14 +133,11 @@ func TestDatabase_AutoMigrate(t *testing.T) {
 }
 
 func TestDatabase_InsertAndQuery(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect to sqlite: %v", err)
-	}
+	db := openTestDB(t)
 
 	database := &Database{db}
 
-	err = db.AutoMigrate(&models.User{})
+	err := db.AutoMigrate(&models.User{})
 	if err != nil {
 		t.Fatalf("migration failed: %v", err)
 	}
@@ -144,15 +168,12 @@ func TestDatabase_InsertAndQuery(t *testing.T) {
 }
 
 func TestDatabase_Transaction(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect to sqlite: %v", err)
-	}
+	db := openTestDB(t)
 
 	database := &Database{db}
 	_ = db.AutoMigrate(&models.User{})
 
-	err = database.Transaction(func(tx *gorm.DB) error {
+	err := database.Transaction(func(tx *gorm.DB) error {
 		return tx.Create(&models.User{
 			Username:     "testuser",
 			Email:        "test@example.com",
@@ -166,15 +187,12 @@ func TestDatabase_Transaction(t *testing.T) {
 }
 
 func TestDatabase_Transaction_Rollback(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect to sqlite: %v", err)
-	}
+	db := openTestDB(t)
 
 	database := &Database{db}
 	_ = db.AutoMigrate(&models.User{})
 
-	err = database.Transaction(func(tx *gorm.DB) error {
+	err := database.Transaction(func(tx *gorm.DB) error {
 		return gorm.ErrInvalidField
 	})
 
@@ -224,10 +242,7 @@ func TestDatabase_ConfigDSN_WithSSL(t *testing.T) {
 }
 
 func TestDatabase_Create(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect to sqlite: %v", err)
-	}
+	db := openTestDB(t)
 
 	database := &Database{db}
 	_ = db.AutoMigrate(&models.User{})
@@ -238,7 +253,7 @@ func TestDatabase_Create(t *testing.T) {
 		PasswordHash: "hash123",
 	}
 
-	err = database.Create(user).Error
+	err := database.Create(user).Error
 	if err != nil {
 		t.Fatalf("failed to create user: %v", err)
 	}
@@ -249,10 +264,7 @@ func TestDatabase_Create(t *testing.T) {
 }
 
 func TestDatabase_First(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect to sqlite: %v", err)
-	}
+	db := openTestDB(t)
 
 	database := &Database{db}
 	_ = db.AutoMigrate(&models.User{})
@@ -265,7 +277,7 @@ func TestDatabase_First(t *testing.T) {
 	database.Create(user)
 
 	var found models.User
-	err = database.First(&found, "username = ?", "firstuser").Error
+	err := database.First(&found, "username = ?", "firstuser").Error
 	if err != nil {
 		t.Fatalf("failed to find user: %v", err)
 	}
@@ -276,10 +288,7 @@ func TestDatabase_First(t *testing.T) {
 }
 
 func TestDatabase_Where(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect to sqlite: %v", err)
-	}
+	db := openTestDB(t)
 
 	database := &Database{db}
 	_ = db.AutoMigrate(&models.User{})
@@ -294,7 +303,7 @@ func TestDatabase_Where(t *testing.T) {
 	}
 
 	var results []models.User
-	err = database.Where("username IN ?", []string{"user1", "user2"}).Find(&results).Error
+	err := database.Where("username IN ?", []string{"user1", "user2"}).Find(&results).Error
 	if err != nil {
 		t.Fatalf("failed to query users: %v", err)
 	}
@@ -305,10 +314,7 @@ func TestDatabase_Where(t *testing.T) {
 }
 
 func TestDatabase_Save(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect to sqlite: %v", err)
-	}
+	db := openTestDB(t)
 
 	database := &Database{db}
 	_ = db.AutoMigrate(&models.User{})
@@ -321,7 +327,7 @@ func TestDatabase_Save(t *testing.T) {
 	database.Create(user)
 
 	user.PasswordHash = "newhash"
-	err = database.Save(user).Error
+	err := database.Save(user).Error
 	if err != nil {
 		t.Fatalf("failed to save user: %v", err)
 	}
@@ -334,10 +340,7 @@ func TestDatabase_Save(t *testing.T) {
 }
 
 func TestDatabase_Delete(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect to sqlite: %v", err)
-	}
+	db := openTestDB(t)
 
 	database := &Database{db}
 	_ = db.AutoMigrate(&models.User{})
@@ -349,7 +352,7 @@ func TestDatabase_Delete(t *testing.T) {
 	}
 	database.Create(user)
 
-	err = database.Delete(user).Error
+	err := database.Delete(user).Error
 	if err != nil {
 		t.Fatalf("failed to delete user: %v", err)
 	}
@@ -362,10 +365,7 @@ func TestDatabase_Delete(t *testing.T) {
 }
 
 func TestDatabase_Count(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect to sqlite: %v", err)
-	}
+	db := openTestDB(t)
 
 	database := &Database{db}
 	_ = db.AutoMigrate(&models.User{})
@@ -379,7 +379,7 @@ func TestDatabase_Count(t *testing.T) {
 	}
 
 	var count int64
-	err = database.Model(&models.User{}).Count(&count).Error
+	err := database.Model(&models.User{}).Count(&count).Error
 	if err != nil {
 		t.Fatalf("failed to count users: %v", err)
 	}
@@ -390,10 +390,7 @@ func TestDatabase_Count(t *testing.T) {
 }
 
 func TestDatabase_Updates(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect to sqlite: %v", err)
-	}
+	db := openTestDB(t)
 
 	database := &Database{db}
 	_ = db.AutoMigrate(&models.User{})
@@ -409,7 +406,7 @@ func TestDatabase_Updates(t *testing.T) {
 		"username": "updated",
 		"email":    "updated@example.com",
 	}
-	err = database.Model(user).Updates(updates).Error
+	err := database.Model(user).Updates(updates).Error
 	if err != nil {
 		t.Fatalf("failed to update user: %v", err)
 	}
@@ -422,10 +419,7 @@ func TestDatabase_Updates(t *testing.T) {
 }
 
 func TestDatabase_Find(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect to sqlite: %v", err)
-	}
+	db := openTestDB(t)
 
 	database := &Database{db}
 	_ = db.AutoMigrate(&models.User{})
@@ -440,7 +434,7 @@ func TestDatabase_Find(t *testing.T) {
 	}
 
 	var results []models.User
-	err = database.Find(&results).Error
+	err := database.Find(&results).Error
 	if err != nil {
 		t.Fatalf("failed to find users: %v", err)
 	}
@@ -451,16 +445,11 @@ func TestDatabase_Find(t *testing.T) {
 }
 
 func TestDatabase_Migrate(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(getTestDSN()), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
-	if err != nil {
-		t.Fatalf("failed to connect to sqlite: %v", err)
-	}
+	db := openTestDB(t)
 
 	database := &Database{db}
 
-	err = database.Migrate()
+	err := database.Migrate()
 	if err != nil {
 		t.Fatalf("migration failed: %v", err)
 	}
