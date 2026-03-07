@@ -101,12 +101,25 @@ api/
 ## Testing Standards
 
 - Use **Go's built-in testing package** (`testing`)
-- **NEVER mock database** - use SQLite in-memory for tests
+- **Use Neon for CI/CD** - tests run against Neon PostgreSQL when `NEON_DB_HOST` secret is set
+- **Use SQLite for local development** - defaults to SQLite in-memory when no Neon credentials
 - **NEVER mock external services** - use real implementations or test servers
 - Test with real data and real responses
 - Place test files next to source files (`handler.go` → `handler_test.go`)
 - Use table-driven tests
 - Name test functions: `Test<FunctionName>_<Scenario>`
+
+### Running Tests
+
+```bash
+# Run with SQLite (default - local development)
+go test -v ./...
+
+# Run with Neon (CI/CD - uses GitHub secrets)
+# Set these environment variables:
+#   NEON_DB_HOST, NEON_DB_PORT, NEON_DB_USER, NEON_DB_PASSWORD, NEON_DB_NAME
+go test -v ./...
+```
 
 ## Database Migrations
 
