@@ -11,13 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
-var testDB *gorm.DB
-
-func GetTestDB(t *testing.T) *gorm.DB {
-	if testDB != nil {
-		return testDB
-	}
-
+func GetTestDB(t *testing.T) (*gorm.DB, func()) {
 	var db *gorm.DB
 	var err error
 
@@ -31,8 +25,19 @@ func GetTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("failed to connect to database: %v", err)
 	}
 
-	testDB = db
-	return db
+	if os.Getenv("POSTGRES_HOST") != "" {
+		tx := db.Begin()
+		if tx.Error != nil {
+			t.Fatalf("failed to begin transaction: %v", tx.Error)
+		}
+		return tx, func() {
+			if r := tx.Rollback(); r.Error != nil {
+				t.Logf("rollback error: %v", r.Error)
+			}
+		}
+	}
+
+	return db, func() {}
 }
 
 func connectPostgres() (*gorm.DB, error) {

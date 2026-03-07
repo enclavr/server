@@ -70,9 +70,23 @@ func openTestDB(t *testing.T) *gorm.DB {
 
 	if os.Getenv("POSTGRES_HOST") != "" {
 		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	} else {
-		db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+		if err != nil {
+			t.Fatalf("failed to connect to test database: %v", err)
+		}
+		tables := []string{
+			"users", "rooms", "categories", "user_rooms", "messages",
+			"sessions", "refresh_tokens", "voice_sessions", "room_invites",
+			"presences", "direct_messages", "webhooks", "webhook_logs",
+			"pinned_messages", "message_reactions", "server_settings",
+			"invites", "files", "push_subscriptions", "user_notification_settings",
+		}
+		for _, table := range tables {
+			db.Exec("DELETE FROM " + table)
+		}
+		return db
 	}
+
+	db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to connect to test database: %v", err)
 	}
