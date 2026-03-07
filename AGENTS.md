@@ -501,3 +501,17 @@ codesearch --query "Go GORM PostgreSQL connection pooling" --tokensNum 5000
 - ✅ Use `codesearch` for code examples and implementation patterns
 - ✅ Use `webfetch` for full documentation pages
 - 🚫 Don't use for real-time data or API calls
+
+### Sequential Thinking Tool
+
+Use this tool for complex problem-solving through structured thought processes.
+
+```bash
+# Analyze a problem with sequential thinking
+mcp-sequential-thinking_sequentialthinking --thought "Analyzing the problem step by step..." --nextThoughtNeeded true --thoughtNumber 1 --totalThoughts 5
+```
+
+**When to use Sequential Thinking:**
+- ✅ Use for complex multi-step problems
+- ✅ Use for planning and design with room for revision
+- ✅ Use when full scope might not be clear initially
