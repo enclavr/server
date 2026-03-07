@@ -382,13 +382,13 @@ func TestPushService_NotifyNewMessage_Complete(t *testing.T) {
 }
 
 func getTestDSN() string {
-	if host := os.Getenv("NEON_DB_HOST"); host != "" {
+	if host := os.Getenv("POSTGRES_HOST"); host != "" {
 		return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=require",
 			host,
-			getEnvOrDefault("NEON_DB_PORT", "5432"),
-			getEnvOrDefault("NEON_DB_USER", "neondb_owner"),
-			getEnvOrDefault("NEON_DB_PASSWORD", ""),
-			getEnvOrDefault("NEON_DB_NAME", "neondb"),
+			getEnvOrDefault("POSTGRES_PORT", "5432"),
+			getEnvOrDefault("POSTGRES_USER", "postgres"),
+			getEnvOrDefault("POSTGRES_PASSWORD", ""),
+			getEnvOrDefault("POSTGRES_DB", "postgres"),
 		)
 	}
 	return fmt.Sprintf("file:%s?mode=memory&cache=shared", uuid.New().String())

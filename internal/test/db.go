@@ -21,8 +21,8 @@ func GetTestDB(t *testing.T) *gorm.DB {
 	var db *gorm.DB
 	var err error
 
-	if os.Getenv("NEON_DB_HOST") != "" {
-		db, err = connectNeon()
+	if os.Getenv("POSTGRES_HOST") != "" {
+		db, err = connectPostgres()
 	} else {
 		db, err = connectSQLite()
 	}
@@ -35,13 +35,13 @@ func GetTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-func connectNeon() (*gorm.DB, error) {
-	host := getEnv("NEON_DB_HOST", "localhost")
-	port := getEnv("NEON_DB_PORT", "5432")
-	user := getEnv("NEON_DB_USER", "postgres")
-	password := getEnv("NEON_DB_PASSWORD", "postgres")
-	dbname := getEnv("NEON_DB_NAME", "postgres")
-	sslmode := getEnv("NEON_DB_SSLMODE", "require")
+func connectPostgres() (*gorm.DB, error) {
+	host := getEnv("POSTGRES_HOST", "localhost")
+	port := getEnv("POSTGRES_PORT", "5432")
+	user := getEnv("POSTGRES_USER", "postgres")
+	password := getEnv("POSTGRES_PASSWORD", "postgres")
+	dbname := getEnv("POSTGRES_DB", "postgres")
+	sslmode := getEnv("POSTGRES_SSLMODE", "require")
 
 	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
 		host, port, user, password, dbname, sslmode)
