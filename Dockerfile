@@ -1,41 +1,56 @@
-FROM golang:1.25-alpine AS builder
+# Build stage
+FROM golang:1.25.7-alpine AS builder
+
+# Metadata labels
+LABEL org.opencontainers.image.title="Enclavr Server" \
+      org.opencontainers.image.description="Go backend API server for Enclavr voice chat platform" \
+      org.opencontainers.image.vendor="Enclavr" \
+      org.opencontainers.image.licenses="MIT"
 
 WORKDIR /app
 
-RUN apk add --no-cache gcc musl-dev
-
+# Copy dependency files first (for better layer caching)
 COPY go.mod go.sum ./
-RUN go mod download
 
-COPY . .
+# Install build dependencies and build app
+RUN apk add --no-cache --virtual .build-deps gcc musl-dev && \
+    go mod download && \
+    CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w" -o /server ./cmd/server && \
+    apk del .build-deps
 
-RUN CGO_ENABLED=1 GOOS=linux go build -o server ./cmd/server
+# Runtime stage
+FROM alpine:3.21
 
-FROM alpine:latest
+# Metadata labels for runtime image
+LABEL org.opencontainers.image.title="Enclavr Server Runtime" \
+      org.opencontainers.image.description="Runtime environment for Enclavr server" \
+      org.opencontainers.image.vendor="Enclavr" \
+      org.opencontainers.image.licenses="MIT"
 
-# Create non-root user for security
-RUN addgroup -g 1000 enclavr && adduser -u 1000 -G enclavr -s /bin/sh -D enclavr
+# Create non-root user with explicit UID/GID
+RUN addgroup -g 1000 enclavr && \
+    adduser -u 1000 -G enclavr -s /bin/sh -D enclavr && \
+    mkdir -p /app/uploads
 
-RUN apk --no-cache add ca-certificates tzdata
+# Install only runtime dependencies (ca-certificates for TLS, tzdata for timezone support)
+RUN apk add --no-cache ca-certificates tzdata
 
 WORKDIR /app
 
-# Copy binary and config
-COPY --from=builder /app/server .
-COPY --from=builder /app/internal/config/config.go ./internal/config/
+# Copy binary from builder
+COPY --from=builder /server /app/server
 
-# Create data directory for uploads
-RUN mkdir -p uploads && chown -R enclavr:enclavr /app/uploads
+# Create uploads directory and set permissions
+RUN mkdir -p /app/uploads && \
+    chown -R enclavr:enclavr /app/uploads && \
+    chmod 755 /app/uploads
 
+# Switch to non-root user
 USER enclavr
 
+# Default environment variables (can be overridden by docker-compose)
 ENV SERVER_PORT=8080
-ENV DB_HOST=postgres
-ENV DB_PORT=5432
-ENV DB_USER=enclavr
-ENV DB_PASSWORD=enclavr
-ENV DB_NAME=enclavr
-
 EXPOSE 8080
 
+# Run the server
 CMD ["./server"]
