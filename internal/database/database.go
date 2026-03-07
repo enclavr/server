@@ -16,7 +16,8 @@ type Database struct {
 }
 
 func New(cfg *config.DatabaseConfig) (*Database, error) {
-	db, err := gorm.Open(postgres.Open(cfg.DSN()), &gorm.Config{
+	dsn := cfg.DSN()
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Warn),
 	})
 	if err != nil {
@@ -41,10 +42,13 @@ func New(cfg *config.DatabaseConfig) (*Database, error) {
 }
 
 func (d *Database) Migrate() error {
+	d.Exec("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"")
+	d.Exec("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+
 	err := d.AutoMigrate(
+		&models.Category{},
 		&models.User{},
 		&models.Room{},
-		&models.Category{},
 		&models.UserRoom{},
 		&models.Session{},
 		&models.RefreshToken{},
@@ -67,7 +71,6 @@ func (d *Database) Migrate() error {
 		return err
 	}
 
-	d.Exec("CREATE EXTENSION IF NOT EXISTS pg_trgm")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_messages_content_fts ON messages USING gin(to_tsvector('english', content))")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_messages_room_id_created_at ON messages(room_id, created_at DESC)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id)")

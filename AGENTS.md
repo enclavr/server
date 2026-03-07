@@ -26,7 +26,7 @@ This repository maintains a `memory-bank/` directory for agent context. It is **
 
 - **Language:** Go 1.25 (August 2025)
 - **Web Framework:** Go net/http with gorilla/mux
-- **Database:** PostgreSQL 18 (September 2025) + GORM ORM
+- **Database:** PostgreSQL 17 (Neon) / PostgreSQL 18 (self-hosted) + GORM ORM
 - **WebSocket:** gorilla/websocket
 - **Real-time:** WebSocket with Redis pub/sub for scaling
 - **Auth:** JWT + bcrypt + OIDC
@@ -226,46 +226,265 @@ gh issue list                                  # List issues in current repo
 gh issue view 123                              # View issue
 gh issue create --title "Bug" --body "..."    # Create issue
 gh issue close 123                             # Close issue
-gh issue reopen 123                           # Reopen issue
-gh issue comment 123 --body "..."             # Comment on issue
-gh issue label add 123 bug                    # Add label
+gh issue reopen 123                            # Reopen issue
+gh issue comment 123 --body "..."              # Comment on issue
+gh issue label add 123 bug                     # Add label
 ```
 
 ### Pull Requests
 ```bash
-gh pr list                                    # List PRs
-gh pr create --title "..." --body "..."       # Create PR
+gh pr list                                     # List PRs
+gh pr create --title "..." --body "..."        # Create PR
 gh pr merge 123                               # Merge PR
-gh pr checkout 123                           # Checkout PR locally
-gh pr diff 123                                # View PR changes
-gh pr review 123 --approve                    # Approve PR
+gh pr checkout 123                             # Checkout PR locally
+gh pr diff 123                                 # View PR changes
+gh pr review 123 --approve                     # Approve PR
 ```
 
 ### Releases
 ```bash
-gh release list                               # List releases
+gh release list                                # List releases
 gh release view v1.0.0                        # View release
-gh release create v1.0.0 --notes "..."        # Create release
-gh release download v1.0.0                    # Download assets
+gh release create v1.0.0 --notes "..."         # Create release
+gh release download v1.0.0                     # Download assets
 ```
 
 ### Labels
 ```bash
-gh label list                                 # List labels
-gh label create "bug" --description "Bug"    # Create label
-gh label clone --source enclavr/frontend     # Clone labels from another repo
+gh label list                                  # List labels
+gh label create "bug" --description "Bug"     # Create label
+gh label clone --source enclavr/frontend       # Clone labels
 ```
 
 ### GitHub Actions
 ```bash
-gh run list                                   # List workflow runs
-gh run view 12345                            # View run details
-gh run rerun 12345                          # Rerun failed workflow
-gh run watch 12345                          # Watch run progress
+gh run list                                    # List workflow runs
+gh run view 12345                              # View run details
+gh run rerun 12345                            # Rerun failed workflow
 ```
 
 ### CI Status Check
 ```bash
-gh run list                                   # Check CI status
-gh run rerun --failed                         # Rerun failed jobs
+gh run list                                    # Check CI status
+gh run rerun --failed                          # Rerun failed jobs
 ```
+
+## MCP Tools Available
+
+This project has access to MCP (Model Context Protocol) tools that you MUST use when applicable.
+
+### Neon Database MCP Tools
+
+Use these tools for PostgreSQL database operations. NEVER use direct SQL clients or psql.
+
+```bash
+# List your Neon projects
+neon_list_projects
+
+# Describe a specific project
+neon_describe_project --projectId "project-id"
+
+# Get database connection string
+neon_get_connection_string --projectId "project-id"
+
+# List all tables in database
+neon_get_database_tables --projectId "project-id"
+
+# Describe table schema
+neon_describe_table_schema --projectId "project-id" --tableName "users"
+
+# Run SQL queries
+neon_run_sql --projectId "project-id" --sql "SELECT * FROM users LIMIT 5;"
+
+# Run SQL transactions
+neon_run_sql_transaction --projectId "project-id" --sqlStatements ["BEGIN;", "INSERT INTO users ...", "COMMIT;"]
+
+# List compute endpoints
+neon_list_branch_computes --projectId "project-id"
+
+# Describe a branch
+neon_describe_branch --projectId "project-id" --branchId "branch-id"
+
+# Create a branch
+neon_create_branch --projectId "project-id" --branchName "feature-branch"
+
+# Delete a branch
+neon_delete_branch --projectId "project-id" --branchId "branch-id"
+
+# Compare database schemas between branches
+neon_compare_database_schema --projectId "project-id" --branchId "branch-id" --databaseName "neondb"
+
+# Explain SQL query execution
+neon_explain_sql_statement --projectId "project-id" --sql "SELECT * FROM users WHERE email = 'test@test.com'"
+
+# List slow queries
+neon_list_slow_queries --projectId "project-id" --minExecutionTime 1000
+
+# Prepare database migration
+neon_prepare_database_migration --projectId "project-id" --databaseName "neondb" --migrationSql "ALTER TABLE users ADD COLUMN new_col TEXT;"
+
+# Complete database migration
+neon_complete_database_migration --applyChanges true --databaseName "neondb" --migrationId "migration-id" --migrationSql "ALTER TABLE users ADD COLUMN new_col TEXT;" --parentBranchId "branch-id" --projectId "project-id" --temporaryBranchId "temp-branch-id"
+
+# Prepare query tuning
+neon_prepare_query_tuning --projectId "project-id" --databaseName "neondb" --sql "SELECT * FROM messages WHERE room_id = 'xxx'"
+
+# Complete query tuning
+neon_complete_query_tuning --applyChanges false --databaseName "neondb" --projectId "project-id" --suggestedSqlStatements ["CREATE INDEX ..."] --temporaryBranchId "temp-branch" --tuningId "tuning-id"
+```
+
+**When to use Neon MCP tools:**
+- ✅ ALWAYS use `neon_run_sql` instead of psql for queries
+- ✅ ALWAYS use `neon_get_database_tables` instead of \dt
+- ✅ ALWAYS use `neon_describe_table_schema` instead of \d table
+- ✅ ALWAYS use `neon_list_slow_queries` to find performance issues
+- ✅ ALWAYS use `neon_explain_sql_statement` to analyze query plans
+- ✅ ALWAYS use `neon_prepare_database_migration` for schema changes
+
+### Context7 MCP Tools
+
+Use these tools to query library/framework documentation. NEVER use web search for library docs.
+
+```bash
+# Resolve library name to ID (call this first)
+context7_resolve-library-id --libraryName "react" --query "useState hook"
+
+# Query library documentation
+context7_query-docs --libraryId "/facebook/react" --query "useEffect cleanup function examples"
+```
+
+**When to use Context7 MCP tools:**
+- ✅ ALWAYS use for React, Next.js, Go, PostgreSQL, etc. documentation
+- ✅ ALWAYS use before web search for library-specific questions
+- ✅ Use for API examples, best practices, code patterns
+- 🚫 NEVER use for general programming questions or concepts
+
+### Git MCP Tools
+
+Use these tools for Git operations. They provide better integration than bash git commands.
+
+```bash
+# Check working tree status
+mcp-server-git_git_status --repo_path "/path/to/repo"
+
+# View staged changes
+mcp-server-git_git_diff_staged --repo_path "/path/to/repo"
+
+# View unstaged changes
+mcp-server-git_git_diff_unstaged --repo_path "/path/to/repo"
+
+# View differences between branches/commits
+mcp-server-git_git_diff --repo_path "/path/to/repo" --target "main"
+
+# Stage files
+mcp-server-git_git_add --repo_path "/path/to/repo" --files ["file1.go", "file2.go"]
+
+# Unstage changes
+mcp-server-git_git_reset --repo_path "/path/to/repo"
+
+# Commit changes
+mcp-server-git_git_commit --repo_path "/path/to/repo" --message "feat: add new feature"
+
+# View commit log
+mcp-server-git_git_log --repo_path "/path/to/repo" --max_count 10
+
+# List branches
+mcp-server-git_git_branch --repo_path "/path/to/repo" --branch_type "all"
+
+# Create branch
+mcp-server-git_git_create_branch --repo_path "/path/to/repo" --branch_name "feature-new"
+
+# Checkout branch
+mcp-server-git_git_checkout --repo_path "/path/to/repo" --branch_name "feature-new"
+
+# View commit
+mcp-server-git_git_show --repo_path "/path/to/repo" --revision "abc123"
+```
+
+**When to use Git MCP tools:**
+- ✅ ALWAYS use instead of bash git commands for better integration
+- ✅ Use for staging, committing, viewing diffs
+- ✅ Use for branch operations
+- 🚫 NEVER use bash git commands when MCP tools are available
+
+## Best Practices
+
+1. **Database:** Use Neon MCP tools for ALL database operations
+2. **Library Docs:** Use Context7 MCP tools BEFORE web search for library questions
+3. **Git:** Use Git MCP tools instead of bash git commands
+4. **GitHub:** Use `gh` CLI for all GitHub operations
+5. **Committing:** Use MCP tools to stage and commit changes
+6. **Web Search:** Use websearch for current information, codesearch for code examples
+7. **Error Monitoring:** Use Sentry MCP tools for production error tracking
+
+### Sentry MCP Tools
+
+Use these tools for error tracking and performance monitoring.
+
+```bash
+# Get authenticated user info
+sentry_whoami
+
+# Find organizations you have access to
+sentry_find_organizations
+
+# Find projects in an organization
+sentry_find_projects --organizationSlug "enclavr"
+
+# Find teams in an organization
+sentry_find_teams --organizationSlug "enclavr"
+
+# Search for issues
+sentry_search_issues --organizationSlug "enclavr" --naturalLanguageQuery "unhandled errors"
+
+# Get issue details
+sentry_get_issue_details --issueUrl "https://enclavr.sentry.io/issues/123"
+
+# Search events within an issue
+sentry_search_issue_events --issueUrl "https://enclavr.sentry.io/issues/123" --naturalLanguageQuery "from last hour"
+
+# Get tag values for an issue
+sentry_get_issue_tag_values --issueUrl "https://enclavr.sentry.io/issues/123" --tagKey "environment"
+
+# Get trace details
+sentry_get_trace_details --organizationSlug "enclavr" --traceId "abc123"
+
+# Search events and get statistics
+sentry_search_events --organizationSlug "enclavr" --naturalLanguageQuery "how many errors today"
+
+# Analyze issue with AI (Seer)
+sentry_analyze_issue_with_seer --issueUrl "https://enclavr.sentry.io/issues/123"
+
+# Update issue status/assignment
+sentry_update_issue --issueUrl "https://enclavr.sentry.io/issues/123" --status "resolved"
+
+# Create team
+sentry_create_team --organizationSlug "enclavr" --name "backend"
+
+# Create project
+sentry_create_project --organizationSlug "enclavr" --teamSlug "backend" --name "api"
+
+# Get project DSNs
+sentry_find_dsns --organizationSlug "enclavr" --projectSlug "api"
+```
+
+### Web Search & Fetch Tools
+
+Use these tools for finding current information and fetching web content.
+
+```bash
+# Search the web for current information
+websearch --query "golang best practices 2025" --numResults 5
+
+# Fetch web page content
+webfetch --url "https://nextjs.org/docs" --format "markdown"
+
+# Search for code examples
+codesearch --query "Go GORM PostgreSQL connection pooling" --tokensNum 5000
+```
+
+**When to use Web tools:**
+- ✅ Use `websearch` for current events, tutorials, and recent information
+- ✅ Use `codesearch` for code examples and implementation patterns
+- ✅ Use `webfetch` for full documentation pages
+- 🚫 Don't use for real-time data or API calls

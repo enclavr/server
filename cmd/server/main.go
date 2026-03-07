@@ -228,7 +228,7 @@ func main() {
 		}
 	})
 
-	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		metrics := map[string]interface{}{
 			"uptime":         time.Since(startTime).String(),
 			"active_clients": hub.GetClientCount(),

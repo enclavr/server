@@ -69,20 +69,32 @@ docker-compose up -d
 
 ### Manual Setup
 
-1. Create a PostgreSQL database
+1. Create a PostgreSQL database (local or Neon)
 2. Set environment variables:
+   - For local PostgreSQL: copy `.env.example` to `.env`
+   - For Neon PostgreSQL 17 (free tier): copy `.env.neon` to `.env` and sign up at https://neon.tech
    ```
    DB_HOST=localhost
    DB_PORT=5432
    DB_USER=enclavr
    DB_PASSWORD=enclavr
    DB_NAME=enclavr
+   DB_SSLMODE=disable  # use 'require' for Neon
    JWT_SECRET=your-secret-key
    ```
 3. Run the server:
    ```bash
    go run ./cmd/server
    ```
+
+### Neon PostgreSQL (Free Tier)
+
+For testing without setting up local PostgreSQL:
+1. Sign up at https://neon.tech (free: 0.5GB storage, 1 branch)
+2. Copy `server/.env.neon` to `server/.env`
+3. Run the server - migrations run automatically
+
+Note: The server uses GORM with standard PostgreSQL driver, so it works with any PostgreSQL provider (Neon, Supabase, self-hosted, etc.).
 
 ## Environment Variables
 

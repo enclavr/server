@@ -2,14 +2,13 @@ bin/
 server
 *.exe
 *.exe~
-*.dll
-*.so
 *.dylib
 *.test
 *.out
 coverage.out
 .env
 .env.local
+.env.neon
 *.log
 .DS_Store
 memory-bank/
