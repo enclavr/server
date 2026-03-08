@@ -44,8 +44,8 @@ jobs:
       - name: Run tests with PostgreSQL
         if: env.POSTGRES_HOST != ''
         run: |
-          go test -v -race -coverprofile=coverage.out -count=1 \
-            -timeout 10m \
+          go test -v -race -p 1 -coverprofile=coverage.out -count=1 \
+            -timeout 15m \
             -short \
             ./...
         env:
