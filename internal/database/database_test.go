@@ -73,15 +73,16 @@ func openTestDB(t *testing.T) *gorm.DB {
 		if err != nil {
 			t.Fatalf("failed to connect to test database: %v", err)
 		}
+		db.Exec("SET CONSTRAINTS ALL DEFERRED")
 		tables := []string{
-			"users", "rooms", "categories", "user_rooms", "messages",
-			"sessions", "refresh_tokens", "voice_sessions", "room_invites",
-			"presences", "direct_messages", "webhooks", "webhook_logs",
-			"pinned_messages", "message_reactions", "server_settings",
-			"invites", "files", "push_subscriptions", "user_notification_settings",
+			"user_notification_settings", "push_subscriptions", "files", "invites",
+			"server_settings", "message_reactions", "pinned_messages", "webhook_logs",
+			"webhooks", "direct_messages", "presences", "voice_sessions",
+			"refresh_tokens", "sessions", "messages", "user_rooms",
+			"rooms", "categories", "users",
 		}
 		for _, table := range tables {
-			db.Exec("DELETE FROM " + table)
+			db.Exec("TRUNCATE TABLE " + table + " CASCADE")
 		}
 		return db
 	}
