@@ -12,6 +12,9 @@ WORKDIR /app
 # Copy dependency files first (for better layer caching)
 COPY go.mod go.sum ./
 
+# Copy source code
+COPY . .
+
 # Install build dependencies and build app
 RUN apk add --no-cache --virtual .build-deps gcc musl-dev && \
     go mod download && \
