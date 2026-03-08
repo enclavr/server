@@ -192,9 +192,9 @@ func (h *AnalyticsHandler) GetHourlyActivity(w http.ResponseWriter, r *http.Requ
 
 	var results []hourlyData
 	err := h.db.Model(&models.Message{}).
-		Select("CAST(strftime('%H', created_at) AS INTEGER) as hour, COUNT(*) as message_count, COUNT(DISTINCT user_id) as user_count").
+		Select("CAST(EXTRACT(HOUR FROM created_at) AS INTEGER) as hour, COUNT(*) as message_count, COUNT(DISTINCT user_id) as user_count").
 		Where("created_at >= ?", since).
-		Group("CAST(strftime('%H', created_at) AS INTEGER)").
+		Group("CAST(EXTRACT(HOUR FROM created_at) AS INTEGER)").
 		Order("hour ASC").
 		Scan(&results).Error
 
