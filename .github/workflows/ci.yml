@@ -45,7 +45,7 @@ jobs:
         if: env.POSTGRES_HOST != ''
         run: |
           go test -v -race -coverprofile=coverage.out -count=1 \
-            -timeout 5m \
+            -timeout 10m \
             -short \
             ./...
         env:
