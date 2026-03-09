@@ -39,7 +39,7 @@ jobs:
           go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.5
 
       - name: Run linter
-        run: golangci-lint run
+        run: golangci-lint run --timeout 5m
 
       - name: Run tests with PostgreSQL
         if: false  # Disabled due to test isolation issues - use SQLite instead
