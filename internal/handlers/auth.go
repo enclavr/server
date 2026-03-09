@@ -10,6 +10,7 @@ import (
 	"github.com/enclavr/server/internal/auth"
 	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/internal/models"
+	"github.com/enclavr/server/pkg/middleware"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -174,7 +175,7 @@ func (h *AuthHandler) sendAuthResponse(w http.ResponseWriter, user *models.User)
 }
 
 func (h *AuthHandler) GetMe(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(uuid.UUID)
+	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return

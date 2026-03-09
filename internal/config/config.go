@@ -14,6 +14,7 @@ type Config struct {
 	Voice    VoiceConfig
 	Push     PushConfig
 	Redis    RedisConfig
+	Sentry   SentryConfig
 }
 
 type ServerConfig struct {
@@ -62,6 +63,11 @@ type RedisConfig struct {
 	Port     string
 	Password string
 	DB       int
+}
+
+type SentryConfig struct {
+	DSN         string
+	Environment string
 }
 
 func Load() *Config {
@@ -113,6 +119,10 @@ func Load() *Config {
 			Port:     getEnv("REDIS_PORT", "6379"),
 			Password: getEnv("REDIS_PASSWORD", ""),
 			DB:       getEnvInt("REDIS_DB", 0),
+		},
+		Sentry: SentryConfig{
+			DSN:         getEnv("SENTRY_DSN", ""),
+			Environment: getEnv("SENTRY_ENVIRONMENT", "development"),
 		},
 	}
 }

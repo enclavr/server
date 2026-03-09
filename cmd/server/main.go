@@ -20,6 +20,7 @@ import (
 	"github.com/enclavr/server/internal/services"
 	"github.com/enclavr/server/internal/websocket"
 	"github.com/enclavr/server/pkg/middleware"
+	"github.com/getsentry/sentry-go"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -27,6 +28,18 @@ var startTime = time.Now()
 
 func main() {
 	cfg := config.Load()
+
+	if cfg.Sentry.DSN != "" {
+		err := sentry.Init(sentry.ClientOptions{
+			Dsn:         cfg.Sentry.DSN,
+			Environment: cfg.Sentry.Environment,
+		})
+		if err != nil {
+			log.Printf("Failed to initialize Sentry: %v", err)
+		} else {
+			log.Printf("Sentry initialized with environment: %s", cfg.Sentry.Environment)
+		}
+	}
 
 	db, err := database.New(&cfg.Database)
 	if err != nil {
@@ -93,7 +106,7 @@ func main() {
 	mux.HandleFunc("/api/auth/register", authHandler.Register)
 	mux.HandleFunc("/api/auth/login", authHandler.Login)
 	mux.HandleFunc("/api/auth/refresh", authHandler.RefreshToken)
-	mux.HandleFunc("/api/auth/me", authHandler.GetMe)
+	mux.HandleFunc("/api/auth/me", middleware.RequireAuth(authService, authHandler.GetMe))
 
 	mux.HandleFunc("/api/auth/oidc/login", oidcHandler.Login)
 	mux.HandleFunc("/api/auth/oidc/callback", oidcHandler.Callback)
@@ -254,6 +267,7 @@ func main() {
 	var handler http.Handler = mux
 	handler = middleware.RequestID()(handler)
 	handler = middleware.GzipCompression()(handler)
+	handler = middleware.SentryRecovery()(handler)
 	handler = corsMiddleware.Handler(handler)
 	handler = middleware.SecurityHeaders(handler)
 
@@ -280,6 +294,10 @@ func main() {
 	<-quit
 
 	log.Println("Shutting down server...")
+
+	if cfg.Sentry.DSN != "" {
+		sentry.Flush(2 * time.Second)
+	}
 
 	hub.Shutdown()
 	if err := hub.ShutdownRedis(); err != nil {

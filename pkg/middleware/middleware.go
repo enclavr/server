@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/enclavr/server/internal/auth"
+	"github.com/getsentry/sentry-go"
 	"github.com/google/uuid"
 )
 
@@ -167,6 +168,21 @@ func GzipCompression() func(http.Handler) http.Handler {
 
 			w.Header().Set("Content-Encoding", "gzip")
 			next.ServeHTTP(&gzipResponseWriter{ResponseWriter: w, gw: gw}, r)
+		})
+	}
+}
+
+func SentryRecovery() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if err := recover(); err != nil {
+					sentry.CaptureException(err.(error))
+					sentry.Flush(2 * time.Second)
+					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				}
+			}()
+			next.ServeHTTP(w, r)
 		})
 	}
 }

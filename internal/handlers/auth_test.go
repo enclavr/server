@@ -13,6 +13,7 @@ import (
 	"github.com/enclavr/server/internal/config"
 	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/internal/models"
+	"github.com/enclavr/server/pkg/middleware"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -333,8 +334,8 @@ func TestGetMe(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/me", nil)
-			//nolint:staticcheck // Using same key as handler for consistency
-			ctx := context.WithValue(req.Context(), "user_id", tt.userID)
+			// Use middleware.UserIDKey to match the middleware
+			ctx := context.WithValue(req.Context(), middleware.UserIDKey, tt.userID)
 			req = req.WithContext(ctx)
 			w := httptest.NewRecorder()
 
