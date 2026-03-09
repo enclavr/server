@@ -64,7 +64,8 @@ go fmt ./...
 ### Using Docker Compose
 
 ```bash
-docker-compose up -d
+cd infra
+docker compose up -d
 ```
 
 ### Manual Setup
