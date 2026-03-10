@@ -295,6 +295,303 @@ func TestRefreshToken(t *testing.T) {
 	}
 }
 
+// setupAdminHandler creates a handler with firstIsAdmin=true (fresh DB each call)
+func setupAdminHandler(t *testing.T) *AuthHandler {
+	db := setupTestDB(t)
+	authCfg := &config.AuthConfig{
+		JWTSecret:         "test-secret-key",
+		JWTExpiration:     24 * time.Hour,
+		RefreshExpiration: 168 * time.Hour,
+	}
+	authService := auth.NewAuthService(authCfg)
+	testDB := &database.Database{DB: db}
+	return NewAuthHandler(testDB, authService, true)
+}
+
+// TestRegister_FirstUserIsAdmin_Enabled verifies that when firstIsAdmin=true,
+// the very first registered user gets is_admin=true in the response.
+func TestRegister_FirstUserIsAdmin_Enabled(t *testing.T) {
+	handler := setupAdminHandler(t)
+
+	body, _ := json.Marshal(RegisterRequest{
+		Username: "firstuser",
+		Email:    "first@example.com",
+		Password: "password123",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.Register(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp AuthResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if !resp.User.IsAdmin {
+		t.Errorf("first user should have is_admin=true, got false")
+	}
+}
+
+// TestRegister_SecondUserIsNotAdmin verifies that when firstIsAdmin=true,
+// only the first user gets admin — subsequent users do not.
+func TestRegister_SecondUserIsNotAdmin(t *testing.T) {
+	handler := setupAdminHandler(t)
+
+	// Register first user (should be admin)
+	firstBody, _ := json.Marshal(RegisterRequest{
+		Username: "firstuser",
+		Email:    "first@example.com",
+		Password: "pass1",
+	})
+	req1 := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(firstBody))
+	req1.Header.Set("Content-Type", "application/json")
+	w1 := httptest.NewRecorder()
+	handler.Register(w1, req1)
+
+	if w1.Code != http.StatusOK {
+		t.Fatalf("first registration failed: %d", w1.Code)
+	}
+	var first AuthResponse
+	json.Unmarshal(w1.Body.Bytes(), &first)
+	if !first.User.IsAdmin {
+		t.Errorf("first user should be admin")
+	}
+
+	// Register second user (should NOT be admin)
+	secondBody, _ := json.Marshal(RegisterRequest{
+		Username: "seconduser",
+		Email:    "second@example.com",
+		Password: "pass2",
+	})
+	req2 := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(secondBody))
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	handler.Register(w2, req2)
+
+	if w2.Code != http.StatusOK {
+		t.Fatalf("second registration failed: %d", w2.Code)
+	}
+	var second AuthResponse
+	json.Unmarshal(w2.Body.Bytes(), &second)
+	if second.User.IsAdmin {
+		t.Errorf("second user should NOT be admin, got is_admin=true")
+	}
+}
+
+// TestRegister_FirstUserIsAdmin_Disabled verifies that with firstIsAdmin=false,
+// even the first user does NOT become admin.
+func TestRegister_FirstUserIsAdmin_Disabled(t *testing.T) {
+	handler := setupTestHandler(t) // firstIsAdmin=false
+
+	body, _ := json.Marshal(RegisterRequest{
+		Username: "user1",
+		Email:    "user1@example.com",
+		Password: "password123",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.Register(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp AuthResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.User.IsAdmin {
+		t.Errorf("first user should NOT be admin when firstIsAdmin=false")
+	}
+}
+
+// TestRegister_FirstUserIsAdmin_ThirdUser verifies admin isolation across 3 users.
+func TestRegister_FirstUserIsAdmin_ThirdUser(t *testing.T) {
+	handler := setupAdminHandler(t)
+
+	for i, tc := range []struct {
+		username  string
+		email     string
+		wantAdmin bool
+	}{
+		{"user1", "u1@example.com", true},
+		{"user2", "u2@example.com", false},
+		{"user3", "u3@example.com", false},
+	} {
+		body, _ := json.Marshal(RegisterRequest{
+			Username: tc.username,
+			Email:    tc.email,
+			Password: "pass",
+		})
+		req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		handler.Register(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("user%d registration returned %d", i+1, w.Code)
+		}
+
+		var resp AuthResponse
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp.User.IsAdmin != tc.wantAdmin {
+			t.Errorf("user%d (%s): expected is_admin=%v, got %v", i+1, tc.username, tc.wantAdmin, resp.User.IsAdmin)
+		}
+	}
+}
+
+// TestRegister_ResponseBody verifies the full auth response structure on successful registration.
+func TestRegister_ResponseBody(t *testing.T) {
+	handler := setupTestHandler(t)
+
+	body, _ := json.Marshal(RegisterRequest{
+		Username: "bodycheck",
+		Email:    "body@example.com",
+		Password: "securepass",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.Register(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp AuthResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.AccessToken == "" {
+		t.Error("access_token should not be empty")
+	}
+	if resp.RefreshToken == "" {
+		t.Error("refresh_token should not be empty")
+	}
+	if resp.ExpiresIn <= 0 {
+		t.Errorf("expires_in should be positive, got %d", resp.ExpiresIn)
+	}
+	if resp.User.Username != "bodycheck" {
+		t.Errorf("expected username 'bodycheck', got '%s'", resp.User.Username)
+	}
+	if resp.User.Email != "body@example.com" {
+		t.Errorf("expected email 'body@example.com', got '%s'", resp.User.Email)
+	}
+	if resp.User.ID == (uuid.UUID{}) {
+		t.Error("user ID should not be zero UUID")
+	}
+}
+
+// TestLogin_ResponseBody verifies the login response contains expected fields.
+func TestLogin_ResponseBody(t *testing.T) {
+	handler := setupTestHandler(t)
+
+	// seed user
+	json.Marshal(RegisterRequest{})
+	regBody, _ := json.Marshal(RegisterRequest{
+		Username: "loginuser",
+		Email:    "login@example.com",
+		Password: "loginpass",
+	})
+	regReq := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(regBody))
+	regReq.Header.Set("Content-Type", "application/json")
+	handler.Register(httptest.NewRecorder(), regReq)
+
+	body, _ := json.Marshal(LoginRequest{Username: "loginuser", Password: "loginpass"})
+	req := httptest.NewRequest(http.MethodPost, "/login", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.Login(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp AuthResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.AccessToken == "" {
+		t.Error("access_token should not be empty on login")
+	}
+	if resp.User.Username != "loginuser" {
+		t.Errorf("expected username 'loginuser', got '%s'", resp.User.Username)
+	}
+}
+
+// TestLogin_AdminUserToken verifies that when first user registers with firstIsAdmin=true,
+// subsequent login returns a response where is_admin=true.
+func TestLogin_AdminUserToken(t *testing.T) {
+	handler := setupAdminHandler(t)
+
+	// Register first user (admin)
+	regBody, _ := json.Marshal(RegisterRequest{
+		Username: "adminlogin",
+		Email:    "adminlogin@example.com",
+		Password: "adminpass",
+	})
+	regReq := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(regBody))
+	regReq.Header.Set("Content-Type", "application/json")
+	handler.Register(httptest.NewRecorder(), regReq)
+
+	// Login and check is_admin
+	body, _ := json.Marshal(LoginRequest{Username: "adminlogin", Password: "adminpass"})
+	req := httptest.NewRequest(http.MethodPost, "/login", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.Login(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("login failed: %d", w.Code)
+	}
+
+	var resp AuthResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if !resp.User.IsAdmin {
+		t.Errorf("admin user's login response should have is_admin=true")
+	}
+}
+
+// TestRegister_GetMe_IsAdmin verifies that GetMe returns is_admin=true for the first user.
+func TestRegister_GetMe_IsAdmin(t *testing.T) {
+	handler := setupAdminHandler(t)
+
+	regBody, _ := json.Marshal(RegisterRequest{
+		Username: "meadmin",
+		Email:    "meadmin@example.com",
+		Password: "mepass",
+	})
+	reqReg := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(regBody))
+	reqReg.Header.Set("Content-Type", "application/json")
+	wReg := httptest.NewRecorder()
+	handler.Register(wReg, reqReg)
+
+	var regResp AuthResponse
+	json.Unmarshal(wReg.Body.Bytes(), &regResp)
+
+	req := httptest.NewRequest(http.MethodGet, "/me", nil)
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, regResp.User.ID)
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+	handler.GetMe(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetMe failed: %d", w.Code)
+	}
+
+	var meResp UserResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &meResp); err != nil {
+		t.Fatalf("failed to decode GetMe response: %v", err)
+	}
+	if !meResp.IsAdmin {
+		t.Errorf("GetMe should return is_admin=true for first-registered admin user")
+	}
+}
+
 func TestGetMe(t *testing.T) {
 	handler := setupTestHandler(t)
 
