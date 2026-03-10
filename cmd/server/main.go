@@ -23,6 +23,7 @@ import (
 	"github.com/enclavr/server/internal/websocket"
 	"github.com/enclavr/server/pkg/middleware"
 	"github.com/getsentry/sentry-go"
+	sentryhttp "github.com/getsentry/sentry-go/http"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"gorm.io/gorm"
 )
@@ -34,8 +35,10 @@ func main() {
 
 	if cfg.Sentry.DSN != "" {
 		err := sentry.Init(sentry.ClientOptions{
-			Dsn:         cfg.Sentry.DSN,
-			Environment: cfg.Sentry.Environment,
+			Dsn:              cfg.Sentry.DSN,
+			Environment:      cfg.Sentry.Environment,
+			TracesSampleRate: 1.0,
+			EnableTracing:    true,
 		})
 		if err != nil {
 			log.Printf("Failed to initialize Sentry: %v", err)
@@ -272,6 +275,13 @@ func main() {
 	handler = middleware.RequestID()(handler)
 	handler = middleware.GzipCompression()(handler)
 	handler = middleware.SentryRecovery()(handler)
+	if cfg.Sentry.DSN != "" {
+		sentryHandler := sentryhttp.New(sentryhttp.Options{
+			Repanic:         true,
+			WaitForDelivery: false,
+		})
+		handler = sentryHandler.Handle(handler)
+	}
 	handler = corsMiddleware.Handler(handler)
 	handler = middleware.SecurityHeaders(handler)
 
