@@ -47,7 +47,7 @@ func setupTestHandler(t *testing.T) *AuthHandler {
 	authService := auth.NewAuthService(authCfg)
 
 	testDB := &database.Database{DB: db}
-	handler := NewAuthHandler(testDB, authService)
+	handler := NewAuthHandler(testDB, authService, false)
 	return handler
 }
 

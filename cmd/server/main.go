@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -17,11 +18,13 @@ import (
 	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/internal/handlers"
 	"github.com/enclavr/server/internal/metrics"
+	"github.com/enclavr/server/internal/models"
 	"github.com/enclavr/server/internal/services"
 	"github.com/enclavr/server/internal/websocket"
 	"github.com/enclavr/server/pkg/middleware"
 	"github.com/getsentry/sentry-go"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"gorm.io/gorm"
 )
 
 var startTime = time.Now()
@@ -51,6 +54,7 @@ func main() {
 	}
 
 	authService := auth.NewAuthService(&cfg.Auth)
+	bootstrapAdminUser(db, authService, &cfg.Admin)
 
 	var hub *websocket.Hub
 	if cfg.Redis.Host != "" && cfg.Redis.Host != "localhost" {
@@ -72,7 +76,7 @@ func main() {
 	}
 	inviteHandler := handlers.NewInviteHandler(db)
 
-	authHandler := handlers.NewAuthHandler(db, authService)
+	authHandler := handlers.NewAuthHandler(db, authService, cfg.Admin.FirstIsAdmin)
 	roomHandler := handlers.NewRoomHandler(db)
 	voiceHandler := handlers.NewVoiceHandler(db, hub, cfg)
 	oidcHandler := handlers.NewOIDCHandler(db, &cfg.Auth)
@@ -312,4 +316,58 @@ func main() {
 	}
 
 	log.Println("Server exited properly")
+}
+
+func bootstrapAdminUser(db *database.Database, authService *auth.AuthService, adminCfg *config.AdminConfig) {
+	if adminCfg.Username == "" {
+		log.Println("Admin username not configured, skipping admin creation")
+		return
+	}
+
+	var userCount int64
+	db.DB.Model(&models.User{}).Count(&userCount)
+
+	if userCount == 0 && adminCfg.FirstIsAdmin {
+		log.Println("No users found - first user registration will grant admin access")
+		return
+	}
+
+	if adminCfg.Password == "" {
+		log.Println("ADMIN_PASSWORD not set, skipping default admin creation")
+		return
+	}
+
+	var existingAdmin models.User
+	result := db.DB.Where("username = ?", adminCfg.Username).First(&existingAdmin)
+
+	if result.Error == nil {
+		log.Printf("Admin user '%s' already exists", adminCfg.Username)
+		return
+	}
+
+	if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		log.Printf("Error checking for admin user: %v", result.Error)
+		return
+	}
+
+	hashedPassword, err := authService.HashPassword(adminCfg.Password)
+	if err != nil {
+		log.Printf("Failed to hash admin password: %v", err)
+		return
+	}
+
+	admin := models.User{
+		Username:     adminCfg.Username,
+		Email:        adminCfg.Email,
+		PasswordHash: hashedPassword,
+		DisplayName:  adminCfg.Username,
+		IsAdmin:      true,
+	}
+
+	if err := db.DB.Create(&admin).Error; err != nil {
+		log.Printf("Failed to create admin user: %v", err)
+		return
+	}
+
+	log.Printf("Created default admin user: %s", adminCfg.Username)
 }

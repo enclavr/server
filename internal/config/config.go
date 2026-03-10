@@ -15,6 +15,7 @@ type Config struct {
 	Push     PushConfig
 	Redis    RedisConfig
 	Sentry   SentryConfig
+	Admin    AdminConfig
 }
 
 type ServerConfig struct {
@@ -24,6 +25,13 @@ type ServerConfig struct {
 	AllowedOrigins  []string
 	UploadDir       string
 	MaxUploadSizeMB int
+}
+
+type AdminConfig struct {
+	Username     string
+	Password     string
+	Email        string
+	FirstIsAdmin bool
 }
 
 type DatabaseConfig struct {
@@ -123,6 +131,12 @@ func Load() *Config {
 		Sentry: SentryConfig{
 			DSN:         getEnv("SENTRY_DSN", ""),
 			Environment: getEnv("SENTRY_ENVIRONMENT", "development"),
+		},
+		Admin: AdminConfig{
+			Username:     getEnv("ADMIN_USERNAME", "admin"),
+			Password:     getEnv("ADMIN_PASSWORD", ""),
+			Email:        getEnv("ADMIN_EMAIL", "admin@enclavr.local"),
+			FirstIsAdmin: getEnvBool("FIRST_USER_IS_ADMIN", true),
 		},
 	}
 }

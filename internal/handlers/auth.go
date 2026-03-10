@@ -16,14 +16,16 @@ import (
 )
 
 type AuthHandler struct {
-	db          *database.Database
-	authService *auth.AuthService
+	db           *database.Database
+	authService  *auth.AuthService
+	firstIsAdmin bool
 }
 
-func NewAuthHandler(db *database.Database, authService *auth.AuthService) *AuthHandler {
+func NewAuthHandler(db *database.Database, authService *auth.AuthService, firstIsAdmin bool) *AuthHandler {
 	return &AuthHandler{
-		db:          db,
-		authService: authService,
+		db:           db,
+		authService:  authService,
+		firstIsAdmin: firstIsAdmin,
 	}
 }
 
@@ -77,6 +79,14 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		Email:        req.Email,
 		PasswordHash: hashedPassword,
 		DisplayName:  req.Username,
+	}
+
+	if h.firstIsAdmin {
+		var userCount int64
+		h.db.Model(&models.User{}).Count(&userCount)
+		if userCount == 0 {
+			user.IsAdmin = true
+		}
 	}
 
 	if err := h.db.Create(&user).Error; err != nil {

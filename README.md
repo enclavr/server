@@ -120,6 +120,24 @@ Note: The server uses GORM with standard PostgreSQL driver, so it works with any
 | REDIS_PASSWORD | - | Redis password |
 | REDIS_DB | 0 | Redis database |
 
+### Admin User Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| ADMIN_USERNAME | admin | Admin username |
+| ADMIN_PASSWORD | - | Admin password (if set, creates default admin) |
+| ADMIN_EMAIL | admin@enclavr.local | Admin email |
+| FIRST_USER_IS_ADMIN | true | First registered user becomes admin |
+
+**Setup:**
+```bash
+# Option 1: Set admin password to create default admin on startup
+ADMIN_PASSWORD=your-secure-password
+
+# Option 2: First user to register becomes admin (default enabled)
+# Just start the server and register a user
+```
+
 ## Testing
 
 Run tests with real SQLite in-memory database:
