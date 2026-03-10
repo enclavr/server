@@ -731,3 +731,33 @@ func (b *Bookmark) BeforeCreate(tx *gorm.DB) error {
 	}
 	return nil
 }
+
+type UserPreferences struct {
+	ID               uuid.UUID `gorm:"type:uuid;primary_key" json:"id"`
+	UserID           uuid.UUID `gorm:"type:uuid;not null;uniqueIndex" json:"user_id"`
+	Theme            string    `gorm:"size:20;default:'dark'" json:"theme"`
+	Language         string    `gorm:"size:10;default:'en'" json:"language"`
+	Timezone         string    `gorm:"size:50;default:'UTC'" json:"timezone"`
+	MessagePreview   bool      `gorm:"default:true" json:"message_preview"`
+	CompactMode      bool      `gorm:"default:false" json:"compact_mode"`
+	ShowOnlineStatus bool      `gorm:"default:true" json:"show_online_status"`
+	AnimatedEmoji    bool      `gorm:"default:true" json:"animated_emoji"`
+	AutoPlayGifs     bool      `gorm:"default:true" json:"auto_play_gifs"`
+	ReducedMotion    bool      `gorm:"default:false" json:"reduced_motion"`
+	HighContrastMode bool      `gorm:"default:false" json:"high_contrast_mode"`
+	TextSize         string    `gorm:"size:10;default:'medium'" json:"text_size"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+
+	User User `gorm:"foreignKey:UserID" json:"-"`
+}
+
+func (up *UserPreferences) BeforeCreate(tx *gorm.DB) error {
+	if up.ID == uuid.Nil {
+		up.ID = uuid.New()
+	}
+	if up.CreatedAt.IsZero() {
+		up.CreatedAt = time.Now()
+	}
+	return nil
+}

@@ -143,6 +143,7 @@ func main() {
 	pushHandler := handlers.NewPushHandler(db)
 	banHandler := handlers.NewBanHandler(db)
 	reportHandler := handlers.NewReportHandler(db)
+	preferencesHandler := handlers.NewPreferencesHandler(db)
 	_ = services.NewPushService(db, cfg)
 
 	go hub.Run()
@@ -198,6 +199,9 @@ func main() {
 
 	mux.HandleFunc("/api/settings", settingsHandler.GetSettings)
 	mux.HandleFunc("/api/settings/update", middleware.RequireAuth(authService, settingsHandler.UpdateSettings))
+
+	mux.HandleFunc("/api/preferences", middleware.RequireAuth(authService, preferencesHandler.GetPreferences))
+	mux.HandleFunc("/api/preferences/update", middleware.RequireAuth(authService, preferencesHandler.UpdatePreferences))
 
 	mux.HandleFunc("/api/invite/create", middleware.RequireAuth(authService, inviteHandler.CreateInvite))
 	mux.HandleFunc("/api/invites", middleware.RequireAuth(authService, inviteHandler.GetInvites))
