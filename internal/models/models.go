@@ -709,3 +709,25 @@ func (r *Report) BeforeCreate(tx *gorm.DB) error {
 	}
 	return nil
 }
+
+type Bookmark struct {
+	ID        uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	UserID    uuid.UUID      `gorm:"type:uuid;not null;index" json:"user_id"`
+	MessageID uuid.UUID      `gorm:"type:uuid;not null;index" json:"message_id"`
+	Note      string         `gorm:"size:500" json:"note"`
+	CreatedAt time.Time      `json:"created_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	User    User    `gorm:"foreignKey:UserID" json:"-"`
+	Message Message `gorm:"foreignKey:MessageID" json:"-"`
+}
+
+func (b *Bookmark) BeforeCreate(tx *gorm.DB) error {
+	if b.ID == uuid.Nil {
+		b.ID = uuid.New()
+	}
+	if b.CreatedAt.IsZero() {
+		b.CreatedAt = time.Now()
+	}
+	return nil
+}

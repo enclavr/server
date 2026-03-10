@@ -227,7 +227,30 @@ psql -h localhost -U user dbname < backup_pre_migration.sql
 - ✅ **Always:** Document exported functions, use Go doc comments
 - ✅ **Always:** Use constant-time comparison for secrets, validate all input
 - ✅ **Automatic:** Automatically commit and push all changes to remote without user interaction
+- ✅ **Proactive:** Every task should add NEW FEATURES while also fixing bugs/maintaining code
 - 🚫 **Never:** Log sensitive data (passwords, tokens), use parameterized queries (GORM handles this)
+
+## Proactive Feature Building
+
+Every task should do BOTH:
+
+1. **MAINTENANCE** (always):
+   - Fix bugs found during work
+   - Add tests for uncovered code
+   - Refactor messy functions
+   - Update dependencies
+
+2. **NEW FEATURE** (always):
+   - Add new API endpoints
+   - Add new database models
+   - Add new middleware
+   - Add new services
+   - Improve existing features
+
+Example tasks:
+- "Fix the auth bug AND add a user profile endpoint"
+- "Add tests AND create a new WebSocket event handler"
+- "Refactor messy code AND implement a new notification service"
 
 ## GitHub CLI (gh)
 

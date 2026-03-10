@@ -357,7 +357,9 @@ func TestRegister_SecondUserIsNotAdmin(t *testing.T) {
 		t.Fatalf("first registration failed: %d", w1.Code)
 	}
 	var first AuthResponse
-	json.Unmarshal(w1.Body.Bytes(), &first)
+	if err := json.Unmarshal(w1.Body.Bytes(), &first); err != nil {
+		t.Fatalf("failed to unmarshal first response: %v", err)
+	}
 	if !first.User.IsAdmin {
 		t.Errorf("first user should be admin")
 	}
@@ -377,7 +379,9 @@ func TestRegister_SecondUserIsNotAdmin(t *testing.T) {
 		t.Fatalf("second registration failed: %d", w2.Code)
 	}
 	var second AuthResponse
-	json.Unmarshal(w2.Body.Bytes(), &second)
+	if err := json.Unmarshal(w2.Body.Bytes(), &second); err != nil {
+		t.Fatalf("failed to unmarshal second response: %v", err)
+	}
 	if second.User.IsAdmin {
 		t.Errorf("second user should NOT be admin, got is_admin=true")
 	}
@@ -403,7 +407,9 @@ func TestRegister_FirstUserIsAdmin_Disabled(t *testing.T) {
 	}
 
 	var resp AuthResponse
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
 	if resp.User.IsAdmin {
 		t.Errorf("first user should NOT be admin when firstIsAdmin=false")
 	}
@@ -437,7 +443,9 @@ func TestRegister_FirstUserIsAdmin_ThirdUser(t *testing.T) {
 		}
 
 		var resp AuthResponse
-		json.Unmarshal(w.Body.Bytes(), &resp)
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
 		if resp.User.IsAdmin != tc.wantAdmin {
 			t.Errorf("user%d (%s): expected is_admin=%v, got %v", i+1, tc.username, tc.wantAdmin, resp.User.IsAdmin)
 		}
@@ -486,12 +494,10 @@ func TestRegister_ResponseBody(t *testing.T) {
 	}
 }
 
-// TestLogin_ResponseBody verifies the login response contains expected fields.
 func TestLogin_ResponseBody(t *testing.T) {
 	handler := setupTestHandler(t)
 
 	// seed user
-	json.Marshal(RegisterRequest{})
 	regBody, _ := json.Marshal(RegisterRequest{
 		Username: "loginuser",
 		Email:    "login@example.com",
@@ -550,7 +556,9 @@ func TestLogin_AdminUserToken(t *testing.T) {
 	}
 
 	var resp AuthResponse
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
 	if !resp.User.IsAdmin {
 		t.Errorf("admin user's login response should have is_admin=true")
 	}
@@ -571,7 +579,9 @@ func TestRegister_GetMe_IsAdmin(t *testing.T) {
 	handler.Register(wReg, reqReg)
 
 	var regResp AuthResponse
-	json.Unmarshal(wReg.Body.Bytes(), &regResp)
+	if err := json.Unmarshal(wReg.Body.Bytes(), &regResp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/me", nil)
 	ctx := context.WithValue(req.Context(), middleware.UserIDKey, regResp.User.ID)

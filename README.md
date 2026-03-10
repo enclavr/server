@@ -2,34 +2,20 @@
 
 The backend server for Enclavr, a self-hosted voice chat platform.
 
-## IMPORTANT: CLI Commands
+## Error Monitoring (Sentry)
 
-This project uses Go's standard tooling. Use these commands:
+The Go server is integrated with Sentry for production error tracking and performance monitoring.
+
+### Configuration
+
+Set the `SENTRY_DSN` environment variable to enable Sentry:
 
 ```bash
-# Install dependencies
-go mod tidy
-
-# Run server
-go run ./cmd/server
-
-# Run tests
-go test -v ./...
-
-# Run with coverage
-go test -v -coverprofile=coverage.out ./...
-
-# Lint code
-golangci-lint run ./...
-
-# Build binary
-go build -o bin/server ./cmd/server
-
-# Format code
-go fmt ./...
+# In your .env file
+SENTRY_DSN=https://[email]@sentry.io/[project-id]
 ```
 
-## Features
+### Features
 
 - User authentication with JWT
 - Room-based voice chat
@@ -39,6 +25,7 @@ go fmt ./...
 - Prometheus metrics
 - gRPC API support
 - Docker support
+- Sentry error tracking and performance monitoring
 
 ## API Endpoints
 
@@ -97,6 +84,33 @@ For testing without setting up local PostgreSQL:
 
 Note: The server uses GORM with standard PostgreSQL driver, so it works with any PostgreSQL provider (Neon, Supabase, self-hosted, etc.).
 
+## CLI Commands
+
+This project uses Go's standard tooling. Use these commands:
+
+```bash
+# Install dependencies
+go mod tidy
+
+# Run server
+go run ./cmd/server
+
+# Run tests
+go test -v ./...
+
+# Run with coverage
+go test -v -coverprofile=coverage.out ./...
+
+# Lint code
+golangci-lint run ./...
+
+# Build binary
+go build -o bin/server ./cmd/server
+
+# Format code
+go fmt ./...
+```
+
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -119,6 +133,7 @@ Note: The server uses GORM with standard PostgreSQL driver, so it works with any
 | REDIS_PORT | 6379 | Redis port |
 | REDIS_PASSWORD | - | Redis password |
 | REDIS_DB | 0 | Redis database |
+| SENTRY_DSN | - | Sentry DSN for error tracking |
 
 ### Admin User Configuration
 

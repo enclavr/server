@@ -30,22 +30,60 @@ import (
 
 var startTime = time.Now()
 
+func initSentry(cfg *config.Config) {
+	if cfg.Sentry.DSN == "" {
+		log.Println("Sentry DSN not configured, skipping Sentry initialization")
+		return
+	}
+
+	err := sentry.Init(sentry.ClientOptions{
+		Dsn:              cfg.Sentry.DSN,
+		Environment:      cfg.Sentry.Environment,
+		Release:          getReleaseVersion(),
+		TracesSampleRate: 1.0,
+		EnableTracing:    true,
+		Debug:            cfg.Sentry.Environment == "development",
+		SampleRate:       1.0,
+		MaxBreadcrumbs:   50,
+		AttachStacktrace: true,
+		SendDefaultPII:   false,
+		BeforeSend: func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
+			return filterSentryEvent(event, hint)
+		},
+	})
+	if err != nil {
+		log.Printf("Failed to initialize Sentry: %v", err)
+		return
+	}
+
+	log.Printf("Sentry initialized with environment: %s, release: %s", cfg.Sentry.Environment, getReleaseVersion())
+}
+
+func getReleaseVersion() string {
+	version := os.Getenv("VERSION")
+	if version != "" {
+		return version
+	}
+	if commit := os.Getenv("COMMIT_SHA"); commit != "" {
+		return commit
+	}
+	return fmt.Sprintf("dev-%d", startTime.Unix())
+}
+
+func filterSentryEvent(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
+	if event.Request != nil {
+		if event.Request.URL == "/health" || event.Request.URL == "/status" || event.Request.URL == "/metrics" {
+			return nil
+		}
+	}
+
+	return event
+}
+
 func main() {
 	cfg := config.Load()
 
-	if cfg.Sentry.DSN != "" {
-		err := sentry.Init(sentry.ClientOptions{
-			Dsn:              cfg.Sentry.DSN,
-			Environment:      cfg.Sentry.Environment,
-			TracesSampleRate: 1.0,
-			EnableTracing:    true,
-		})
-		if err != nil {
-			log.Printf("Failed to initialize Sentry: %v", err)
-		} else {
-			log.Printf("Sentry initialized with environment: %s", cfg.Sentry.Environment)
-		}
-	}
+	initSentry(cfg)
 
 	db, err := database.New(&cfg.Database)
 	if err != nil {
@@ -279,6 +317,7 @@ func main() {
 		sentryHandler := sentryhttp.New(sentryhttp.Options{
 			Repanic:         true,
 			WaitForDelivery: false,
+			Timeout:         5 * time.Second,
 		})
 		handler = sentryHandler.Handle(handler)
 	}

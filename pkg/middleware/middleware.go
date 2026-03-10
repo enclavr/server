@@ -17,10 +17,11 @@ import (
 type ContextKey string
 
 const (
-	UserIDKey    ContextKey = "user_id"
-	UsernameKey  ContextKey = "username"
-	IsAdminKey   ContextKey = "is_admin"
-	RequestIDKey ContextKey = "request_id"
+	UserIDKey     ContextKey = "user_id"
+	UsernameKey   ContextKey = "username"
+	IsAdminKey    ContextKey = "is_admin"
+	RequestIDKey  ContextKey = "request_id"
+	BookmarkIDKey ContextKey = "bookmark_id"
 )
 
 func JWTAuth(authService *auth.AuthService) func(http.Handler) http.Handler {
