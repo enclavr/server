@@ -154,6 +154,7 @@ func main() {
 	blockHandler := handlers.NewBlockHandler(db)
 	readReceiptHandler := handlers.NewReadReceiptHandler(db, hub)
 	preferencesHandler := handlers.NewPreferencesHandler(db)
+	statusHandler := handlers.NewStatusHandler(db)
 	_ = services.NewPushService(db, cfg)
 
 	go hub.Run()
@@ -254,6 +255,10 @@ func main() {
 
 	mux.HandleFunc("/api/preferences", middleware.RequireAuth(authService, preferencesHandler.GetPreferences))
 	mux.HandleFunc("/api/preferences/update", middleware.RequireAuth(authService, preferencesHandler.UpdatePreferences))
+
+	mux.HandleFunc("/api/status", middleware.RequireAuth(authService, statusHandler.GetStatus))
+	mux.HandleFunc("/api/status/update", middleware.RequireAuth(authService, statusHandler.UpdateStatus))
+	mux.HandleFunc("/api/status/user", middleware.RequireAuth(authService, statusHandler.GetUserStatus))
 
 	mux.HandleFunc("/api/invite/create", middleware.RequireAuth(authService, inviteHandler.CreateInvite))
 	mux.HandleFunc("/api/invites", middleware.RequireAuth(authService, inviteHandler.GetInvites))

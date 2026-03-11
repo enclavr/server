@@ -936,3 +936,33 @@ func (mr *MessageRead) BeforeCreate(tx *gorm.DB) error {
 	}
 	return nil
 }
+
+type UserStatus string
+
+const (
+	UserStatusOnline    UserStatus = "online"
+	UserStatusAway      UserStatus = "away"
+	UserStatusDND       UserStatus = "dnd"
+	UserStatusInvisible UserStatus = "invisible"
+	UserStatusOffline   UserStatus = "offline"
+)
+
+type UserStatusModel struct {
+	ID          uuid.UUID  `gorm:"type:uuid;primary_key" json:"id"`
+	UserID      uuid.UUID  `gorm:"type:uuid;not null;uniqueIndex" json:"user_id"`
+	Status      UserStatus `gorm:"type:varchar(20);default:'offline'" json:"status"`
+	StatusText  string     `gorm:"size:150" json:"status_text"`
+	StatusEmoji string     `gorm:"size:10" json:"status_emoji"`
+	ExpiresAt   *time.Time `json:"expires_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+func (us *UserStatusModel) BeforeCreate(tx *gorm.DB) error {
+	if us.ID == uuid.Nil {
+		us.ID = uuid.New()
+	}
+	if us.Status == "" {
+		us.Status = UserStatusOffline
+	}
+	return nil
+}

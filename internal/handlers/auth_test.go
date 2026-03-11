@@ -498,16 +498,22 @@ func TestLogin_ResponseBody(t *testing.T) {
 	handler := setupTestHandler(t)
 
 	// seed user
-	regBody, _ := json.Marshal(RegisterRequest{
+	regBody, err := json.Marshal(RegisterRequest{
 		Username: "loginuser",
 		Email:    "login@example.com",
 		Password: "loginpass",
 	})
+	if err != nil {
+		t.Fatalf("failed to marshal register request: %v", err)
+	}
 	regReq := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(regBody))
 	regReq.Header.Set("Content-Type", "application/json")
 	handler.Register(httptest.NewRecorder(), regReq)
 
-	body, _ := json.Marshal(LoginRequest{Username: "loginuser", Password: "loginpass"})
+	body, err := json.Marshal(LoginRequest{Username: "loginuser", Password: "loginpass"})
+	if err != nil {
+		t.Fatalf("failed to marshal login request: %v", err)
+	}
 	req := httptest.NewRequest(http.MethodPost, "/login", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
