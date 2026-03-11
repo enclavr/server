@@ -293,6 +293,33 @@ func (ss *ServerSettings) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
+type RoomSettings struct {
+	ID                uuid.UUID `gorm:"type:uuid;primary_key" json:"id"`
+	RoomID            uuid.UUID `gorm:"type:uuid;not null;uniqueIndex" json:"room_id"`
+	AllowMessageEdits bool      `gorm:"default:true" json:"allow_message_edits"`
+	AllowReactions    bool      `gorm:"default:true" json:"allow_reactions"`
+	RequireApproval   bool      `gorm:"default:false" json:"require_approval"`
+	MaxUsers          int       `gorm:"default:0" json:"max_users"`
+	AutoDeleteDays    int       `gorm:"default:0" json:"auto_delete_days"`
+	SlowModeSeconds   int       `gorm:"default:0" json:"slow_mode_seconds"`
+	AllowVoiceChat    bool      `gorm:"default:true" json:"allow_voice_chat"`
+	AllowFileUploads  bool      `gorm:"default:true" json:"allow_file_uploads"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+
+	Room Room `gorm:"foreignKey:RoomID" json:"-"`
+}
+
+func (rs *RoomSettings) BeforeCreate(tx *gorm.DB) error {
+	if rs.ID == uuid.Nil {
+		rs.ID = uuid.New()
+	}
+	if rs.CreatedAt.IsZero() {
+		rs.CreatedAt = time.Now()
+	}
+	return nil
+}
+
 type WebhookEvent string
 
 const (

@@ -82,6 +82,7 @@ func (d *Database) Migrate() error {
 		&models.Report{},
 		&models.Bookmark{},
 		&models.UserPreferences{},
+		&models.RoomSettings{},
 	)
 	if err != nil {
 		return err
@@ -127,6 +128,7 @@ func (d *Database) Migrate() error {
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_soundboard_sounds_created_by ON soundboard_sounds(created_by)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_channel_activity_room_id_date ON channel_activity(room_id, date DESC)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_user_preferences_user_id ON user_preferences(user_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_room_settings_room_id ON room_settings(room_id)")
 
 	log.Println("Database migration completed")
 	return nil
