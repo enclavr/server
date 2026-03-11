@@ -22,6 +22,11 @@ const (
 	ErrorLevel Level = "ERROR"
 )
 
+var (
+	currentLevel = InfoLevel
+	levelLock    sync.RWMutex
+)
+
 type Logger struct {
 	logger *log.Logger
 	mu     sync.Mutex
@@ -57,6 +62,35 @@ func Init() {
 	})
 }
 
+func SetLevel(level Level) {
+	levelLock.Lock()
+	defer levelLock.Unlock()
+	currentLevel = level
+}
+
+func GetLevel() Level {
+	levelLock.RLock()
+	defer levelLock.RUnlock()
+	return currentLevel
+}
+
+func shouldLog(level Level) bool {
+	levelLock.RLock()
+	defer levelLock.RUnlock()
+
+	levels := map[Level]int{
+		DebugLevel: 0,
+		InfoLevel:  1,
+		WarnLevel:  2,
+		ErrorLevel: 3,
+	}
+
+	current := levels[currentLevel]
+	msgLevel := levels[level]
+
+	return msgLevel >= current
+}
+
 func SetOutput(w io.Writer) {
 	output = w
 	if defaultLogger != nil {
@@ -65,6 +99,10 @@ func SetOutput(w io.Writer) {
 }
 
 func logEntry(level Level, msg string, fields map[string]interface{}) {
+	if !shouldLog(level) {
+		return
+	}
+
 	if defaultLogger == nil {
 		Init()
 	}
@@ -88,6 +126,10 @@ func logEntry(level Level, msg string, fields map[string]interface{}) {
 }
 
 func logEntryWithContext(ctx context.Context, level Level, msg string, fields map[string]interface{}) {
+	if !shouldLog(level) {
+		return
+	}
+
 	if defaultLogger == nil {
 		Init()
 	}

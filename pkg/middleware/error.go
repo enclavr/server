@@ -8,13 +8,15 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/enclavr/server/pkg/errors"
 	"github.com/getsentry/sentry-go"
 )
 
 type ErrorResponse struct {
-	Error   string `json:"error"`
-	Message string `json:"message,omitempty"`
-	Code    int    `json:"code,omitempty"`
+	Error   string   `json:"error"`
+	Code    string   `json:"code"`
+	Message string   `json:"message,omitempty"`
+	Details []string `json:"details,omitempty"`
 }
 
 func WriteError(w http.ResponseWriter, code int, message string) {
@@ -22,8 +24,8 @@ func WriteError(w http.ResponseWriter, code int, message string) {
 	w.WriteHeader(code)
 	jsonErr := json.NewEncoder(w).Encode(ErrorResponse{
 		Error:   http.StatusText(code),
+		Code:    string(errors.ErrCodeBadRequest),
 		Message: message,
-		Code:    code,
 	})
 	if jsonErr != nil {
 		log.Printf("Error encoding error response: %v", jsonErr)
@@ -35,6 +37,21 @@ func WriteJSON(w http.ResponseWriter, code int, data interface{}) {
 	w.WriteHeader(code)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		log.Printf("Error encoding JSON response: %v", err)
+	}
+}
+
+func WriteAPIError(w http.ResponseWriter, err *errors.Error) {
+	status := errors.ToHTTPStatus(err.Code)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	jsonErr := json.NewEncoder(w).Encode(ErrorResponse{
+		Error:   string(err.Code),
+		Code:    string(err.Code),
+		Message: err.Message,
+		Details: err.Details,
+	})
+	if jsonErr != nil {
+		log.Printf("Error encoding error response: %v", jsonErr)
 	}
 }
 
@@ -68,7 +85,13 @@ func Recovery(next http.Handler) http.Handler {
 
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusInternalServerError)
-				fmt.Fprintf(w, `{"error": "Internal Server Error", "message": "An unexpected error occurred"}`)
+				if encErr := json.NewEncoder(w).Encode(ErrorResponse{
+					Error:   string(errors.ErrCodeInternal),
+					Code:    string(errors.ErrCodeInternal),
+					Message: "An unexpected error occurred",
+				}); encErr != nil {
+					log.Printf("Error encoding error response: %v", encErr)
+				}
 			}
 		}()
 		next.ServeHTTP(w, r)

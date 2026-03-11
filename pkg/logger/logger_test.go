@@ -33,6 +33,7 @@ func TestLogger_SetOutput(t *testing.T) {
 }
 
 func TestLogger_Debug(t *testing.T) {
+	SetLevel(DebugLevel)
 	buf := &bytes.Buffer{}
 	SetOutput(buf)
 
@@ -48,6 +49,7 @@ func TestLogger_Debug(t *testing.T) {
 	if !strings.Contains(output, "key") {
 		t.Errorf("expected field key in output, got: %s", output)
 	}
+	SetLevel(InfoLevel)
 }
 
 func TestLogger_Info(t *testing.T) {
