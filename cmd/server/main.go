@@ -117,6 +117,7 @@ func main() {
 		metrics.RedisEnabled.Set(0)
 	}
 	inviteHandler := handlers.NewInviteHandler(db)
+	inviteLinkHandler := handlers.NewInviteLinkHandler(db)
 
 	authHandler := handlers.NewAuthHandler(db, authService, cfg.Admin.FirstIsAdmin)
 	roomHandler := handlers.NewRoomHandler(db)
@@ -217,6 +218,13 @@ func main() {
 	mux.HandleFunc("/api/invites", middleware.RequireAuth(authService, inviteHandler.GetInvites))
 	mux.HandleFunc("/api/invite/use", middleware.RequireAuth(authService, inviteHandler.UseInvite))
 	mux.HandleFunc("/api/invite/revoke", middleware.RequireAuth(authService, inviteHandler.RevokeInvite))
+
+	mux.HandleFunc("/api/invite-link/create", middleware.RequireAuth(authService, inviteLinkHandler.CreateInviteLink))
+	mux.HandleFunc("/api/invite-links", middleware.RequireAuth(authService, inviteLinkHandler.GetInviteLinks))
+	mux.HandleFunc("/api/invite-link/update", middleware.RequireAuth(authService, inviteLinkHandler.UpdateInviteLink))
+	mux.HandleFunc("/api/invite-link/delete", middleware.RequireAuth(authService, inviteLinkHandler.DeleteInviteLink))
+	mux.HandleFunc("/api/invite-link/resolve", inviteLinkHandler.ResolveInviteLink)
+	mux.HandleFunc("/api/invite-link/use", middleware.RequireAuth(authService, inviteLinkHandler.UseInviteLink))
 
 	mux.HandleFunc("/api/roles", middleware.RequireAuth(authService, roleHandler.GetRoles))
 	mux.HandleFunc("/api/role/members", middleware.RequireAuth(authService, roleHandler.GetMembers))

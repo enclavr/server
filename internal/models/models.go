@@ -247,6 +247,46 @@ func generateInviteCode() string {
 	return uuid.New().String()[:8]
 }
 
+type InviteLink struct {
+	ID          uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	Code        string         `gorm:"uniqueIndex;not null;size:64" json:"code"`
+	RoomID      uuid.UUID      `gorm:"type:uuid;not null;index" json:"room_id"`
+	CreatedBy   uuid.UUID      `gorm:"type:uuid;not null" json:"created_by"`
+	Title       string         `gorm:"size:100" json:"title"`
+	Description string         `gorm:"size:255" json:"description"`
+	MaxUses     int            `gorm:"default:0" json:"max_uses"`
+	Uses        int            `gorm:"default:0" json:"uses"`
+	IsPermanent bool           `gorm:"default:true" json:"is_permanent"`
+	IsEnabled   bool           `gorm:"default:true" json:"is_enabled"`
+	ExpiresAt   *time.Time     `json:"expires_at"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+
+	Room Room `gorm:"foreignKey:RoomID" json:"-"`
+	User User `gorm:"foreignKey:CreatedBy" json:"-"`
+}
+
+func (il *InviteLink) BeforeCreate(tx *gorm.DB) error {
+	if il.ID == uuid.Nil {
+		il.ID = uuid.New()
+	}
+	if il.Code == "" {
+		il.Code = generateInviteLinkCode()
+	}
+	if il.CreatedAt.IsZero() {
+		il.CreatedAt = time.Now()
+	}
+	if il.UpdatedAt.IsZero() {
+		il.UpdatedAt = time.Now()
+	}
+	return nil
+}
+
+func generateInviteLinkCode() string {
+	return uuid.New().String()[:12]
+}
+
 type MessageReaction struct {
 	ID        uuid.UUID `gorm:"type:uuid;primary_key" json:"id"`
 	MessageID uuid.UUID `gorm:"type:uuid;not null;index:idx_message_reaction" json:"message_id"`
