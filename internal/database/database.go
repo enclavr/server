@@ -44,6 +44,7 @@ func New(cfg *config.DatabaseConfig) (*Database, error) {
 func (d *Database) Migrate() error {
 	d.Exec("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"")
 	d.Exec("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+	d.Exec("CREATE EXTENSION IF NOT EXISTS pg_stat_statements")
 
 	err := d.AutoMigrate(
 		&models.Category{},
@@ -85,6 +86,10 @@ func (d *Database) Migrate() error {
 		&models.RoomSettings{},
 		&models.Block{},
 		&models.MessageRead{},
+		&models.Attachment{},
+		&models.CategoryPermission{},
+		&models.UserDevice{},
+		&models.AuditLogExclusion{},
 	)
 	if err != nil {
 		return err
@@ -131,6 +136,23 @@ func (d *Database) Migrate() error {
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_channel_activity_room_id_date ON channel_activity(room_id, date DESC)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_user_preferences_user_id ON user_preferences(user_id)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_room_settings_room_id ON room_settings(room_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_blocks_blocker_blocked ON blocks(blocker_id, blocked_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_push_subscriptions_endpoint_user ON push_subscriptions(endpoint, user_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_voice_sessions_user_id ON voice_sessions(user_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_room_invites_room_id ON room_invites(room_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_invite_links_code ON invite_links(code)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_user_rooms_user_room_role ON user_rooms(user_id, room_id, role)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_messages_is_deleted ON messages(is_deleted)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_direct_messages_is_deleted ON direct_messages(is_deleted)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_thread_messages_is_deleted ON thread_messages(is_deleted)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_attachments_message_id ON attachments(message_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_attachments_file_id ON attachments(file_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_category_permissions_category_id ON category_permissions(category_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_category_permissions_user_id ON category_permissions(user_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_user_devices_user_id ON user_devices(user_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_user_devices_device_id ON user_devices(device_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_audit_log_exclusions_user_id ON audit_log_exclusions(user_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_audit_log_exclusions_action ON audit_log_exclusions(action)")
 
 	log.Println("Database migration completed")
 	return nil
