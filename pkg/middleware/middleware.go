@@ -3,6 +3,7 @@ package middleware
 import (
 	"compress/gzip"
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -178,7 +179,16 @@ func SentryRecovery() func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				if err := recover(); err != nil {
-					sentry.CaptureException(err.(error))
+					var errValue error
+					switch e := err.(type) {
+					case error:
+						errValue = e
+					case string:
+						errValue = fmt.Errorf("%s", e)
+					default:
+						errValue = fmt.Errorf("%v", e)
+					}
+					sentry.CaptureException(errValue)
 					sentry.Flush(2 * time.Second)
 					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				}
