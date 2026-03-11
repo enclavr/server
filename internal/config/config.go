@@ -11,6 +11,7 @@ type Config struct {
 	Server   ServerConfig
 	Database DatabaseConfig
 	Auth     AuthConfig
+	Email    EmailConfig
 	Voice    VoiceConfig
 	Push     PushConfig
 	Redis    RedisConfig
@@ -44,13 +45,27 @@ type DatabaseConfig struct {
 }
 
 type AuthConfig struct {
-	JWTSecret         string
-	JWTExpiration     time.Duration
-	RefreshExpiration time.Duration
-	OIDCEnabled       bool
-	OIDCIssuerURL     string
-	OIDCClientID      string
-	OIDCClientSecret  string
+	JWTSecret          string
+	JWTExpiration      time.Duration
+	RefreshExpiration  time.Duration
+	OIDCEnabled        bool
+	OIDCIssuerURL      string
+	OIDCClientID       string
+	OIDCClientSecret   string
+	OAuthEnabled       bool
+	GoogleClientID     string
+	GoogleClientSecret string
+	GitHubClientID     string
+	GitHubClientSecret string
+}
+
+type EmailConfig struct {
+	SMTPHost     string
+	SMTPPort     string
+	SMTPUsername string
+	SMTPPassword string
+	SMTPFrom     string
+	UseTLS       bool
 }
 
 type VoiceConfig struct {
@@ -103,13 +118,26 @@ func Load() *Config {
 			SSLMode:  getEnv("DB_SSLMODE", "disable"),
 		},
 		Auth: AuthConfig{
-			JWTSecret:         getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
-			JWTExpiration:     getDurationEnv("JWT_EXPIRATION", 24*time.Hour),
-			RefreshExpiration: getDurationEnv("REFRESH_EXPIRATION", 7*24*time.Hour),
-			OIDCEnabled:       getEnvBool("OIDC_ENABLED", false),
-			OIDCIssuerURL:     getEnv("OIDC_ISSUER_URL", ""),
-			OIDCClientID:      getEnv("OIDC_CLIENT_ID", ""),
-			OIDCClientSecret:  getEnv("OIDC_CLIENT_SECRET", ""),
+			JWTSecret:          getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
+			JWTExpiration:      getDurationEnv("JWT_EXPIRATION", 24*time.Hour),
+			RefreshExpiration:  getDurationEnv("REFRESH_EXPIRATION", 7*24*time.Hour),
+			OIDCEnabled:        getEnvBool("OIDC_ENABLED", false),
+			OIDCIssuerURL:      getEnv("OIDC_ISSUER_URL", ""),
+			OIDCClientID:       getEnv("OIDC_CLIENT_ID", ""),
+			OIDCClientSecret:   getEnv("OIDC_CLIENT_SECRET", ""),
+			OAuthEnabled:       getEnvBool("OAUTH_ENABLED", false),
+			GoogleClientID:     getEnv("GOOGLE_CLIENT_ID", ""),
+			GoogleClientSecret: getEnv("GOOGLE_CLIENT_SECRET", ""),
+			GitHubClientID:     getEnv("GITHUB_CLIENT_ID", ""),
+			GitHubClientSecret: getEnv("GITHUB_CLIENT_SECRET", ""),
+		},
+		Email: EmailConfig{
+			SMTPHost:     getEnv("SMTP_HOST", ""),
+			SMTPPort:     getEnv("SMTP_PORT", "587"),
+			SMTPUsername: getEnv("SMTP_USERNAME", ""),
+			SMTPPassword: getEnv("SMTP_PASSWORD", ""),
+			SMTPFrom:     getEnv("SMTP_FROM", "noreply@enclavr.local"),
+			UseTLS:       getEnvBool("SMTP_USE_TLS", true),
 		},
 		Voice: VoiceConfig{
 			STUNServer: getEnv("STUN_SERVER", "stun:stun.l.google.com:19302"),

@@ -8,18 +8,20 @@ import (
 )
 
 type User struct {
-	ID           uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
-	Username     string         `gorm:"uniqueIndex;not null;size:50" json:"username"`
-	Email        string         `gorm:"uniqueIndex;not null" json:"email,omitempty"`
-	PasswordHash string         `gorm:"not null" json:"-"`
-	DisplayName  string         `gorm:"size:100" json:"display_name"`
-	AvatarURL    string         `gorm:"size:500" json:"avatar_url"`
-	IsAdmin      bool           `gorm:"default:false" json:"is_admin"`
-	OIDCSubject  string         `gorm:"size:255" json:"-"`
-	OIDCIssuer   string         `gorm:"size:255" json:"-"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
-	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
+	ID               uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	Username         string         `gorm:"uniqueIndex;not null;size:50" json:"username"`
+	Email            string         `gorm:"uniqueIndex;not null" json:"email,omitempty"`
+	PasswordHash     string         `gorm:"not null" json:"-"`
+	DisplayName      string         `gorm:"size:100" json:"display_name"`
+	AvatarURL        string         `gorm:"size:500" json:"avatar_url"`
+	IsAdmin          bool           `gorm:"default:false" json:"is_admin"`
+	OIDCSubject      string         `gorm:"size:255" json:"-"`
+	OIDCIssuer       string         `gorm:"size:255" json:"-"`
+	TwoFactorEnabled bool           `gorm:"default:false" json:"two_factor_enabled"`
+	TwoFactorSecret  string         `gorm:"size:255" json:"-"`
+	CreatedAt        time.Time      `json:"created_at"`
+	UpdatedAt        time.Time      `json:"updated_at"`
+	DeletedAt        gorm.DeletedAt `gorm:"index" json:"-"`
 
 	Rooms         []UserRoom     `gorm:"foreignKey:UserID" json:"-"`
 	Sessions      []Session      `gorm:"foreignKey:UserID" json:"-"`
@@ -758,6 +760,76 @@ func (up *UserPreferences) BeforeCreate(tx *gorm.DB) error {
 	}
 	if up.CreatedAt.IsZero() {
 		up.CreatedAt = time.Now()
+	}
+	return nil
+}
+
+type PasswordReset struct {
+	ID        uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	UserID    uuid.UUID      `gorm:"type:uuid;not null;index" json:"user_id"`
+	Token     string         `gorm:"uniqueIndex;not null" json:"-"`
+	ExpiresAt time.Time      `json:"expires_at"`
+	Used      bool           `gorm:"default:false" json:"used"`
+	CreatedAt time.Time      `json:"created_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	User User `gorm:"foreignKey:UserID" json:"-"`
+}
+
+func (pr *PasswordReset) BeforeCreate(tx *gorm.DB) error {
+	if pr.ID == uuid.Nil {
+		pr.ID = uuid.New()
+	}
+	if pr.CreatedAt.IsZero() {
+		pr.CreatedAt = time.Now()
+	}
+	if pr.ExpiresAt.IsZero() {
+		pr.ExpiresAt = time.Now().Add(1 * time.Hour)
+	}
+	return nil
+}
+
+type EmailVerification struct {
+	ID        uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	UserID    uuid.UUID      `gorm:"type:uuid;not null;index" json:"user_id"`
+	Token     string         `gorm:"uniqueIndex;not null" json:"-"`
+	ExpiresAt time.Time      `json:"expires_at"`
+	Used      bool           `gorm:"default:false" json:"used"`
+	CreatedAt time.Time      `json:"created_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	User User `gorm:"foreignKey:UserID" json:"-"`
+}
+
+func (ev *EmailVerification) BeforeCreate(tx *gorm.DB) error {
+	if ev.ID == uuid.Nil {
+		ev.ID = uuid.New()
+	}
+	if ev.CreatedAt.IsZero() {
+		ev.CreatedAt = time.Now()
+	}
+	if ev.ExpiresAt.IsZero() {
+		ev.ExpiresAt = time.Now().Add(24 * time.Hour)
+	}
+	return nil
+}
+
+type TwoFactorRecovery struct {
+	ID        uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	UserID    uuid.UUID      `gorm:"type:uuid;not null;index" json:"user_id"`
+	Codes     string         `gorm:"type:text" json:"-"`
+	CreatedAt time.Time      `json:"created_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	User User `gorm:"foreignKey:UserID" json:"-"`
+}
+
+func (tfr *TwoFactorRecovery) BeforeCreate(tx *gorm.DB) error {
+	if tfr.ID == uuid.Nil {
+		tfr.ID = uuid.New()
+	}
+	if tfr.CreatedAt.IsZero() {
+		tfr.CreatedAt = time.Now()
 	}
 	return nil
 }

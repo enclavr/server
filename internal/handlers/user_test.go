@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +10,7 @@ import (
 
 	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/internal/models"
+	"github.com/enclavr/server/pkg/middleware"
 	"gorm.io/gorm"
 )
 
@@ -83,6 +86,92 @@ func TestUserHandler_SearchUsers(t *testing.T) {
 				if len(results) != tt.expectedCount {
 					t.Errorf("expected %d results, got %d", tt.expectedCount, len(results))
 				}
+			}
+		})
+	}
+}
+
+func TestUserHandler_UpdateUser(t *testing.T) {
+	handler := setupUserHandler(t)
+
+	testUser := models.User{
+		Username:    "updateuser",
+		DisplayName: "Original Name",
+	}
+	handler.db.Create(&testUser)
+
+	tests := []struct {
+		name           string
+		updateReq      UpdateUserRequest
+		expectedStatus int
+		checkResult    func(t *testing.T, updatedUser models.User)
+	}{
+		{
+			name: "update display name",
+			updateReq: UpdateUserRequest{
+				DisplayName: "New Name",
+			},
+			expectedStatus: http.StatusOK,
+			checkResult: func(t *testing.T, updatedUser models.User) {
+				if updatedUser.DisplayName != "New Name" {
+					t.Errorf("expected display name 'New Name', got '%s'", updatedUser.DisplayName)
+				}
+			},
+		},
+		{
+			name: "update avatar URL",
+			updateReq: UpdateUserRequest{
+				AvatarURL: "https://example.com/avatar.png",
+			},
+			expectedStatus: http.StatusOK,
+			checkResult: func(t *testing.T, updatedUser models.User) {
+				if updatedUser.AvatarURL != "https://example.com/avatar.png" {
+					t.Errorf("expected avatar URL 'https://example.com/avatar.png', got '%s'", updatedUser.AvatarURL)
+				}
+			},
+		},
+		{
+			name: "update both fields",
+			updateReq: UpdateUserRequest{
+				DisplayName: "Updated Name",
+				AvatarURL:   "https://example.com/new-avatar.png",
+			},
+			expectedStatus: http.StatusOK,
+			checkResult: func(t *testing.T, updatedUser models.User) {
+				if updatedUser.DisplayName != "Updated Name" {
+					t.Errorf("expected display name 'Updated Name', got '%s'", updatedUser.DisplayName)
+				}
+				if updatedUser.AvatarURL != "https://example.com/new-avatar.png" {
+					t.Errorf("expected avatar URL 'https://example.com/new-avatar.png', got '%s'", updatedUser.AvatarURL)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, err := json.Marshal(tt.updateReq)
+			if err != nil {
+				t.Fatalf("failed to marshal request: %v", err)
+			}
+
+			req := httptest.NewRequest(http.MethodPut, "/user/update", bytes.NewBuffer(body))
+			req.Header.Set("Content-Type", "application/json")
+			req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, testUser.ID))
+
+			w := httptest.NewRecorder()
+			handler.UpdateUser(w, req)
+
+			if w.Code != tt.expectedStatus {
+				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+			}
+
+			if tt.expectedStatus == http.StatusOK {
+				var updatedUser models.User
+				if err := json.Unmarshal(w.Body.Bytes(), &updatedUser); err != nil {
+					t.Fatalf("failed to unmarshal response: %v", err)
+				}
+				tt.checkResult(t, updatedUser)
 			}
 		})
 	}
