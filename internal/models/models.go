@@ -900,3 +900,39 @@ func (tfr *TwoFactorRecovery) BeforeCreate(tx *gorm.DB) error {
 	}
 	return nil
 }
+
+type Block struct {
+	ID        uuid.UUID `gorm:"type:uuid;primary_key" json:"id"`
+	BlockerID uuid.UUID `gorm:"type:uuid;not null;index" json:"blocker_id"`
+	BlockedID uuid.UUID `gorm:"type:uuid;not null;index" json:"blocked_id"`
+	Reason    string    `gorm:"size:255" json:"reason"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (b *Block) BeforeCreate(tx *gorm.DB) error {
+	if b.ID == uuid.Nil {
+		b.ID = uuid.New()
+	}
+	if b.CreatedAt.IsZero() {
+		b.CreatedAt = time.Now()
+	}
+	return nil
+}
+
+type MessageRead struct {
+	ID        uuid.UUID `gorm:"type:uuid;primary_key" json:"id"`
+	UserID    uuid.UUID `gorm:"type:uuid;not null;index" json:"user_id"`
+	RoomID    uuid.UUID `gorm:"type:uuid;not null;index" json:"room_id"`
+	MessageID uuid.UUID `gorm:"type:uuid;not null" json:"message_id"`
+	ReadAt    time.Time `json:"read_at"`
+}
+
+func (mr *MessageRead) BeforeCreate(tx *gorm.DB) error {
+	if mr.ID == uuid.Nil {
+		mr.ID = uuid.New()
+	}
+	if mr.ReadAt.IsZero() {
+		mr.ReadAt = time.Now()
+	}
+	return nil
+}

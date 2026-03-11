@@ -11,6 +11,7 @@ import (
 	"github.com/enclavr/server/internal/models"
 	"github.com/enclavr/server/internal/websocket"
 	"github.com/enclavr/server/pkg/middleware"
+	"github.com/enclavr/server/pkg/validator"
 	"github.com/google/uuid"
 )
 
@@ -78,6 +79,11 @@ func (h *MessageHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := validator.ValidateMessageContent(req.Content); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	msgType := models.MessageTypeText
 	if req.Type == "system" {
 		msgType = models.MessageTypeSystem
@@ -86,7 +92,7 @@ func (h *MessageHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	msg := &models.Message{
 		RoomID:  req.RoomID,
 		UserID:  userID,
-		Content: req.Content,
+		Content: validator.SanitizeMessageContent(req.Content),
 		Type:    msgType,
 	}
 
@@ -228,6 +234,11 @@ func (h *MessageHandler) UpdateMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := validator.ValidateMessageContent(req.Content); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	var msg models.Message
 	if err := h.db.First(&msg, "id = ?", messageID).Error; err != nil {
 		http.Error(w, "Message not found", http.StatusNotFound)
@@ -239,7 +250,7 @@ func (h *MessageHandler) UpdateMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msg.Content = req.Content
+	msg.Content = validator.SanitizeMessageContent(req.Content)
 	msg.IsEdited = true
 	msg.UpdatedAt = time.Now()
 

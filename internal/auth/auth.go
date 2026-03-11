@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"time"
@@ -10,6 +11,8 @@ import (
 	"github.com/enclavr/server/internal/models"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/pquerna/otp"
+	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -17,6 +20,8 @@ var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrTokenExpired       = errors.New("token expired")
 	ErrInvalidToken       = errors.New("invalid token")
+	ErrInvalid2FA         = errors.New("invalid 2FA code")
+	Err2FARequired        = errors.New("2FA verification required")
 )
 
 type Claims struct {
@@ -123,4 +128,95 @@ func GenerateState() (string, error) {
 
 func GenerateUUID() uuid.UUID {
 	return uuid.New()
+}
+
+func (s *AuthService) GenerateTwoFactorSecret() (string, error) {
+	key, err := totp.Generate(totp.GenerateOpts{
+		Issuer:      "Enclavr",
+		AccountName: "",
+		Algorithm:   otp.AlgorithmSHA1,
+		Digits:      otp.DigitsSix,
+		Period:      30,
+	})
+	if err != nil {
+		return "", err
+	}
+	return key.Secret(), nil
+}
+
+func (s *AuthService) ValidateTwoFactorCode(secret, code string) bool {
+	return totp.Validate(code, secret)
+}
+
+func (s *AuthService) GenerateEmailVerificationToken(userID uuid.UUID) (string, error) {
+	claims := RefreshClaims{
+		UserID: userID,
+		Type:   "email_verification",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Issuer:    "enclavr",
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(s.cfg.JWTSecret))
+}
+
+func (s *AuthService) ValidateEmailVerificationToken(tokenString string) (*RefreshClaims, error) {
+	return s.validateTokenType(tokenString, "email_verification")
+}
+
+func (s *AuthService) GeneratePasswordResetToken(userID uuid.UUID) (string, error) {
+	claims := RefreshClaims{
+		UserID: userID,
+		Type:   "password_reset",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Issuer:    "enclavr",
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(s.cfg.JWTSecret))
+}
+
+func (s *AuthService) ValidatePasswordResetToken(tokenString string) (*RefreshClaims, error) {
+	return s.validateTokenType(tokenString, "password_reset")
+}
+
+func (s *AuthService) validateTokenType(tokenString, expectedType string) (*RefreshClaims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &RefreshClaims{}, func(token *jwt.Token) (interface{}, error) {
+		return []byte(s.cfg.JWTSecret), nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	if claims, ok := token.Claims.(*RefreshClaims); ok && token.Valid {
+		if claims.Type != expectedType {
+			return nil, ErrInvalidToken
+		}
+		return claims, nil
+	}
+
+	return nil, ErrInvalidToken
+}
+
+func (s *AuthService) GenerateRecoveryCodes() ([]string, error) {
+	codes := make([]string, 10)
+	for i := 0; i < 10; i++ {
+		b := make([]byte, 4)
+		if _, err := rand.Read(b); err != nil {
+			return nil, err
+		}
+		codes[i] = base64.StdEncoding.EncodeToString(b)[:8]
+	}
+	return codes, nil
+}
+
+func ConstantTimeCompare(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }

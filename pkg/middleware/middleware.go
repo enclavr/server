@@ -25,6 +25,106 @@ const (
 	BookmarkIDKey ContextKey = "bookmark_id"
 )
 
+type IPRateLimiter struct {
+	requests map[string][]time.Time
+	mu       sync.Mutex
+	limit    int
+	window   time.Duration
+}
+
+func NewIPRateLimiter(limit int, window time.Duration) *IPRateLimiter {
+	rl := &IPRateLimiter{
+		requests: make(map[string][]time.Time),
+		limit:    limit,
+		window:   window,
+	}
+	go rl.cleanup()
+	return rl
+}
+
+func (rl *IPRateLimiter) cleanup() {
+	ticker := time.NewTicker(rl.window)
+	defer ticker.Stop()
+	for range ticker.C {
+		rl.mu.Lock()
+		now := time.Now()
+		for key, times := range rl.requests {
+			var valid []time.Time
+			for _, t := range times {
+				if now.Sub(t) < rl.window {
+					valid = append(valid, t)
+				}
+			}
+			if len(valid) == 0 {
+				delete(rl.requests, key)
+			} else {
+				rl.requests[key] = valid
+			}
+		}
+		rl.mu.Unlock()
+	}
+}
+
+func (rl *IPRateLimiter) Allow(key string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	times := rl.requests[key]
+
+	var valid []time.Time
+	for _, t := range times {
+		if now.Sub(t) < rl.window {
+			valid = append(valid, t)
+		}
+	}
+
+	if len(valid) >= rl.limit {
+		rl.requests[key] = valid
+		return false
+	}
+
+	rl.requests[key] = append(valid, now)
+	return true
+}
+
+var globalIPLimiter = NewIPRateLimiter(100, time.Minute)
+var authIPLimiter = NewIPRateLimiter(5, time.Minute)
+
+func IPRateLimit(rl *IPRateLimiter) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ip := getClientIP(r)
+			if !rl.Allow(ip) {
+				http.Error(w, "Too many requests", http.StatusTooManyRequests)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func GlobalIPRateLimit() func(http.Handler) http.Handler {
+	return IPRateLimit(globalIPLimiter)
+}
+
+func AuthIPRateLimit() func(http.Handler) http.Handler {
+	return IPRateLimit(authIPLimiter)
+}
+
+func getClientIP(r *http.Request) string {
+	forwarded := r.Header.Get("X-Forwarded-For")
+	if forwarded != "" {
+		ips := strings.Split(forwarded, ",")
+		return strings.TrimSpace(ips[0])
+	}
+	realIP := r.Header.Get("X-Real-IP")
+	if realIP != "" {
+		return realIP
+	}
+	return r.RemoteAddr
+}
+
 func JWTAuth(authService *auth.AuthService) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

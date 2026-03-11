@@ -83,6 +83,8 @@ func (d *Database) Migrate() error {
 		&models.Bookmark{},
 		&models.UserPreferences{},
 		&models.RoomSettings{},
+		&models.Block{},
+		&models.MessageRead{},
 	)
 	if err != nil {
 		return err

@@ -209,7 +209,7 @@ func TestLogin(t *testing.T) {
 			body: LoginRequest{
 				Password: "password123",
 			},
-			expectedStatus: http.StatusBadRequest,
+			expectedStatus: http.StatusUnauthorized,
 		},
 	}
 

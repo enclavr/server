@@ -123,6 +123,10 @@ func main() {
 	roomHandler := handlers.NewRoomHandler(db)
 	voiceHandler := handlers.NewVoiceHandler(db, hub, cfg)
 	oidcHandler := handlers.NewOIDCHandler(db, &cfg.Auth)
+	oauthHandler := handlers.NewOAuthHandler(db, authService, &cfg.Auth)
+	passwordResetHandler := handlers.NewPasswordResetHandler(db, &cfg.Auth, &cfg.Email)
+	emailVerificationHandler := handlers.NewEmailVerificationHandler(db, &cfg.Auth, &cfg.Email)
+	twoFactorHandler := handlers.NewTwoFactorHandler(db, authService, &cfg.Auth)
 	messageHandler := handlers.NewMessageHandler(db, hub)
 	presenceHandler := handlers.NewPresenceHandler(db)
 	dmHandler := handlers.NewDirectMessageHandler(db)
@@ -146,20 +150,50 @@ func main() {
 	pushHandler := handlers.NewPushHandler(db)
 	banHandler := handlers.NewBanHandler(db)
 	reportHandler := handlers.NewReportHandler(db)
+	blockHandler := handlers.NewBlockHandler(db)
+	readReceiptHandler := handlers.NewReadReceiptHandler(db, hub)
 	preferencesHandler := handlers.NewPreferencesHandler(db)
 	_ = services.NewPushService(db, cfg)
 
 	go hub.Run()
 
+	middleware.InitRateLimiter(60)
+
+	authRateLimiter := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			middleware.RateLimit(http.Handler(next)).ServeHTTP(w, r)
+		}
+	}
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/auth/register", authHandler.Register)
-	mux.HandleFunc("/api/auth/login", authHandler.Login)
+	mux.HandleFunc("/api/auth/register", authRateLimiter(authHandler.Register))
+	mux.HandleFunc("/api/auth/login", authRateLimiter(authHandler.Login))
 	mux.HandleFunc("/api/auth/refresh", authHandler.RefreshToken)
 	mux.HandleFunc("/api/auth/me", middleware.RequireAuth(authService, authHandler.GetMe))
 
 	mux.HandleFunc("/api/auth/oidc/login", oidcHandler.Login)
 	mux.HandleFunc("/api/auth/oidc/callback", oidcHandler.Callback)
 	mux.HandleFunc("/api/auth/oidc/config", oidcHandler.GetConfig)
+
+	mux.HandleFunc("/api/auth/oauth/providers", oauthHandler.GetProviders)
+	mux.HandleFunc("/api/auth/oauth/login", oauthHandler.Login)
+	mux.HandleFunc("/api/auth/oauth/google/callback", oauthHandler.Callback)
+	mux.HandleFunc("/api/auth/oauth/github/callback", oauthHandler.Callback)
+
+	mux.HandleFunc("/api/auth/password/forgot", passwordResetHandler.ForgotPassword)
+	mux.HandleFunc("/api/auth/password/reset", passwordResetHandler.ResetPassword)
+	mux.HandleFunc("/api/auth/password/validate-token", passwordResetHandler.ValidateToken)
+	mux.HandleFunc("/api/auth/password/change", middleware.RequireAuth(authService, passwordResetHandler.ChangePassword))
+
+	mux.HandleFunc("/api/auth/email/verify/send", middleware.RequireAuth(authService, emailVerificationHandler.SendVerification))
+	mux.HandleFunc("/api/auth/email/verify", emailVerificationHandler.VerifyEmail)
+
+	mux.HandleFunc("/api/auth/2fa/status", middleware.RequireAuth(authService, twoFactorHandler.GetStatus))
+	mux.HandleFunc("/api/auth/2fa/setup", middleware.RequireAuth(authService, twoFactorHandler.Setup))
+	mux.HandleFunc("/api/auth/2fa/enable", middleware.RequireAuth(authService, twoFactorHandler.Enable))
+	mux.HandleFunc("/api/auth/2fa/disable", middleware.RequireAuth(authService, twoFactorHandler.Disable))
+	mux.HandleFunc("/api/auth/2fa/verify", twoFactorHandler.Verify)
+	mux.HandleFunc("/api/auth/2fa/recovery-codes", middleware.RequireAuth(authService, twoFactorHandler.GetRecoveryCodes))
 
 	mux.HandleFunc("/api/rooms", middleware.RequireAuth(authService, roomHandler.GetRooms))
 	mux.HandleFunc("/api/room/create", middleware.RequireAuth(authService, roomHandler.CreateRoom))
@@ -300,6 +334,15 @@ func main() {
 	mux.HandleFunc("/api/report/review", middleware.RequireAuth(authService, reportHandler.ReviewReport))
 	mux.HandleFunc("/api/report/delete", middleware.RequireAuth(authService, reportHandler.DeleteReport))
 	mux.HandleFunc("/api/reports/my", middleware.RequireAuth(authService, reportHandler.GetMyReports))
+
+	mux.HandleFunc("/api/block", middleware.RequireAuth(authService, blockHandler.BlockUser))
+	mux.HandleFunc("/api/block/unblock", middleware.RequireAuth(authService, blockHandler.UnblockUser))
+	mux.HandleFunc("/api/block/list", middleware.RequireAuth(authService, blockHandler.GetBlockedUsers))
+	mux.HandleFunc("/api/block/check", middleware.RequireAuth(authService, blockHandler.IsBlocked))
+
+	mux.HandleFunc("/api/message/read", middleware.RequireAuth(authService, readReceiptHandler.MarkMessageRead))
+	mux.HandleFunc("/api/message/read/receipts", middleware.RequireAuth(authService, readReceiptHandler.GetReadReceipts))
+	mux.HandleFunc("/api/message/read/last", middleware.RequireAuth(authService, readReceiptHandler.GetLastReadMessage))
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

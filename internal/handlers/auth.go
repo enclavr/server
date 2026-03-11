@@ -109,7 +109,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Username == "" || req.Password == "" {
-		http.Error(w, "Username and password are required", http.StatusBadRequest)
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
@@ -121,6 +121,12 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	if !h.authService.CheckPassword(req.Password, user.PasswordHash) {
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	if user.TwoFactorEnabled {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"require_2fa": "true", "user_id": user.ID.String()})
 		return
 	}
 
