@@ -11,13 +11,21 @@ import (
 	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/internal/models"
 	"github.com/enclavr/server/pkg/middleware"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
 func setupTestDBForUserHandler(t *testing.T) *gorm.DB {
 	db := openTestDB(t)
 
-	err := db.AutoMigrate(&models.User{})
+	err := db.AutoMigrate(
+		&models.User{},
+		&models.Room{},
+		&models.Message{},
+		&models.DirectMessage{},
+		&models.UserRoom{},
+		&models.MessageReaction{},
+	)
 	if err != nil {
 		t.Fatalf("failed to migrate database: %v", err)
 	}
@@ -174,5 +182,106 @@ func TestUserHandler_UpdateUser(t *testing.T) {
 				tt.checkResult(t, updatedUser)
 			}
 		})
+	}
+}
+
+func TestUserHandler_GetProfile(t *testing.T) {
+	db := setupTestDBForUserHandler(t)
+	testDB := &database.Database{DB: db}
+	handler := NewUserHandler(testDB)
+
+	testUser := models.User{
+		Username:    "profileuser",
+		Email:       "profile@example.com",
+		DisplayName: "Profile User",
+		AvatarURL:   "https://example.com/avatar.png",
+		IsAdmin:     true,
+	}
+	db.Create(&testUser)
+
+	room := models.Room{
+		ID:   uuid.Must(uuid.Parse("11111111-1111-1111-1111-111111111111")),
+		Name: "Test Room",
+	}
+	db.Create(&room)
+
+	userRoom := models.UserRoom{
+		UserID: testUser.ID,
+		RoomID: room.ID,
+	}
+	db.Create(&userRoom)
+
+	message := models.Message{
+		ID:      uuid.Must(uuid.Parse("22222222-2222-2222-2222-222222222222")),
+		UserID:  testUser.ID,
+		RoomID:  room.ID,
+		Content: "Test message",
+	}
+	db.Create(&message)
+
+	dm := models.DirectMessage{
+		ID:         uuid.Must(uuid.Parse("33333333-3333-3333-3333-333333333333")),
+		SenderID:   testUser.ID,
+		ReceiverID: testUser.ID,
+		Content:    "Test DM",
+	}
+	db.Create(&dm)
+
+	reaction := models.MessageReaction{
+		ID:        uuid.Must(uuid.Parse("44444444-4444-4444-4444-444444444444")),
+		UserID:    testUser.ID,
+		MessageID: message.ID,
+		Emoji:     "👍",
+	}
+	db.Create(&reaction)
+
+	req := httptest.NewRequest(http.MethodGet, "/user/profile", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, testUser.ID))
+
+	w := httptest.NewRecorder()
+	handler.GetProfile(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	var profile UserProfileResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &profile); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+
+	if profile.Username != "profileuser" {
+		t.Errorf("expected username 'profileuser', got '%s'", profile.Username)
+	}
+	if profile.Email != "profile@example.com" {
+		t.Errorf("expected email 'profile@example.com', got '%s'", profile.Email)
+	}
+	if !profile.IsAdmin {
+		t.Error("expected IsAdmin to be true")
+	}
+	if profile.Stats.RoomsJoined != 1 {
+		t.Errorf("expected rooms_joined to be 1, got %d", profile.Stats.RoomsJoined)
+	}
+	if profile.Stats.MessagesSent != 1 {
+		t.Errorf("expected messages_sent to be 1, got %d", profile.Stats.MessagesSent)
+	}
+	if profile.Stats.DMsReceived != 1 {
+		t.Errorf("expected dms_received to be 1, got %d", profile.Stats.DMsReceived)
+	}
+	if profile.Stats.ReactionsGiven != 1 {
+		t.Errorf("expected reactions_given to be 1, got %d", profile.Stats.ReactionsGiven)
+	}
+}
+
+func TestUserHandler_GetProfile_Unauthorized(t *testing.T) {
+	handler := setupUserHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/user/profile", nil)
+	w := httptest.NewRecorder()
+
+	handler.GetProfile(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected status %d, got %d", http.StatusUnauthorized, w.Code)
 	}
 }

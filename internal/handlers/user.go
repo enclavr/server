@@ -30,6 +30,24 @@ type UpdateUserRequest struct {
 	AvatarURL   string `json:"avatar_url"`
 }
 
+type UserProfileResponse struct {
+	ID          uuid.UUID `json:"id"`
+	Username    string    `json:"username"`
+	Email       string    `json:"email"`
+	DisplayName string    `json:"display_name"`
+	AvatarURL   string    `json:"avatar_url"`
+	CreatedAt   string    `json:"created_at"`
+	IsAdmin     bool      `json:"is_admin"`
+	Stats       UserStats `json:"stats"`
+}
+
+type UserStats struct {
+	RoomsJoined    int64 `json:"rooms_joined"`
+	MessagesSent   int64 `json:"messages_sent"`
+	DMsReceived    int64 `json:"dms_received"`
+	ReactionsGiven int64 `json:"reactions_given"`
+}
+
 func (h *UserHandler) SearchUsers(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("username")
 	if query == "" {
@@ -92,6 +110,58 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(user); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var user models.User
+	if err := h.db.First(&user, userID).Error; err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	var roomsJoined int64
+	h.db.Model(&models.UserRoom{}).Where("user_id = ?", userID).Count(&roomsJoined)
+
+	var messagesSent int64
+	h.db.Model(&models.Message{}).Where("user_id = ?", userID).Count(&messagesSent)
+
+	var dmsReceived int64
+	h.db.Model(&models.DirectMessage{}).Where("receiver_id = ?", userID).Count(&dmsReceived)
+
+	var reactionsGiven int64
+	h.db.Model(&models.MessageReaction{}).Where("user_id = ?", userID).Count(&reactionsGiven)
+
+	profile := UserProfileResponse{
+		ID:        user.ID,
+		Username:  user.Username,
+		Email:     user.Email,
+		CreatedAt: user.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		IsAdmin:   user.IsAdmin,
+		Stats: UserStats{
+			RoomsJoined:    roomsJoined,
+			MessagesSent:   messagesSent,
+			DMsReceived:    dmsReceived,
+			ReactionsGiven: reactionsGiven,
+		},
+	}
+
+	if user.DisplayName != "" {
+		profile.DisplayName = user.DisplayName
+	}
+	if user.AvatarURL != "" {
+		profile.AvatarURL = user.AvatarURL
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(profile); err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 	}
 }

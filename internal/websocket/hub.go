@@ -19,10 +19,34 @@ var messageBufferPool = sync.Pool{
 	},
 }
 
-type room struct {
-	clients    map[*Client]bool
-	mutex      sync.RWMutex
-	lastAccess int64
+type ConnectionState int32
+
+const (
+	StateConnecting ConnectionState = iota
+	StateConnected
+	StateDisconnecting
+	StateDisconnected
+)
+
+func (s ConnectionState) String() string {
+	switch s {
+	case StateConnecting:
+		return "connecting"
+	case StateConnected:
+		return "connected"
+	case StateDisconnecting:
+		return "disconnecting"
+	case StateDisconnected:
+		return "disconnected"
+	default:
+		return "unknown"
+	}
+}
+
+type TypingState struct {
+	UserID    uuid.UUID
+	RoomID    uuid.UUID
+	StartedAt time.Time
 }
 
 type Hub struct {
@@ -40,9 +64,18 @@ type Hub struct {
 	startedAt     time.Time
 	batchQueue    chan *batchItem
 	batchTicker   *time.Ticker
+	typingUsers   map[uuid.UUID]*TypingState
+	typingMutex   sync.RWMutex
+	typingTimeout time.Duration
 
 	pubSub      *PubSubService
 	enableRedis bool
+}
+
+type room struct {
+	clients    map[*Client]bool
+	mutex      sync.RWMutex
+	lastAccess int64
 }
 
 type batchItem struct {
@@ -53,13 +86,19 @@ type batchItem struct {
 }
 
 type Client struct {
-	hub       *Hub
-	conn      *websocket.Conn
-	send      chan []byte
-	userID    uuid.UUID
-	roomID    uuid.UUID
-	lastSeen  atomic.Int64
-	rateLimit *RateLimiter
+	hub          *Hub
+	conn         *websocket.Conn
+	send         chan []byte
+	userID       uuid.UUID
+	roomID       uuid.UUID
+	lastSeen     atomic.Int64
+	rateLimit    *RateLimiter
+	connectionID uuid.UUID
+	state        atomic.Int32
+	remoteAddr   string
+	connectedAt  time.Time
+	errorCount   atomic.Int32
+	lastError    atomic.Value
 }
 
 type Message struct {
@@ -126,8 +165,11 @@ func NewHub() *Hub {
 		batchQueue:      make(chan *batchItem, 512),
 		batchTicker:     time.NewTicker(50 * time.Millisecond),
 		enableRedis:     false,
+		typingUsers:     make(map[uuid.UUID]*TypingState),
+		typingTimeout:   5 * time.Second,
 	}
 	go hub.processBatch()
+	go hub.cleanupTypingUsers()
 	return hub
 }
 
@@ -378,12 +420,13 @@ func (h *Hub) GetRoomCount() int {
 
 func (h *Hub) RegisterClient(userID, roomID uuid.UUID, conn *websocket.Conn) *Client {
 	client := &Client{
-		hub:       h,
-		conn:      conn,
-		send:      make(chan []byte, 256),
-		userID:    userID,
-		roomID:    roomID,
-		rateLimit: NewRateLimiter(30, 10),
+		hub:          h,
+		conn:         conn,
+		send:         make(chan []byte, 256),
+		userID:       userID,
+		roomID:       roomID,
+		rateLimit:    NewRateLimiter(30, 10),
+		connectionID: uuid.New(),
 	}
 
 	h.register <- client
@@ -497,36 +540,54 @@ func (m *Message) decode(data []byte) error {
 
 func (c *Client) ReadPump() {
 	defer func() {
+		c.SetState(StateDisconnecting)
 		c.hub.unregister <- c
 		if closeErr := c.conn.Close(); closeErr != nil {
-			log.Printf("Error closing connection: %v", closeErr)
+			log.Printf("[Connection %s] Error closing connection for user %s: %v", c.connectionID, c.userID, closeErr)
 		}
+		c.SetState(StateDisconnected)
+		log.Printf("[Connection %s] Connection closed for user %s (remote: %s, errors: %d)",
+			c.connectionID, c.userID, c.remoteAddr, c.GetErrorCount())
 	}()
+
+	c.SetState(StateConnecting)
+	if c.conn != nil {
+		c.remoteAddr = c.conn.RemoteAddr().String()
+	}
 
 	c.conn.SetReadLimit(512 * 1024)
 	if err := c.conn.SetReadDeadline(time.Now().Add(60 * time.Second)); err != nil {
-		log.Printf("Error setting read deadline: %v", err)
+		log.Printf("[Connection %s] Error setting read deadline: %v", c.connectionID, err)
+		c.RecordError(err)
 		return
 	}
 	c.conn.SetPongHandler(func(string) error {
 		if err := c.conn.SetReadDeadline(time.Now().Add(60 * time.Second)); err != nil {
-			log.Printf("Error setting read deadline: %v", err)
+			log.Printf("[Connection %s] Error setting read deadline in pong handler: %v", c.connectionID, err)
+			c.RecordError(err)
 			return err
 		}
 		return nil
 	})
 
+	c.SetState(StateConnected)
+	log.Printf("[Connection %s] Client connected: user=%s room=%s from=%s",
+		c.connectionID, c.userID, c.roomID, c.remoteAddr)
+
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("WebSocket error: %v", err)
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseTLSHandshake) {
+				log.Printf("[Connection %s] WebSocket read error for user %s: %v", c.connectionID, c.userID, err)
+				c.RecordError(err)
+			} else {
+				log.Printf("[Connection %s] WebSocket closed for user %s: %v", c.connectionID, c.userID, err)
 			}
 			break
 		}
 
 		if !c.rateLimit.Allow() {
-			log.Printf("Rate limit exceeded for user %s", c.userID)
+			log.Printf("[Connection %s] Rate limit exceeded for user %s", c.connectionID, c.userID)
 			continue
 		}
 
@@ -534,7 +595,8 @@ func (c *Client) ReadPump() {
 
 		var msg Message
 		if err := msg.decode(message); err != nil {
-			log.Printf("Error decoding message: %v", err)
+			log.Printf("[Connection %s] Error decoding message from user %s: %v", c.connectionID, c.userID, err)
+			c.RecordError(err)
 			continue
 		}
 
@@ -551,7 +613,7 @@ func (c *Client) WritePump() {
 	defer func() {
 		ticker.Stop()
 		if closeErr := c.conn.Close(); closeErr != nil {
-			log.Printf("Error closing connection: %v", closeErr)
+			log.Printf("[Connection %s] Error closing connection in WritePump: %v", c.connectionID, closeErr)
 		}
 	}()
 
@@ -559,29 +621,35 @@ func (c *Client) WritePump() {
 		select {
 		case message, ok := <-c.send:
 			if err := c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
-				log.Printf("Error setting write deadline: %v", err)
+				log.Printf("[Connection %s] Error setting write deadline: %v", c.connectionID, err)
+				c.RecordError(err)
 				return
 			}
 			if !ok {
+				log.Printf("[Connection %s] Send channel closed, sending close message for user %s", c.connectionID, c.userID)
 				if err := c.conn.WriteMessage(websocket.CloseMessage, []byte{}); err != nil {
-					log.Printf("Error sending close message: %v", err)
+					log.Printf("[Connection %s] Error sending close message: %v", c.connectionID, err)
+					c.RecordError(err)
 				}
 				return
 			}
 
 			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
-				log.Printf("Error writing message: %v", err)
+				log.Printf("[Connection %s] Error writing message to user %s: %v", c.connectionID, c.userID, err)
+				c.RecordError(err)
 				return
 			}
 			c.lastSeen.Store(time.Now().Unix())
 
 		case <-ticker.C:
 			if err := c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
-				log.Printf("Error setting write deadline: %v", err)
+				log.Printf("[Connection %s] Error setting write deadline in ping: %v", c.connectionID, err)
+				c.RecordError(err)
 				return
 			}
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				log.Printf("Error writing ping: %v", err)
+				log.Printf("[Connection %s] Error writing ping to user %s: %v", c.connectionID, c.userID, err)
+				c.RecordError(err)
 				return
 			}
 		}
@@ -590,6 +658,59 @@ func (c *Client) WritePump() {
 
 func (c *Client) GetLastSeen() time.Time {
 	return time.Unix(c.lastSeen.Load(), 0)
+}
+
+func (c *Client) GetState() ConnectionState {
+	return ConnectionState(c.state.Load())
+}
+
+func (c *Client) SetState(state ConnectionState) {
+	c.state.Store(int32(state))
+}
+
+func (c *Client) GetConnectionID() uuid.UUID {
+	return c.connectionID
+}
+
+func (c *Client) RecordError(err error) {
+	c.errorCount.Add(1)
+	c.lastError.Store(err)
+}
+
+func (c *Client) GetErrorCount() int32 {
+	return c.errorCount.Load()
+}
+
+func (c *Client) GetRemoteAddr() string {
+	return c.remoteAddr
+}
+
+func (h *Hub) cleanupTypingUsers() {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-h.shutdown:
+			return
+		case <-ticker.C:
+			h.typingMutex.Lock()
+			now := time.Now()
+			for userID, state := range h.typingUsers {
+				if now.Sub(state.StartedAt) > h.typingTimeout {
+					notifyMsg := &Message{
+						Type:      "user-stopped-typing",
+						RoomID:    state.RoomID,
+						UserID:    state.UserID,
+						Timestamp: now,
+					}
+					h.broadcastToRoom(state.RoomID, notifyMsg, state.UserID)
+					delete(h.typingUsers, userID)
+				}
+			}
+			h.typingMutex.Unlock()
+		}
+	}
 }
 
 func (c *Client) handleMessage(msg *Message) {
@@ -611,6 +732,7 @@ func (c *Client) handleMessage(msg *Message) {
 		if c.hub.enableRedis {
 			c.hub.publishToRedis(notifyMsg)
 		}
+		c.hub.sendOnlineUsersList(c.roomID, c.userID)
 	case "user-left":
 		notifyMsg := &Message{
 			Type:      "user-left",
@@ -623,7 +745,9 @@ func (c *Client) handleMessage(msg *Message) {
 			c.hub.publishToRedis(notifyMsg)
 		}
 		c.hub.UnregisterClient(c)
+		c.hub.sendOnlineUsersList(c.roomID, uuid.Nil)
 	case "typing":
+		c.hub.setTypingUser(c.userID, c.roomID)
 		notifyMsg := &Message{
 			Type:      "user-typing",
 			RoomID:    c.roomID,
@@ -635,6 +759,7 @@ func (c *Client) handleMessage(msg *Message) {
 			c.hub.publishToRedis(notifyMsg)
 		}
 	case "stop-typing":
+		c.hub.clearTypingUser(c.userID)
 		notifyMsg := &Message{
 			Type:      "user-stopped-typing",
 			RoomID:    c.roomID,
@@ -645,9 +770,102 @@ func (c *Client) handleMessage(msg *Message) {
 		if c.hub.enableRedis {
 			c.hub.publishToRedis(notifyMsg)
 		}
+	case "get-online-users":
+		c.hub.sendOnlineUsersList(c.roomID, c.userID)
+	case "get-room-notifications":
+		c.hub.sendRoomNotificationSettings(c.userID, c.roomID)
 	default:
-		log.Printf("Unknown message type: %s", msg.Type)
+		log.Printf("[Connection %s] Unknown message type: %s from user %s", c.connectionID, msg.Type, c.userID)
 	}
+}
+
+func (h *Hub) setTypingUser(userID, roomID uuid.UUID) {
+	h.typingMutex.Lock()
+	defer h.typingMutex.Unlock()
+	h.typingUsers[userID] = &TypingState{
+		UserID:    userID,
+		RoomID:    roomID,
+		StartedAt: time.Now(),
+	}
+}
+
+func (h *Hub) clearTypingUser(userID uuid.UUID) {
+	h.typingMutex.Lock()
+	defer h.typingMutex.Unlock()
+	delete(h.typingUsers, userID)
+}
+
+func (h *Hub) GetTypingUsers(roomID uuid.UUID) []uuid.UUID {
+	h.typingMutex.RLock()
+	defer h.typingMutex.RUnlock()
+
+	var users []uuid.UUID
+	for userID, state := range h.typingUsers {
+		if state.RoomID == roomID {
+			users = append(users, userID)
+		}
+	}
+	return users
+}
+
+func (h *Hub) sendOnlineUsersList(roomID, excludeUserID uuid.UUID) {
+	clients := h.GetRoomClients(roomID)
+	if len(clients) == 0 {
+		return
+	}
+
+	onlineUsers := make([]OnlineUser, 0, len(clients))
+	for _, client := range clients {
+		if client.userID != excludeUserID {
+			onlineUsers = append(onlineUsers, OnlineUser{
+				UserID:        client.userID,
+				ConnectionID:  client.connectionID,
+				State:         client.GetState().String(),
+				ConnectedAt:   client.connectedAt,
+				LastSeen:      client.GetLastSeen(),
+				RemoteAddress: client.remoteAddr,
+			})
+		}
+	}
+
+	payload, err := json.Marshal(onlineUsers)
+	if err != nil {
+		log.Printf("Error marshaling online users: %v", err)
+		return
+	}
+
+	msg := &Message{
+		Type:      "online-users-list",
+		RoomID:    roomID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+	}
+	h.broadcastToRoom(roomID, msg, excludeUserID)
+}
+
+func (h *Hub) sendRoomNotificationSettings(userID, roomID uuid.UUID) {
+	msg := &Message{
+		Type:      "room-notifications",
+		RoomID:    roomID,
+		UserID:    userID,
+		Payload:   json.RawMessage(`{"enabled":true,"sound":true}`),
+		Timestamp: time.Now(),
+	}
+	h.sendToClient(userID, msg)
+}
+
+type OnlineUser struct {
+	UserID        uuid.UUID `json:"user_id"`
+	ConnectionID  uuid.UUID `json:"connection_id"`
+	State         string    `json:"state"`
+	ConnectedAt   time.Time `json:"connected_at"`
+	LastSeen      time.Time `json:"last_seen"`
+	RemoteAddress string    `json:"remote_address,omitempty"`
+}
+
+type RoomNotificationSettings struct {
+	Enabled bool `json:"enabled"`
+	Sound   bool `json:"sound"`
 }
 
 func (h *Hub) handleRedisUserMessage(msg *PubSubMessage) {

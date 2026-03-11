@@ -45,6 +45,13 @@ var (
 		},
 	)
 
+	WebSocketRateLimited = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "websocket_rate_limited_total",
+			Help: "Total number of WebSocket connections rate limited",
+		},
+	)
+
 	DatabaseQueryDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "database_query_duration_seconds",

@@ -10,6 +10,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -125,6 +126,7 @@ func main() {
 	presenceHandler := handlers.NewPresenceHandler(db)
 	dmHandler := handlers.NewDirectMessageHandler(db)
 	userHandler := handlers.NewUserHandler(db)
+	bookmarkHandler := handlers.NewBookmarkHandler(db)
 	categoryHandler := handlers.NewCategoryHandler(db)
 	pinnedMessageHandler := handlers.NewPinnedMessageHandler(db, hub)
 	reactionHandler := handlers.NewReactionHandler(db, hub)
@@ -184,6 +186,13 @@ func main() {
 
 	mux.HandleFunc("/api/users/search", middleware.RequireAuth(authService, userHandler.SearchUsers))
 	mux.HandleFunc("/api/user/update", middleware.RequireAuth(authService, userHandler.UpdateUser))
+	mux.HandleFunc("/api/user/profile", middleware.RequireAuth(authService, userHandler.GetProfile))
+
+	mux.HandleFunc("/api/bookmarks", middleware.RequireAuth(authService, bookmarkHandler.GetBookmarks))
+	mux.HandleFunc("/api/bookmark/create", middleware.RequireAuth(authService, bookmarkHandler.CreateBookmark))
+	mux.HandleFunc("/api/bookmark/", middleware.RequireAuth(authService, bookmarkHandler.GetBookmark))
+	mux.HandleFunc("/api/bookmark/update/", middleware.RequireAuth(authService, bookmarkHandler.UpdateBookmark))
+	mux.HandleFunc("/api/bookmark/delete/", middleware.RequireAuth(authService, bookmarkHandler.DeleteBookmark))
 
 	mux.HandleFunc("/api/categories", middleware.RequireAuth(authService, categoryHandler.GetCategories))
 	mux.HandleFunc("/api/category/create", middleware.RequireAuth(authService, categoryHandler.CreateCategory))
@@ -301,6 +310,22 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(metrics); err != nil {
 			log.Printf("Error encoding metrics: %v", err)
+		}
+	})
+
+	mux.HandleFunc("/info", func(w http.ResponseWriter, r *http.Request) {
+		info := map[string]interface{}{
+			"version":       "1.0.0",
+			"server_time":   time.Now().UTC().Format(time.RFC3339),
+			"uptime":        time.Since(startTime).String(),
+			"go_version":    runtime.Version(),
+			"ws_clients":    hub.GetClientCount(),
+			"ws_rooms":      hub.GetRoomCount(),
+			"redis_enabled": hub.IsRedisEnabled(),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(info); err != nil {
+			log.Printf("Error encoding info: %v", err)
 		}
 	})
 
