@@ -127,6 +127,7 @@ func main() {
 	passwordResetHandler := handlers.NewPasswordResetHandler(db, &cfg.Auth, &cfg.Email)
 	emailVerificationHandler := handlers.NewEmailVerificationHandler(db, &cfg.Auth, &cfg.Email)
 	twoFactorHandler := handlers.NewTwoFactorHandler(db, authService, &cfg.Auth)
+	sessionHandler := handlers.NewSessionHandler(db, &cfg.Auth, authService)
 	messageHandler := handlers.NewMessageHandler(db, hub)
 	presenceHandler := handlers.NewPresenceHandler(db)
 	dmHandler := handlers.NewDirectMessageHandler(db)
@@ -194,6 +195,12 @@ func main() {
 	mux.HandleFunc("/api/auth/2fa/disable", middleware.RequireAuth(authService, twoFactorHandler.Disable))
 	mux.HandleFunc("/api/auth/2fa/verify", twoFactorHandler.Verify)
 	mux.HandleFunc("/api/auth/2fa/recovery-codes", middleware.RequireAuth(authService, twoFactorHandler.GetRecoveryCodes))
+
+	mux.HandleFunc("/api/auth/sessions", middleware.RequireAuth(authService, sessionHandler.GetSessions))
+	mux.HandleFunc("/api/auth/sessions/revoke", middleware.RequireAuth(authService, sessionHandler.RevokeSession))
+	mux.HandleFunc("/api/auth/sessions/revoke-all", middleware.RequireAuth(authService, sessionHandler.RevokeAllSessions))
+	mux.HandleFunc("/api/auth/sessions/rotate", middleware.RequireAuth(authService, sessionHandler.RotateToken))
+	mux.HandleFunc("/api/auth/sessions/count", middleware.RequireAuth(authService, sessionHandler.GetActiveSessionsCount))
 
 	mux.HandleFunc("/api/rooms", middleware.RequireAuth(authService, roomHandler.GetRooms))
 	mux.HandleFunc("/api/room/create", middleware.RequireAuth(authService, roomHandler.CreateRoom))

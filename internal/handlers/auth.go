@@ -154,7 +154,19 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.revokeRefreshToken(req.RefreshToken); err != nil {
+		log.Printf("Failed to revoke old refresh token: %v", err)
+	}
+
 	h.sendAuthResponse(w, &user)
+}
+
+func (h *AuthHandler) revokeRefreshToken(token string) error {
+	hashedToken, err := h.authService.HashPassword(token)
+	if err != nil {
+		return err
+	}
+	return h.db.Where("token = ?", hashedToken).Delete(&models.RefreshToken{}).Error
 }
 
 func (h *AuthHandler) sendAuthResponse(w http.ResponseWriter, user *models.User) {
