@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -47,6 +48,13 @@ type TypingState struct {
 	UserID    uuid.UUID
 	RoomID    uuid.UUID
 	StartedAt time.Time
+	Context   string
+}
+
+type TypingPayload struct {
+	Context   string `json:"context,omitempty"`
+	ChannelID string `json:"channel_id,omitempty"`
+	ThreadID  string `json:"thread_id,omitempty"`
 }
 
 type Hub struct {
@@ -70,6 +78,9 @@ type Hub struct {
 
 	pubSub      *PubSubService
 	enableRedis bool
+
+	notificationSettings map[string]*RoomNotificationSettings
+	notificationMutex    sync.RWMutex
 }
 
 type room struct {
@@ -100,6 +111,12 @@ type Client struct {
 	errorCount    atomic.Int32
 	lastError     atomic.Value
 	lastErrorTime atomic.Int64
+	lastPing      atomic.Int64
+	latency       atomic.Int64
+	packetsIn     atomic.Int64
+	packetsOut    atomic.Int64
+	bytesIn       atomic.Int64
+	bytesOut      atomic.Int64
 }
 
 type Message struct {
@@ -155,19 +172,20 @@ type HubMetrics struct {
 
 func NewHub() *Hub {
 	hub := &Hub{
-		rooms:           make(map[uuid.UUID]*room),
-		broadcast:       make(chan *Message, 256),
-		register:        make(chan *Client),
-		unregister:      make(chan *Client),
-		userConnections: make(map[uuid.UUID]*Client),
-		roomMutexes:     make(map[uuid.UUID]*sync.RWMutex),
-		shutdown:        make(chan struct{}),
-		startedAt:       time.Now(),
-		batchQueue:      make(chan *batchItem, 512),
-		batchTicker:     time.NewTicker(50 * time.Millisecond),
-		enableRedis:     false,
-		typingUsers:     make(map[uuid.UUID]*TypingState),
-		typingTimeout:   5 * time.Second,
+		rooms:                make(map[uuid.UUID]*room),
+		broadcast:            make(chan *Message, 256),
+		register:             make(chan *Client),
+		unregister:           make(chan *Client),
+		userConnections:      make(map[uuid.UUID]*Client),
+		roomMutexes:          make(map[uuid.UUID]*sync.RWMutex),
+		shutdown:             make(chan struct{}),
+		startedAt:            time.Now(),
+		batchQueue:           make(chan *batchItem, 512),
+		batchTicker:          time.NewTicker(50 * time.Millisecond),
+		enableRedis:          false,
+		typingUsers:          make(map[uuid.UUID]*TypingState),
+		typingTimeout:        5 * time.Second,
+		notificationSettings: make(map[string]*RoomNotificationSettings),
 	}
 	go hub.processBatch()
 	go hub.cleanupTypingUsers()
@@ -573,11 +591,11 @@ func (c *Client) ReadPump() {
 		}
 		c.SetState(StateDisconnected)
 		if lastErr := c.GetLastError(); lastErr != nil {
-			log.Printf("[Connection %s] Connection closed for user %s (remote: %s, errors: %d, last_error: %v)",
-				c.connectionID, c.userID, c.remoteAddr, c.GetErrorCount(), lastErr)
+			log.Printf("[Connection %s] Connection closed for user %s (remote: %s, errors: %d, last_error: %v, packets_in: %d, bytes_in: %d)",
+				c.connectionID, c.userID, c.remoteAddr, c.GetErrorCount(), lastErr, c.packetsIn.Load(), c.bytesIn.Load())
 		} else {
-			log.Printf("[Connection %s] Connection closed for user %s (remote: %s, errors: %d)",
-				c.connectionID, c.userID, c.remoteAddr, c.GetErrorCount())
+			log.Printf("[Connection %s] Connection closed for user %s (remote: %s, errors: %d, packets_in: %d, bytes_in: %d)",
+				c.connectionID, c.userID, c.remoteAddr, c.GetErrorCount(), c.packetsIn.Load(), c.bytesIn.Load())
 		}
 	}()
 
@@ -606,10 +624,14 @@ func (c *Client) ReadPump() {
 		c.connectionID, c.userID, c.roomID, c.remoteAddr)
 
 	for {
-		_, message, err := c.conn.ReadMessage()
+		messageType, message, err := c.conn.ReadMessage()
 		if err != nil {
+			c.packetsIn.Add(1)
+			c.bytesIn.Add(int64(len(message)))
+
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseTLSHandshake) {
-				log.Printf("[Connection %s] WebSocket read error for user %s: %v", c.connectionID, c.userID, err)
+				log.Printf("[Connection %s] WebSocket read error for user %s: %v (error_type: unexpected_close)",
+					c.connectionID, c.userID, err)
 				c.RecordError(err)
 			} else {
 				log.Printf("[Connection %s] WebSocket closed for user %s: %v", c.connectionID, c.userID, err)
@@ -617,8 +639,22 @@ func (c *Client) ReadPump() {
 			break
 		}
 
+		c.packetsIn.Add(1)
+		c.bytesIn.Add(int64(len(message)))
+
+		if messageType == websocket.PongMessage {
+			log.Printf("[Connection %s] Received pong from user %s", c.connectionID, c.userID)
+			continue
+		}
+
+		if messageType == websocket.CloseMessage {
+			log.Printf("[Connection %s] Received close message from user %s", c.connectionID, c.userID)
+			break
+		}
+
 		if !c.rateLimit.Allow() {
 			log.Printf("[Connection %s] Rate limit exceeded for user %s", c.connectionID, c.userID)
+			c.RecordError(fmt.Errorf("rate limit exceeded"))
 			continue
 		}
 
@@ -626,7 +662,8 @@ func (c *Client) ReadPump() {
 
 		var msg Message
 		if err := msg.decode(message); err != nil {
-			log.Printf("[Connection %s] Error decoding message from user %s: %v", c.connectionID, c.userID, err)
+			log.Printf("[Connection %s] Error decoding message from user %s: %v (payload_size: %d)",
+				c.connectionID, c.userID, err, len(message))
 			c.RecordError(err)
 			continue
 		}
@@ -665,7 +702,12 @@ func (c *Client) WritePump() {
 				return
 			}
 
+			c.packetsOut.Add(1)
+			c.bytesOut.Add(int64(len(message)))
+
 			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
+				c.packetsOut.Add(1)
+				c.bytesOut.Add(int64(len(message)))
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 					log.Printf("[Connection %s] Unexpected close while writing to user %s: %v", c.connectionID, c.userID, err)
 				} else {
@@ -755,6 +797,10 @@ func (h *Hub) cleanupTypingUsers() {
 						UserID:    state.UserID,
 						Timestamp: now,
 					}
+					if state.Context != "" {
+						payload, _ := json.Marshal(TypingPayload{Context: state.Context})
+						notifyMsg.Payload = payload
+					}
 					h.broadcastToRoom(state.RoomID, notifyMsg, state.UserID)
 					delete(h.typingUsers, userID)
 				}
@@ -823,11 +869,16 @@ func (c *Client) handleMessage(msg *Message) {
 			c.hub.publishToRedis(notifyMsg)
 		}
 	case "typing":
-		c.hub.setTypingUser(c.userID, c.roomID)
+		var payload TypingPayload
+		if len(msg.Payload) > 0 {
+			_ = json.Unmarshal(msg.Payload, &payload)
+		}
+		c.hub.setTypingUser(c.userID, c.roomID, payload.Context)
 		notifyMsg := &Message{
 			Type:      "user-typing",
 			RoomID:    c.roomID,
 			UserID:    c.userID,
+			Payload:   msg.Payload,
 			Timestamp: time.Now(),
 		}
 		c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
@@ -850,22 +901,49 @@ func (c *Client) handleMessage(msg *Message) {
 		c.hub.sendOnlineUsersList(c.roomID, c.userID)
 	case "get-room-notifications":
 		c.hub.sendRoomNotificationSettings(c.userID, c.roomID)
+	case "set-room-notifications":
+		c.hub.setRoomNotificationSettings(c.userID, c.roomID, msg.Payload)
 	case "get-room-state":
 		c.hub.sendRoomState(c)
 	case "typing-users":
 		c.hub.sendTypingUsersList(c)
+	case "ping":
+		c.handlePing(msg)
+	case "heartbeat":
+		c.handleHeartbeat(msg)
+	case "user-speaking":
+		c.handleUserSpeaking(msg)
+	case "user-stopped-speaking":
+		c.handleUserStoppedSpeaking(msg)
+	case "user-screen-share-start":
+		c.handleScreenShareStart(msg)
+	case "user-screen-share-stop":
+		c.handleScreenShareStop(msg)
+	case "user-muted":
+		c.handleUserMuted(msg, true)
+	case "user-unmuted":
+		c.handleUserMuted(msg, false)
+	case "user-deafened":
+		c.handleUserDeafened(msg, true)
+	case "user-undeafened":
+		c.handleUserDeafened(msg, false)
+	case "get-connection-health":
+		c.sendConnectionHealth()
+	case "get-room-users":
+		c.hub.sendRoomUsersDetailed(c)
 	default:
 		log.Printf("[Connection %s] Unknown message type: %s from user %s", c.connectionID, msg.Type, c.userID)
 	}
 }
 
-func (h *Hub) setTypingUser(userID, roomID uuid.UUID) {
+func (h *Hub) setTypingUser(userID, roomID uuid.UUID, context string) {
 	h.typingMutex.Lock()
 	defer h.typingMutex.Unlock()
 	h.typingUsers[userID] = &TypingState{
 		UserID:    userID,
 		RoomID:    roomID,
 		StartedAt: time.Now(),
+		Context:   context,
 	}
 }
 
@@ -968,14 +1046,68 @@ func (h *Hub) sendOnlineUsersList(roomID, excludeUserID uuid.UUID) {
 }
 
 func (h *Hub) sendRoomNotificationSettings(userID, roomID uuid.UUID) {
+	key := fmt.Sprintf("%s:%s", userID, roomID)
+	h.notificationMutex.RLock()
+	settings, exists := h.notificationSettings[key]
+	h.notificationMutex.RUnlock()
+
+	if !exists {
+		settings = &RoomNotificationSettings{
+			Enabled:       true,
+			Sound:         true,
+			MentionOnly:   false,
+			DesktopNotify: true,
+		}
+	}
+
+	payload, err := json.Marshal(settings)
+	if err != nil {
+		log.Printf("Error marshaling notification settings: %v", err)
+		return
+	}
+
 	msg := &Message{
 		Type:      "room-notifications",
 		RoomID:    roomID,
 		UserID:    userID,
-		Payload:   json.RawMessage(`{"enabled":true,"sound":true}`),
+		Payload:   payload,
 		Timestamp: time.Now(),
 	}
 	h.sendToClient(userID, msg)
+}
+
+func (h *Hub) setRoomNotificationSettings(userID, roomID uuid.UUID, payload json.RawMessage) {
+	key := fmt.Sprintf("%s:%s", userID, roomID)
+
+	var settings RoomNotificationSettings
+	if len(payload) > 0 {
+		if err := json.Unmarshal(payload, &settings); err != nil {
+			log.Printf("[Connection] Error parsing notification settings: %v", err)
+			return
+		}
+	} else {
+		settings = RoomNotificationSettings{
+			Enabled:       true,
+			Sound:         true,
+			MentionOnly:   false,
+			DesktopNotify: true,
+		}
+	}
+
+	h.notificationMutex.Lock()
+	h.notificationSettings[key] = &settings
+	h.notificationMutex.Unlock()
+
+	confirmMsg := &Message{
+		Type:      "room-notifications-updated",
+		RoomID:    roomID,
+		UserID:    userID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+	}
+	h.sendToClient(userID, confirmMsg)
+	log.Printf("[NotificationSettings] User %s updated settings for room %s: enabled=%v, sound=%v",
+		userID, roomID, settings.Enabled, settings.Sound)
 }
 
 type RoomState struct {
@@ -1049,11 +1181,30 @@ type OnlineUser struct {
 	ConnectedAt   time.Time `json:"connected_at"`
 	LastSeen      time.Time `json:"last_seen"`
 	RemoteAddress string    `json:"remote_address,omitempty"`
+	Speaking      bool      `json:"speaking,omitempty"`
+	Muted         bool      `json:"muted,omitempty"`
+	Deafened      bool      `json:"deafened,omitempty"`
+	ScreenSharing bool      `json:"screen_sharing,omitempty"`
 }
 
 type RoomNotificationSettings struct {
-	Enabled bool `json:"enabled"`
-	Sound   bool `json:"sound"`
+	Enabled       bool `json:"enabled"`
+	Sound         bool `json:"sound"`
+	MentionOnly   bool `json:"mention_only"`
+	DesktopNotify bool `json:"desktop_notify"`
+}
+
+type ConnectionHealth struct {
+	ConnectionID    uuid.UUID `json:"connection_id"`
+	UserID          uuid.UUID `json:"user_id"`
+	LatencyMs       int64     `json:"latency_ms"`
+	State           string    `json:"state"`
+	LastPing        time.Time `json:"last_ping"`
+	LastPong        time.Time `json:"last_pong"`
+	PacketsReceived int64     `json:"packets_received"`
+	PacketsSent     int64     `json:"packets_sent"`
+	BytesReceived   int64     `json:"bytes_received"`
+	BytesSent       int64     `json:"bytes_sent"`
 }
 
 func (h *Hub) handleRedisUserMessage(msg *PubSubMessage) {
@@ -1121,4 +1272,213 @@ func (h *Hub) ShutdownRedis() error {
 
 func (h *Hub) IsRedisEnabled() bool {
 	return h.enableRedis
+}
+
+func (c *Client) handlePing(msg *Message) {
+	c.lastPing.Store(time.Now().UnixMilli())
+
+	pongMsg := &Message{
+		Type:      "pong",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, pongMsg)
+}
+
+func (c *Client) handleHeartbeat(msg *Message) {
+	now := time.Now()
+	c.lastPing.Store(now.UnixMilli())
+	c.latency.Store(0)
+
+	health := ConnectionHealth{
+		ConnectionID:    c.connectionID,
+		UserID:          c.userID,
+		LatencyMs:       0,
+		State:           c.GetState().String(),
+		LastPing:        now,
+		LastPong:        now,
+		PacketsReceived: c.packetsIn.Load(),
+		PacketsSent:     c.packetsOut.Load(),
+		BytesReceived:   c.bytesIn.Load(),
+		BytesSent:       c.bytesOut.Load(),
+	}
+
+	payload, _ := json.Marshal(health)
+	responseMsg := &Message{
+		Type:      "heartbeat-ack",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payload,
+		Timestamp: now,
+	}
+	c.hub.sendToClient(c.userID, responseMsg)
+}
+
+func (c *Client) handleUserSpeaking(msg *Message) {
+	notifyMsg := &Message{
+		Type:      "user-speaking",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   msg.Payload,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+}
+
+func (c *Client) handleUserStoppedSpeaking(msg *Message) {
+	notifyMsg := &Message{
+		Type:      "user-stopped-speaking",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   msg.Payload,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+}
+
+func (c *Client) handleScreenShareStart(msg *Message) {
+	log.Printf("[Connection %s] User %s started screen share in room %s",
+		c.connectionID, c.userID, c.roomID)
+
+	notifyMsg := &Message{
+		Type:      "user-screen-share-start",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   msg.Payload,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+}
+
+func (c *Client) handleScreenShareStop(msg *Message) {
+	log.Printf("[Connection %s] User %s stopped screen share in room %s",
+		c.connectionID, c.userID, c.roomID)
+
+	notifyMsg := &Message{
+		Type:      "user-screen-share-stop",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   msg.Payload,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+}
+
+func (c *Client) handleUserMuted(msg *Message, muted bool) {
+	log.Printf("[Connection %s] User %s muted status changed: muted=%v",
+		c.connectionID, c.userID, muted)
+
+	notifyMsg := &Message{
+		Type:      "user-muted",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   msg.Payload,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+}
+
+func (c *Client) handleUserDeafened(msg *Message, deafened bool) {
+	log.Printf("[Connection %s] User %s deafened status changed: deafened=%v",
+		c.connectionID, c.userID, deafened)
+
+	notifyMsg := &Message{
+		Type:      "user-deafened",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   msg.Payload,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+}
+
+func (c *Client) sendConnectionHealth() {
+	health := ConnectionHealth{
+		ConnectionID:    c.connectionID,
+		UserID:          c.userID,
+		LatencyMs:       c.latency.Load(),
+		State:           c.GetState().String(),
+		LastPing:        time.UnixMilli(c.lastPing.Load()),
+		LastPong:        time.Now(),
+		PacketsReceived: c.packetsIn.Load(),
+		PacketsSent:     c.packetsOut.Load(),
+		BytesReceived:   c.bytesIn.Load(),
+		BytesSent:       c.bytesOut.Load(),
+	}
+
+	payload, err := json.Marshal(health)
+	if err != nil {
+		log.Printf("[Connection %s] Error marshaling health: %v", c.connectionID, err)
+		return
+	}
+
+	msg := &Message{
+		Type:      "connection-health",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, msg)
+}
+
+func (h *Hub) sendRoomUsersDetailed(client *Client) {
+	clients := h.GetRoomClients(client.roomID)
+	typingUsers := h.GetTypingUsers(client.roomID)
+
+	typingUserSet := make(map[uuid.UUID]bool)
+	for _, uid := range typingUsers {
+		typingUserSet[uid] = true
+	}
+
+	onlineUsers := make([]OnlineUser, 0, len(clients))
+	for _, c := range clients {
+		user := OnlineUser{
+			UserID:        c.userID,
+			ConnectionID:  c.connectionID,
+			State:         c.GetState().String(),
+			ConnectedAt:   c.connectedAt,
+			LastSeen:      c.GetLastSeen(),
+			RemoteAddress: c.remoteAddr,
+			Speaking:      false,
+			Muted:         false,
+			Deafened:      false,
+			ScreenSharing: false,
+		}
+		onlineUsers = append(onlineUsers, user)
+	}
+
+	payload, err := json.Marshal(onlineUsers)
+	if err != nil {
+		log.Printf("[Connection %s] Error marshaling room users: %v", client.connectionID, err)
+		return
+	}
+
+	msg := &Message{
+		Type:      "room-users-detailed",
+		RoomID:    client.roomID,
+		UserID:    client.userID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+	}
+	h.sendToClient(client.userID, msg)
 }

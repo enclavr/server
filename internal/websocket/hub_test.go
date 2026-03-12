@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"encoding/json"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1343,5 +1344,573 @@ func TestHub_GracefulShutdown(t *testing.T) {
 
 	if hub.GetRoomCount() != 0 {
 		t.Errorf("expected 0 rooms after shutdown, got %d", hub.GetRoomCount())
+	}
+}
+
+func TestTypingPayload_Marshal(t *testing.T) {
+	payload := TypingPayload{
+		Context:   "thread",
+		ChannelID: "channel-123",
+		ThreadID:  "thread-456",
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	var decoded TypingPayload
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if decoded.Context != payload.Context {
+		t.Errorf("expected Context %s, got %s", payload.Context, decoded.Context)
+	}
+}
+
+func TestTypingPayload_Unmarshal(t *testing.T) {
+	data := []byte(`{"context":"thread","channel_id":"ch-1","thread_id":"th-1"}`)
+
+	var payload TypingPayload
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if payload.Context != "thread" {
+		t.Errorf("expected context 'thread', got '%s'", payload.Context)
+	}
+	if payload.ChannelID != "ch-1" {
+		t.Errorf("expected channel_id 'ch-1', got '%s'", payload.ChannelID)
+	}
+}
+
+func TestHub_SetRoomNotificationSettings(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID := uuid.New()
+	roomID := uuid.New()
+
+	settings := RoomNotificationSettings{
+		Enabled:       false,
+		Sound:         false,
+		MentionOnly:   true,
+		DesktopNotify: false,
+	}
+
+	payload, _ := json.Marshal(settings)
+	hub.setRoomNotificationSettings(userID, roomID, payload)
+
+	key := fmt.Sprintf("%s:%s", userID, roomID)
+	hub.notificationMutex.RLock()
+	stored, exists := hub.notificationSettings[key]
+	hub.notificationMutex.RUnlock()
+
+	if !exists {
+		t.Fatal("expected notification settings to exist")
+	}
+
+	if stored.Enabled != settings.Enabled {
+		t.Errorf("expected Enabled %v, got %v", settings.Enabled, stored.Enabled)
+	}
+	if stored.MentionOnly != settings.MentionOnly {
+		t.Errorf("expected MentionOnly %v, got %v", settings.MentionOnly, stored.MentionOnly)
+	}
+}
+
+func TestHub_SendRoomNotificationSettings(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.userConnections[userID] = &Client{
+		hub:    hub,
+		userID: userID,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	hub.activeClients.Add(1)
+	hub.mutex.Unlock()
+
+	hub.sendRoomNotificationSettings(userID, roomID)
+
+	select {
+	case received := <-hub.userConnections[userID].send:
+		var msg Message
+		if err := json.Unmarshal(received, &msg); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if msg.Type != "room-notifications" {
+			t.Errorf("expected type 'room-notifications', got '%s'", msg.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for notification settings")
+	}
+}
+
+func TestConnectionHealth_Marshal(t *testing.T) {
+	health := ConnectionHealth{
+		ConnectionID:    uuid.New(),
+		UserID:          uuid.New(),
+		LatencyMs:       42,
+		State:           "connected",
+		LastPing:        time.Now(),
+		LastPong:        time.Now(),
+		PacketsReceived: 100,
+		PacketsSent:     50,
+		BytesReceived:   1024,
+		BytesSent:       512,
+	}
+
+	data, err := json.Marshal(health)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	var decoded ConnectionHealth
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if decoded.LatencyMs != health.LatencyMs {
+		t.Errorf("expected LatencyMs %d, got %d", health.LatencyMs, decoded.LatencyMs)
+	}
+}
+
+func TestClient_HandlePing(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.userConnections[userID] = &Client{
+		hub:    hub,
+		userID: userID,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	hub.activeClients.Add(1)
+	hub.mutex.Unlock()
+
+	client := hub.userConnections[userID]
+	msg := &Message{
+		Type:      "ping",
+		UserID:    userID,
+		RoomID:    roomID,
+		Timestamp: time.Now(),
+	}
+
+	client.handlePing(msg)
+
+	select {
+	case received := <-client.send:
+		var resp Message
+		if err := json.Unmarshal(received, &resp); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if resp.Type != "pong" {
+			t.Errorf("expected type 'pong', got '%s'", resp.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for pong")
+	}
+}
+
+func TestClient_HandleHeartbeat(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.userConnections[userID] = &Client{
+		hub:    hub,
+		userID: userID,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	hub.activeClients.Add(1)
+	hub.mutex.Unlock()
+
+	client := hub.userConnections[userID]
+	msg := &Message{
+		Type:      "heartbeat",
+		UserID:    userID,
+		RoomID:    roomID,
+		Timestamp: time.Now(),
+	}
+
+	client.handleHeartbeat(msg)
+
+	select {
+	case received := <-client.send:
+		var resp Message
+		if err := json.Unmarshal(received, &resp); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if resp.Type != "heartbeat-ack" {
+			t.Errorf("expected type 'heartbeat-ack', got '%s'", resp.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for heartbeat-ack")
+	}
+}
+
+func TestClient_HandleUserSpeaking(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID1 := uuid.New()
+	userID2 := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client1 := &Client{
+		hub:    hub,
+		userID: userID1,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	client2 := &Client{
+		hub:    hub,
+		userID: userID2,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.rooms[roomID].clients[client1] = true
+	hub.rooms[roomID].clients[client2] = true
+	hub.userConnections[userID1] = client1
+	hub.userConnections[userID2] = client2
+	hub.activeClients.Add(2)
+	hub.mutex.Unlock()
+
+	msg := &Message{
+		Type:      "user-speaking",
+		UserID:    userID1,
+		RoomID:    roomID,
+		Timestamp: time.Now(),
+	}
+
+	client1.handleUserSpeaking(msg)
+
+	select {
+	case received := <-client2.send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "user-speaking" {
+			t.Errorf("expected user-speaking, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for speaking message")
+	}
+}
+
+func TestClient_HandleScreenShareStart(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID1 := uuid.New()
+	userID2 := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client1 := &Client{
+		hub:    hub,
+		userID: userID1,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	client2 := &Client{
+		hub:    hub,
+		userID: userID2,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.rooms[roomID].clients[client1] = true
+	hub.rooms[roomID].clients[client2] = true
+	hub.userConnections[userID1] = client1
+	hub.userConnections[userID2] = client2
+	hub.activeClients.Add(2)
+	hub.mutex.Unlock()
+
+	msg := &Message{
+		Type:      "user-screen-share-start",
+		UserID:    userID1,
+		RoomID:    roomID,
+		Timestamp: time.Now(),
+	}
+
+	client1.handleScreenShareStart(msg)
+
+	select {
+	case received := <-client2.send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "user-screen-share-start" {
+			t.Errorf("expected user-screen-share-start, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for screen share message")
+	}
+}
+
+func TestClient_HandleUserMuted(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID1 := uuid.New()
+	userID2 := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client1 := &Client{
+		hub:    hub,
+		userID: userID1,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	client2 := &Client{
+		hub:    hub,
+		userID: userID2,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.rooms[roomID].clients[client1] = true
+	hub.rooms[roomID].clients[client2] = true
+	hub.userConnections[userID1] = client1
+	hub.userConnections[userID2] = client2
+	hub.activeClients.Add(2)
+	hub.mutex.Unlock()
+
+	msg := &Message{
+		Type:      "user-muted",
+		UserID:    userID1,
+		RoomID:    roomID,
+		Timestamp: time.Now(),
+	}
+
+	client1.handleUserMuted(msg, true)
+
+	select {
+	case received := <-client2.send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "user-muted" {
+			t.Errorf("expected user-muted, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for muted message")
+	}
+}
+
+func TestClient_SendConnectionHealth(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.userConnections[userID] = &Client{
+		hub:          hub,
+		userID:       userID,
+		roomID:       roomID,
+		send:         make(chan []byte, 10),
+		connectionID: uuid.New(),
+	}
+	hub.activeClients.Add(1)
+	hub.mutex.Unlock()
+
+	client := hub.userConnections[userID]
+	client.sendConnectionHealth()
+
+	select {
+	case received := <-client.send:
+		var msg Message
+		if err := json.Unmarshal(received, &msg); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if msg.Type != "connection-health" {
+			t.Errorf("expected type 'connection-health', got '%s'", msg.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for connection health")
+	}
+}
+
+func TestHub_SendRoomUsersDetailed(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	roomID := uuid.New()
+	userID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client := &Client{
+		hub:          hub,
+		userID:       userID,
+		roomID:       roomID,
+		send:         make(chan []byte, 10),
+		connectionID: uuid.New(),
+	}
+
+	hub.rooms[roomID].clients[client] = true
+	hub.userConnections[userID] = client
+	hub.activeClients.Add(1)
+	hub.mutex.Unlock()
+
+	hub.sendRoomUsersDetailed(client)
+
+	select {
+	case received := <-client.send:
+		var msg Message
+		if err := json.Unmarshal(received, &msg); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if msg.Type != "room-users-detailed" {
+			t.Errorf("expected type 'room-users-detailed', got '%s'", msg.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for room users detailed")
+	}
+}
+
+func TestTypingState_WithContext(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID := uuid.New()
+	roomID := uuid.New()
+
+	hub.setTypingUser(userID, roomID, "thread:123")
+
+	hub.typingMutex.RLock()
+	state, exists := hub.typingUsers[userID]
+	hub.typingMutex.RUnlock()
+
+	if !exists {
+		t.Fatal("expected typing state to exist")
+	}
+
+	if state.Context != "thread:123" {
+		t.Errorf("expected context 'thread:123', got '%s'", state.Context)
+	}
+}
+
+func TestHub_SetTypingUser_WithContext(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID := uuid.New()
+	roomID := uuid.New()
+
+	hub.setTypingUser(userID, roomID, "channel")
+
+	hub.typingMutex.RLock()
+	state, exists := hub.typingUsers[userID]
+	hub.typingMutex.RUnlock()
+
+	if !exists {
+		t.Fatal("expected typing state to exist")
+	}
+
+	if state.UserID != userID {
+		t.Errorf("expected userID %s, got %s", userID, state.UserID)
+	}
+	if state.RoomID != roomID {
+		t.Errorf("expected roomID %s, got %s", roomID, state.RoomID)
+	}
+	if state.Context != "channel" {
+		t.Errorf("expected context 'channel', got '%s'", state.Context)
+	}
+}
+
+func TestClient_HandleMessage_TypingWithContext(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID1 := uuid.New()
+	userID2 := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client1 := &Client{
+		hub:    hub,
+		userID: userID1,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	client2 := &Client{
+		hub:    hub,
+		userID: userID2,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.rooms[roomID].clients[client1] = true
+	hub.rooms[roomID].clients[client2] = true
+	hub.userConnections[userID1] = client1
+	hub.userConnections[userID2] = client2
+	hub.activeClients.Add(2)
+	hub.mutex.Unlock()
+
+	payload, _ := json.Marshal(TypingPayload{Context: "thread:456"})
+	msg := &Message{
+		Type:      "typing",
+		UserID:    userID1,
+		RoomID:    roomID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+	}
+
+	client1.handleMessage(msg)
+
+	select {
+	case received := <-client2.send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "user-typing" {
+			t.Errorf("expected user-typing, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for typing message")
 	}
 }
