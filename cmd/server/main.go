@@ -119,7 +119,20 @@ func main() {
 	inviteHandler := handlers.NewInviteHandler(db)
 	inviteLinkHandler := handlers.NewInviteLinkHandler(db)
 
-	authHandler := handlers.NewAuthHandler(db, authService, cfg.Admin.FirstIsAdmin)
+	emailServiceConfig := &services.EmailConfig{
+		Provider:     services.EmailProvider(cfg.Email.SMTPHost),
+		SMTPHost:     cfg.Email.SMTPHost,
+		SMTPPort:     587,
+		SMTPUsername: cfg.Email.SMTPUsername,
+		SMTPPassword: cfg.Email.SMTPPassword,
+		FromName:     "Enclavr",
+		FromEmail:    cfg.Email.SMTPFrom,
+		UseTLS:       cfg.Email.UseTLS,
+	}
+	emailService := services.NewEmailService(emailServiceConfig)
+	oauthService := services.NewOAuthService(&cfg.Auth)
+
+	authHandler := handlers.NewAuthHandler(db, authService, emailService, oauthService, cfg, cfg.Admin.FirstIsAdmin)
 	roomHandler := handlers.NewRoomHandler(db)
 	voiceHandler := handlers.NewVoiceHandler(db, hub, cfg)
 	oidcHandler := handlers.NewOIDCHandler(db, &cfg.Auth)

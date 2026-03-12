@@ -13,6 +13,7 @@ import (
 	"github.com/enclavr/server/internal/config"
 	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/internal/models"
+	"github.com/enclavr/server/internal/services"
 	"github.com/enclavr/server/pkg/middleware"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -45,9 +46,11 @@ func setupTestHandler(t *testing.T) *AuthHandler {
 		RefreshExpiration: 168 * time.Hour,
 	}
 	authService := auth.NewAuthService(authCfg)
-
+	emailService := services.NewEmailService(nil)
+	oauthService := services.NewOAuthService(authCfg)
 	testDB := &database.Database{DB: db}
-	handler := NewAuthHandler(testDB, authService, false)
+	cfg := &config.Config{}
+	handler := NewAuthHandler(testDB, authService, emailService, oauthService, cfg, false)
 	return handler
 }
 
@@ -304,8 +307,11 @@ func setupAdminHandler(t *testing.T) *AuthHandler {
 		RefreshExpiration: 168 * time.Hour,
 	}
 	authService := auth.NewAuthService(authCfg)
+	emailService := services.NewEmailService(nil)
+	oauthService := services.NewOAuthService(authCfg)
 	testDB := &database.Database{DB: db}
-	return NewAuthHandler(testDB, authService, true)
+	cfg := &config.Config{}
+	return NewAuthHandler(testDB, authService, emailService, oauthService, cfg, true)
 }
 
 // TestRegister_FirstUserIsAdmin_Enabled verifies that when firstIsAdmin=true,
@@ -346,7 +352,7 @@ func TestRegister_SecondUserIsNotAdmin(t *testing.T) {
 	firstBody, _ := json.Marshal(RegisterRequest{
 		Username: "firstuser",
 		Email:    "first@example.com",
-		Password: "pass1",
+		Password: "password1",
 	})
 	req1 := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(firstBody))
 	req1.Header.Set("Content-Type", "application/json")
@@ -368,7 +374,7 @@ func TestRegister_SecondUserIsNotAdmin(t *testing.T) {
 	secondBody, _ := json.Marshal(RegisterRequest{
 		Username: "seconduser",
 		Email:    "second@example.com",
-		Password: "pass2",
+		Password: "password2",
 	})
 	req2 := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(secondBody))
 	req2.Header.Set("Content-Type", "application/json")
@@ -431,7 +437,7 @@ func TestRegister_FirstUserIsAdmin_ThirdUser(t *testing.T) {
 		body, _ := json.Marshal(RegisterRequest{
 			Username: tc.username,
 			Email:    tc.email,
-			Password: "pass",
+			Password: "password",
 		})
 		req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -577,7 +583,7 @@ func TestRegister_GetMe_IsAdmin(t *testing.T) {
 	regBody, _ := json.Marshal(RegisterRequest{
 		Username: "meadmin",
 		Email:    "meadmin@example.com",
-		Password: "mepass",
+		Password: "mepassword",
 	})
 	reqReg := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(regBody))
 	reqReg.Header.Set("Content-Type", "application/json")
