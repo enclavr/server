@@ -86,19 +86,22 @@ type batchItem struct {
 }
 
 type Client struct {
-	hub          *Hub
-	conn         *websocket.Conn
-	send         chan []byte
-	userID       uuid.UUID
-	roomID       uuid.UUID
-	lastSeen     atomic.Int64
-	rateLimit    *RateLimiter
-	connectionID uuid.UUID
-	state        atomic.Int32
-	remoteAddr   string
-	connectedAt  time.Time
-	errorCount   atomic.Int32
-	lastError    atomic.Value
+	hub            *Hub
+	conn           *websocket.Conn
+	send           chan []byte
+	userID         uuid.UUID
+	roomID         uuid.UUID
+	lastSeen       atomic.Int64
+	rateLimit      *RateLimiter
+	connectionID   uuid.UUID
+	state          atomic.Int32
+	remoteAddr     string
+	connectedAt    time.Time
+	errorCount     atomic.Int32
+	lastError      atomic.Value
+	lastErrorTime  atomic.Int64
+	isReconnect    bool
+	previousRoomID uuid.UUID
 }
 
 type Message struct {
@@ -419,6 +422,23 @@ func (h *Hub) GetRoomCount() int {
 }
 
 func (h *Hub) RegisterClient(userID, roomID uuid.UUID, conn *websocket.Conn) *Client {
+	h.mutex.Lock()
+	existingClient, exists := h.userConnections[userID]
+	if exists {
+		log.Printf("[WebSocket] User %s already connected, closing old connection (ID: %s)",
+			userID, existingClient.connectionID)
+		existingClient.SetState(StateDisconnecting)
+		close(existingClient.send)
+		delete(h.userConnections, userID)
+		h.activeClients.Add(-1)
+		if r, ok := h.rooms[existingClient.roomID]; ok {
+			r.mutex.Lock()
+			delete(r.clients, existingClient)
+			r.mutex.Unlock()
+		}
+	}
+	h.mutex.Unlock()
+
 	client := &Client{
 		hub:          h,
 		conn:         conn,
@@ -427,11 +447,14 @@ func (h *Hub) RegisterClient(userID, roomID uuid.UUID, conn *websocket.Conn) *Cl
 		roomID:       roomID,
 		rateLimit:    NewRateLimiter(30, 10),
 		connectionID: uuid.New(),
+		connectedAt:  time.Now(),
 	}
 
 	h.register <- client
 	metrics.WebSocketConnections.Inc()
 	metrics.ActiveUsers.Inc()
+	log.Printf("[Connection %s] Client registered: user=%s room=%s conn_remote=%s",
+		client.connectionID, userID, roomID, conn.RemoteAddr().String())
 	return client
 }
 
@@ -541,13 +564,19 @@ func (m *Message) decode(data []byte) error {
 func (c *Client) ReadPump() {
 	defer func() {
 		c.SetState(StateDisconnecting)
+		c.hub.clearTypingUser(c.userID)
 		c.hub.unregister <- c
 		if closeErr := c.conn.Close(); closeErr != nil {
 			log.Printf("[Connection %s] Error closing connection for user %s: %v", c.connectionID, c.userID, closeErr)
 		}
 		c.SetState(StateDisconnected)
-		log.Printf("[Connection %s] Connection closed for user %s (remote: %s, errors: %d)",
-			c.connectionID, c.userID, c.remoteAddr, c.GetErrorCount())
+		if lastErr := c.GetLastError(); lastErr != nil {
+			log.Printf("[Connection %s] Connection closed for user %s (remote: %s, errors: %d, last_error: %v)",
+				c.connectionID, c.userID, c.remoteAddr, c.GetErrorCount(), lastErr)
+		} else {
+			log.Printf("[Connection %s] Connection closed for user %s (remote: %s, errors: %d)",
+				c.connectionID, c.userID, c.remoteAddr, c.GetErrorCount())
+		}
 	}()
 
 	c.SetState(StateConnecting)
@@ -635,7 +664,11 @@ func (c *Client) WritePump() {
 			}
 
 			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
-				log.Printf("[Connection %s] Error writing message to user %s: %v", c.connectionID, c.userID, err)
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+					log.Printf("[Connection %s] Unexpected close while writing to user %s: %v", c.connectionID, c.userID, err)
+				} else {
+					log.Printf("[Connection %s] Write error to user %s: %v", c.connectionID, c.userID, err)
+				}
 				c.RecordError(err)
 				return
 			}
@@ -675,10 +708,26 @@ func (c *Client) GetConnectionID() uuid.UUID {
 func (c *Client) RecordError(err error) {
 	c.errorCount.Add(1)
 	c.lastError.Store(err)
+	c.lastErrorTime.Store(time.Now().Unix())
 }
 
 func (c *Client) GetErrorCount() int32 {
 	return c.errorCount.Load()
+}
+
+func (c *Client) GetLastError() error {
+	if err, ok := c.lastError.Load().(error); ok && err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *Client) GetLastErrorTime() time.Time {
+	ts := c.lastErrorTime.Load()
+	if ts > 0 {
+		return time.Unix(ts, 0)
+	}
+	return time.Time{}
 }
 
 func (c *Client) GetRemoteAddr() string {
@@ -734,6 +783,7 @@ func (c *Client) handleMessage(msg *Message) {
 		}
 		c.hub.sendOnlineUsersList(c.roomID, c.userID)
 	case "user-left":
+		c.hub.clearTypingUser(c.userID)
 		notifyMsg := &Message{
 			Type:      "user-left",
 			RoomID:    c.roomID,
@@ -746,6 +796,30 @@ func (c *Client) handleMessage(msg *Message) {
 		}
 		c.hub.UnregisterClient(c)
 		c.hub.sendOnlineUsersList(c.roomID, uuid.Nil)
+	case "user-away":
+		c.hub.setUserPresence(c.userID, c.roomID, "away")
+		notifyMsg := &Message{
+			Type:      "user-away",
+			RoomID:    c.roomID,
+			UserID:    c.userID,
+			Timestamp: time.Now(),
+		}
+		c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+		if c.hub.enableRedis {
+			c.hub.publishToRedis(notifyMsg)
+		}
+	case "user-back":
+		c.hub.setUserPresence(c.userID, c.roomID, "online")
+		notifyMsg := &Message{
+			Type:      "user-online",
+			RoomID:    c.roomID,
+			UserID:    c.userID,
+			Timestamp: time.Now(),
+		}
+		c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+		if c.hub.enableRedis {
+			c.hub.publishToRedis(notifyMsg)
+		}
 	case "typing":
 		c.hub.setTypingUser(c.userID, c.roomID)
 		notifyMsg := &Message{
@@ -774,6 +848,10 @@ func (c *Client) handleMessage(msg *Message) {
 		c.hub.sendOnlineUsersList(c.roomID, c.userID)
 	case "get-room-notifications":
 		c.hub.sendRoomNotificationSettings(c.userID, c.roomID)
+	case "get-room-state":
+		c.hub.sendRoomState(c)
+	case "typing-users":
+		c.hub.sendTypingUsersList(c)
 	default:
 		log.Printf("[Connection %s] Unknown message type: %s from user %s", c.connectionID, msg.Type, c.userID)
 	}
@@ -806,6 +884,50 @@ func (h *Hub) GetTypingUsers(roomID uuid.UUID) []uuid.UUID {
 		}
 	}
 	return users
+}
+
+type PresenceState struct {
+	UserID    uuid.UUID
+	RoomID    uuid.UUID
+	Status    string
+	UpdatedAt time.Time
+}
+
+var userPresence = struct {
+	sync.RWMutex
+	states map[uuid.UUID]*PresenceState
+}{states: make(map[uuid.UUID]*PresenceState)}
+
+func (h *Hub) setUserPresence(userID, roomID uuid.UUID, status string) {
+	userPresence.Lock()
+	defer userPresence.Unlock()
+	userPresence.states[userID] = &PresenceState{
+		UserID:    userID,
+		RoomID:    roomID,
+		Status:    status,
+		UpdatedAt: time.Now(),
+	}
+}
+
+func (h *Hub) GetUserPresence(userID uuid.UUID) (string, bool) {
+	userPresence.RLock()
+	defer userPresence.RUnlock()
+	if state, ok := userPresence.states[userID]; ok {
+		return state.Status, true
+	}
+	return "", false
+}
+
+func (h *Hub) GetRoomPresence(roomID uuid.UUID) []*PresenceState {
+	userPresence.RLock()
+	defer userPresence.RUnlock()
+	var states []*PresenceState
+	for _, state := range userPresence.states {
+		if state.RoomID == roomID {
+			states = append(states, state)
+		}
+	}
+	return states
 }
 
 func (h *Hub) sendOnlineUsersList(roomID, excludeUserID uuid.UUID) {
@@ -852,6 +974,70 @@ func (h *Hub) sendRoomNotificationSettings(userID, roomID uuid.UUID) {
 		Timestamp: time.Now(),
 	}
 	h.sendToClient(userID, msg)
+}
+
+type RoomState struct {
+	RoomID        uuid.UUID    `json:"room_id"`
+	OnlineUsers   []OnlineUser `json:"online_users"`
+	TypingUsers   []uuid.UUID  `json:"typing_users"`
+	ActiveClients int          `json:"active_clients"`
+}
+
+func (h *Hub) sendRoomState(client *Client) {
+	clients := h.GetRoomClients(client.roomID)
+	typingUsers := h.GetTypingUsers(client.roomID)
+
+	onlineUsers := make([]OnlineUser, 0, len(clients))
+	for _, c := range clients {
+		onlineUsers = append(onlineUsers, OnlineUser{
+			UserID:        c.userID,
+			ConnectionID:  c.connectionID,
+			State:         c.GetState().String(),
+			ConnectedAt:   c.connectedAt,
+			LastSeen:      c.GetLastSeen(),
+			RemoteAddress: c.remoteAddr,
+		})
+	}
+
+	roomState := RoomState{
+		RoomID:        client.roomID,
+		OnlineUsers:   onlineUsers,
+		TypingUsers:   typingUsers,
+		ActiveClients: len(clients),
+	}
+
+	payload, err := json.Marshal(roomState)
+	if err != nil {
+		log.Printf("[Connection %s] Error marshaling room state: %v", client.connectionID, err)
+		return
+	}
+
+	msg := &Message{
+		Type:      "room-state",
+		RoomID:    client.roomID,
+		UserID:    client.userID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+	}
+	h.sendToClient(client.userID, msg)
+}
+
+func (h *Hub) sendTypingUsersList(client *Client) {
+	typingUsers := h.GetTypingUsers(client.roomID)
+	payload, err := json.Marshal(typingUsers)
+	if err != nil {
+		log.Printf("[Connection %s] Error marshaling typing users: %v", client.connectionID, err)
+		return
+	}
+
+	msg := &Message{
+		Type:      "typing-users-list",
+		RoomID:    client.roomID,
+		UserID:    client.userID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+	}
+	h.sendToClient(client.userID, msg)
 }
 
 type OnlineUser struct {
