@@ -451,8 +451,12 @@ func (h *Hub) RegisterClient(userID, roomID uuid.UUID, conn *websocket.Conn) *Cl
 	h.register <- client
 	metrics.WebSocketConnections.Inc()
 	metrics.ActiveUsers.Inc()
+	remoteAddr := "nil"
+	if conn != nil {
+		remoteAddr = conn.RemoteAddr().String()
+	}
 	log.Printf("[Connection %s] Client registered: user=%s room=%s conn_remote=%s",
-		client.connectionID, userID, roomID, conn.RemoteAddr().String())
+		client.connectionID, userID, roomID, remoteAddr)
 	return client
 }
 
