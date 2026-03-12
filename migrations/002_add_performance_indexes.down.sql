@@ -1,0 +1,25 @@
+-- +migrate Down
+DROP INDEX IF EXISTS idx_users_lower_username;
+DROP INDEX IF EXISTS idx_messages_room_user;
+DROP INDEX IF EXISTS idx_messages_created_at;
+DROP INDEX IF EXISTS idx_direct_messages_users;
+DROP INDEX IF EXISTS idx_poll_votes_unique;
+DROP INDEX IF EXISTS idx_reports_room_status;
+DROP INDEX IF EXISTS idx_presence_user_room;
+DROP INDEX IF EXISTS idx_files_user_room;
+DROP INDEX IF EXISTS idx_bookmarks_message_user;
+DROP INDEX IF EXISTS idx_threads_parent_created;
+DROP INDEX IF EXISTS idx_category_permissions_user_role;
+DROP INDEX IF EXISTS idx_attachments_user;
+DROP INDEX IF EXISTS idx_invites_created_expires;
+DROP INDEX IF EXISTS idx_webhooks_active_room;
+DROP INDEX IF EXISTS idx_analytics_date;
+DROP INDEX IF EXISTS idx_hourly_activity_date_hour;
+DROP INDEX IF EXISTS idx_api_keys_user_id;
+DROP INDEX IF EXISTS idx_api_keys_active;
+DROP INDEX IF EXISTS idx_roles_room_id;
+DROP INDEX IF EXISTS idx_role_permissions_role_id;
+DROP INDEX IF EXISTS idx_user_roles_user_id;
+DROP INDEX IF EXISTS idx_user_roles_role_id;
+DROP INDEX IF EXISTS idx_notifications_user_type;
+DROP INDEX IF EXISTS idx_notifications_created;

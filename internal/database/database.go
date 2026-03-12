@@ -90,6 +90,11 @@ func (d *Database) Migrate() error {
 		&models.CategoryPermission{},
 		&models.UserDevice{},
 		&models.AuditLogExclusion{},
+		&models.APIKey{},
+		&models.Role{},
+		&models.RolePermission{},
+		&models.UserRole{},
+		&models.UserNotification{},
 	)
 	if err != nil {
 		return err
@@ -153,6 +158,33 @@ func (d *Database) Migrate() error {
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_user_devices_device_id ON user_devices(device_id)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_audit_log_exclusions_user_id ON audit_log_exclusions(user_id)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_audit_log_exclusions_action ON audit_log_exclusions(action)")
+
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_users_lower_username ON users(LOWER(username))")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_messages_room_user ON messages(room_id, user_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_direct_messages_users ON direct_messages(sender_id, receiver_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_poll_votes_unique ON poll_votes(poll_id, user_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_reports_room_status ON reports(room_id, status)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_presence_user_room ON presences(user_id, room_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_files_user_room ON files(user_id, room_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_bookmarks_message_user ON bookmarks(message_id, user_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_threads_parent_created ON threads(parent_id, created_at DESC)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_user_status_user ON user_statuses(user_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_category_permissions_user_role ON category_permissions(user_id, role_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_attachments_user ON attachments(user_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_invites_created_expires ON invites(created_at, expires_at)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_webhooks_active_room ON webhooks(room_id, is_active)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON user_notifications(user_id, is_read)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_analytics_date ON daily_analytics(date DESC)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_hourly_activity_date_hour ON hourly_activity(date, hour)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_api_keys_active ON api_keys(is_active)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_roles_room_id ON roles(room_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_role_permissions_role_id ON role_permissions(role_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_user_roles_user_id ON user_roles(user_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_user_roles_role_id ON user_roles(role_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_notifications_user_type ON user_notifications(user_id, type)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_notifications_created ON user_notifications(created_at DESC)")
 
 	log.Println("Database migration completed")
 	return nil

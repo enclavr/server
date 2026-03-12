@@ -1,0 +1,6 @@
+-- +migrate Down
+DROP TABLE IF EXISTS user_notifications CASCADE;
+DROP TABLE IF EXISTS user_roles CASCADE;
+DROP TABLE IF EXISTS role_permissions CASCADE;
+DROP TABLE IF EXISTS roles CASCADE;
+DROP TABLE IF EXISTS api_keys CASCADE;
