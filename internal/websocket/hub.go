@@ -86,22 +86,20 @@ type batchItem struct {
 }
 
 type Client struct {
-	hub            *Hub
-	conn           *websocket.Conn
-	send           chan []byte
-	userID         uuid.UUID
-	roomID         uuid.UUID
-	lastSeen       atomic.Int64
-	rateLimit      *RateLimiter
-	connectionID   uuid.UUID
-	state          atomic.Int32
-	remoteAddr     string
-	connectedAt    time.Time
-	errorCount     atomic.Int32
-	lastError      atomic.Value
-	lastErrorTime  atomic.Int64
-	isReconnect    bool
-	previousRoomID uuid.UUID
+	hub           *Hub
+	conn          *websocket.Conn
+	send          chan []byte
+	userID        uuid.UUID
+	roomID        uuid.UUID
+	lastSeen      atomic.Int64
+	rateLimit     *RateLimiter
+	connectionID  uuid.UUID
+	state         atomic.Int32
+	remoteAddr    string
+	connectedAt   time.Time
+	errorCount    atomic.Int32
+	lastError     atomic.Value
+	lastErrorTime atomic.Int64
 }
 
 type Message struct {
