@@ -63,6 +63,61 @@ func (p *PubSubService) Connect() error {
 	p.mu.Unlock()
 
 	log.Printf("Redis pub/sub connected with server ID: %s", p.serverID)
+
+	go p.monitorConnection()
+
+	return nil
+}
+
+func (p *PubSubService) monitorConnection() {
+	ticker := time.NewTicker(ReconnectRetryDelay)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-ticker.C:
+			if !p.IsConnected() {
+				log.Printf("[Redis] Connection lost, attempting to reconnect...")
+				if err := p.reconnect(); err != nil {
+					log.Printf("[Redis] Reconnection failed: %v", err)
+				} else {
+					log.Printf("[Redis] Successfully reconnected")
+				}
+			}
+		}
+	}
+}
+
+func (p *PubSubService) reconnect() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.connected {
+		return nil
+	}
+
+	p.cancel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	p.ctx = ctx
+	p.cancel = cancel
+
+	newClient := redis.NewClient(&redis.Options{
+		Addr:     p.client.Options().Addr,
+		Password: p.client.Options().Password,
+		DB:       p.client.Options().DB,
+	})
+
+	if err := newClient.Ping(ctx).Err(); err != nil {
+		return fmt.Errorf("failed to ping redis: %w", err)
+	}
+
+	p.client = newClient
+	p.connected = true
+
+	log.Printf("[Redis] Reconnection successful")
 	return nil
 }
 

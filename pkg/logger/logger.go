@@ -227,9 +227,20 @@ func RequestLog(ctx context.Context, method, path, ip string, status int, durati
 		InitRequestLogger()
 	}
 
+	level := InfoLevel
+	if status >= 500 {
+		level = ErrorLevel
+	} else if status >= 400 {
+		level = WarnLevel
+	}
+
+	if !shouldLog(level) {
+		return
+	}
+
 	entry := LogEntry{
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		Level:     InfoLevel,
+		Level:     level,
 		Message:   fmt.Sprintf("%s %s - %d - %v", method, path, status, duration),
 		Fields: map[string]interface{}{
 			"method":   method,
@@ -257,4 +268,34 @@ func RequestLog(ctx context.Context, method, path, ip string, status int, durati
 	requestLogger.mu.Lock()
 	defer requestLogger.mu.Unlock()
 	requestLogger.logger.Println(string(data))
+}
+
+func LogError(ctx context.Context, err error, msg string, fields map[string]interface{}) {
+	if fields == nil {
+		fields = make(map[string]interface{})
+	}
+	fields["error"] = err.Error()
+	fields["error_type"] = fmt.Sprintf("%T", err)
+	logEntryWithContext(ctx, ErrorLevel, msg, fields)
+}
+
+func LogPanic(ctx context.Context, recovered interface{}, stack []byte) {
+	fields := map[string]interface{}{
+		"stack": string(stack),
+	}
+
+	var errMsg string
+	switch e := recovered.(type) {
+	case error:
+		errMsg = e.Error()
+		fields["error_type"] = fmt.Sprintf("%T", e)
+	case string:
+		errMsg = e
+	default:
+		errMsg = fmt.Sprintf("%v", recovered)
+		fields["error_type"] = fmt.Sprintf("%T", recovered)
+	}
+
+	fields["panic"] = errMsg
+	logEntryWithContext(ctx, ErrorLevel, "PANIC RECOVERED", fields)
 }

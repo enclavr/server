@@ -154,13 +154,13 @@ type JSONValidator struct {
 }
 
 func ValidateJSON(body interface{}, validators ...FieldValidator) *errors.Error {
-	data, err := json.Marshal(body)
-	if err != nil {
+	data, jsonErr := json.Marshal(body)
+	if jsonErr != nil {
 		return errors.InvalidParam("body", "Invalid JSON")
 	}
 
 	var fields map[string]interface{}
-	if err := json.Unmarshal(data, &fields); err != nil {
+	if jsonErr := json.Unmarshal(data, &fields); jsonErr != nil {
 		return errors.InvalidParam("body", "Invalid JSON structure")
 	}
 
@@ -231,4 +231,83 @@ func RequireJSON(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+type QueryParamValidator struct {
+	Param    string
+	Rules    []ValidationRule
+	Message  string
+	Required bool
+}
+
+func (v QueryParamValidator) Validate(value string) string {
+	if value == "" && v.Required {
+		return v.Param + " is required"
+	}
+	if value == "" && !v.Required {
+		return ""
+	}
+
+	for _, rule := range v.Rules {
+		if !rule(value) {
+			return v.Message
+		}
+	}
+	return ""
+}
+
+type QueryValidator struct {
+	validators []QueryParamValidator
+}
+
+func NewQueryValidator() *QueryValidator {
+	return &QueryValidator{
+		validators: make([]QueryParamValidator, 0),
+	}
+}
+
+func (v *QueryValidator) Add(param string, required bool, rules ...ValidationRule) *QueryValidator {
+	message := param + " is invalid"
+	v.validators = append(v.validators, QueryParamValidator{
+		Param:    param,
+		Required: required,
+		Rules:    rules,
+		Message:  message,
+	})
+	return v
+}
+
+func (v *QueryValidator) ValidateQuery(r *http.Request) []string {
+	var validationErrors []string
+	for _, validator := range v.validators {
+		value := r.URL.Query().Get(validator.Param)
+		if errMsg := validator.Validate(value); errMsg != "" {
+			validationErrors = append(validationErrors, errMsg)
+		}
+	}
+	return validationErrors
+}
+
+func (v *QueryValidator) Handler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if validationErrors := v.ValidateQuery(r); len(validationErrors) > 0 {
+			WriteError(w, http.StatusBadRequest, "Query parameter validation failed: "+strings.Join(validationErrors, ", "))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func ValidateRequestSize(maxBytes int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.ContentLength > maxBytes {
+				WriteError(w, http.StatusRequestEntityTooLarge, "Request body too large")
+				return
+			}
+
+			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			next.ServeHTTP(w, r)
+		})
+	}
 }

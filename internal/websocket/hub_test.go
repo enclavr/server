@@ -1914,3 +1914,469 @@ func TestClient_HandleMessage_TypingWithContext(t *testing.T) {
 		t.Error("timeout waiting for typing message")
 	}
 }
+
+func TestTypingDebouncer_Trigger(t *testing.T) {
+	triggered := false
+	debouncer := NewTypingDebouncer(100*time.Millisecond, func(uid uuid.UUID) {
+		triggered = true
+	})
+
+	userID := uuid.New()
+	debouncer.Trigger(userID)
+
+	if triggered {
+		t.Error("triggered should be false before timeout")
+	}
+
+	time.Sleep(150 * time.Millisecond)
+
+	if !triggered {
+		t.Error("triggered should be true after timeout")
+	}
+}
+
+func TestTypingDebouncer_Stop(t *testing.T) {
+	triggered := false
+	debouncer := NewTypingDebouncer(100*time.Millisecond, func(uid uuid.UUID) {
+		triggered = true
+	})
+
+	userID := uuid.New()
+	debouncer.Trigger(userID)
+	debouncer.Stop(userID)
+
+	time.Sleep(150 * time.Millisecond)
+
+	if triggered {
+		t.Error("triggered should be false after Stop")
+	}
+}
+
+func TestTypingDebouncer_StopAll(t *testing.T) {
+	triggered := 0
+	debouncer := NewTypingDebouncer(100*time.Millisecond, func(uid uuid.UUID) {
+		triggered++
+	})
+
+	debouncer.Trigger(uuid.New())
+	debouncer.Trigger(uuid.New())
+	debouncer.Trigger(uuid.New())
+
+	debouncer.StopAll()
+
+	time.Sleep(150 * time.Millisecond)
+
+	if triggered != 0 {
+		t.Errorf("expected triggered to be 0, got %d", triggered)
+	}
+}
+
+func TestPresencePayload_Marshal(t *testing.T) {
+	payload := PresencePayload{
+		Status:   "dnd",
+		Activity: "Playing Game",
+		Custom:   "BRB",
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	var decoded PresencePayload
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if decoded.Status != payload.Status {
+		t.Errorf("expected Status %s, got %s", payload.Status, decoded.Status)
+	}
+	if decoded.Activity != payload.Activity {
+		t.Errorf("expected Activity %s, got %s", payload.Activity, decoded.Activity)
+	}
+}
+
+func TestPresenceInfo_Marshal(t *testing.T) {
+	info := PresenceInfo{
+		UserID:   uuid.New(),
+		Status:   "idle",
+		Since:    time.Now(),
+		Activity: "coding",
+	}
+
+	data, err := json.Marshal(info)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	var decoded PresenceInfo
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if decoded.Status != info.Status {
+		t.Errorf("expected Status %s, got %s", info.Status, decoded.Status)
+	}
+}
+
+func TestNotificationStore_Add(t *testing.T) {
+	userID := uuid.New()
+	notification := RoomNotification{
+		ID:         uuid.New().String(),
+		Type:       "user_joined",
+		RoomID:     uuid.New(),
+		UserID:     uuid.New(),
+		Timestamp:  time.Now(),
+		Read:       false,
+		Actionable: false,
+	}
+
+	notificationStore.Add(userID, notification)
+
+	notifications := notificationStore.Get(userID, 10)
+	if len(notifications) != 1 {
+		t.Errorf("expected 1 notification, got %d", len(notifications))
+	}
+}
+
+func TestNotificationStore_MarkRead(t *testing.T) {
+	userID := uuid.New()
+	notifID := uuid.New()
+	notification := RoomNotification{
+		ID:        notifID.String(),
+		Type:      "message",
+		RoomID:    uuid.New(),
+		Timestamp: time.Now(),
+		Read:      false,
+	}
+
+	notificationStore.Add(userID, notification)
+	notificationStore.MarkRead(userID, notifID)
+
+	notifications := notificationStore.Get(userID, 10)
+	if len(notifications) == 0 {
+		t.Fatal("expected notifications")
+	}
+	if !notifications[0].Read {
+		t.Error("expected notification to be marked read")
+	}
+}
+
+func TestRoomNotification_Marshal(t *testing.T) {
+	notification := RoomNotification{
+		ID:         uuid.New().String(),
+		Type:       "mention",
+		RoomID:     uuid.New(),
+		UserID:     uuid.New(),
+		Message:    "Hey @user!",
+		Timestamp:  time.Now(),
+		Read:       false,
+		Actionable: true,
+	}
+
+	data, err := json.Marshal(notification)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	var decoded RoomNotification
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if decoded.Type != notification.Type {
+		t.Errorf("expected Type %s, got %s", notification.Type, decoded.Type)
+	}
+	if decoded.Actionable != notification.Actionable {
+		t.Errorf("expected Actionable %v, got %v", notification.Actionable, decoded.Actionable)
+	}
+}
+
+func TestClient_HandleSetPresence(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID1 := uuid.New()
+	userID2 := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client1 := &Client{
+		hub:    hub,
+		userID: userID1,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	client2 := &Client{
+		hub:    hub,
+		userID: userID2,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.rooms[roomID].clients[client1] = true
+	hub.rooms[roomID].clients[client2] = true
+	hub.userConnections[userID1] = client1
+	hub.userConnections[userID2] = client2
+	hub.activeClients.Add(2)
+	hub.mutex.Unlock()
+
+	payload, _ := json.Marshal(PresencePayload{Status: "dnd", Activity: "gaming"})
+	msg := &Message{
+		Type:      "set-presence",
+		UserID:    userID1,
+		RoomID:    roomID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+	}
+
+	client1.handleSetPresence(msg)
+
+	select {
+	case received := <-client2.send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "presence-updated" {
+			t.Errorf("expected presence-updated, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for presence update")
+	}
+}
+
+func TestClient_HandleTypingIndicator(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID1 := uuid.New()
+	userID2 := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client1 := &Client{
+		hub:    hub,
+		userID: userID1,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	client2 := &Client{
+		hub:    hub,
+		userID: userID2,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.rooms[roomID].clients[client1] = true
+	hub.rooms[roomID].clients[client2] = true
+	hub.userConnections[userID1] = client1
+	hub.userConnections[userID2] = client2
+	hub.activeClients.Add(2)
+	hub.mutex.Unlock()
+
+	payload, _ := json.Marshal(TypingIndicator{
+		Context:  "channel:123",
+		IsTyping: true,
+	})
+	msg := &Message{
+		Type:      "typing-indicator",
+		UserID:    userID1,
+		RoomID:    roomID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+	}
+
+	client1.handleTypingIndicator(msg)
+
+	select {
+	case received := <-client2.send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "typing-indicator" {
+			t.Errorf("expected typing-indicator, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for typing indicator")
+	}
+}
+
+func TestClient_HandleRoomEvent(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID1 := uuid.New()
+	userID2 := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client1 := &Client{
+		hub:    hub,
+		userID: userID1,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	client2 := &Client{
+		hub:    hub,
+		userID: userID2,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.rooms[roomID].clients[client1] = true
+	hub.rooms[roomID].clients[client2] = true
+	hub.userConnections[userID1] = client1
+	hub.userConnections[userID2] = client2
+	hub.activeClients.Add(2)
+	hub.mutex.Unlock()
+
+	eventPayload, _ := json.Marshal(RoomEvent{
+		Type:    "reaction_added",
+		Payload: json.RawMessage(`{"emoji":"👍"}`),
+	})
+	msg := &Message{
+		Type:      "room-event",
+		UserID:    userID1,
+		RoomID:    roomID,
+		Payload:   eventPayload,
+		Timestamp: time.Now(),
+	}
+
+	client1.handleRoomEvent(msg)
+
+	select {
+	case received := <-client2.send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "room-event" {
+			t.Errorf("expected room-event, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for room event")
+	}
+}
+
+func TestHub_SetUserPresence(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID := uuid.New()
+	roomID := uuid.New()
+
+	hub.setUserPresence(userID, roomID, "away")
+
+	status, exists := hub.GetUserPresence(userID)
+	if !exists {
+		t.Error("expected presence to exist")
+	}
+	if status != "away" {
+		t.Errorf("expected status 'away', got '%s'", status)
+	}
+}
+
+func TestHub_GetRoomPresence(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID1 := uuid.New()
+	userID2 := uuid.New()
+	roomID := uuid.New()
+
+	hub.setUserPresence(userID1, roomID, "online")
+	hub.setUserPresence(userID2, roomID, "idle")
+
+	states := hub.GetRoomPresence(roomID)
+	if len(states) != 2 {
+		t.Errorf("expected 2 presence states, got %d", len(states))
+	}
+}
+
+func TestRoomEvent_Marshal(t *testing.T) {
+	event := RoomEvent{
+		Type:      "user_kicked",
+		RoomID:    uuid.New(),
+		UserID:    uuid.New(),
+		Timestamp: time.Now(),
+		Payload:   json.RawMessage(`{"reason":"spam"}`),
+	}
+
+	data, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	var decoded RoomEvent
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if decoded.Type != event.Type {
+		t.Errorf("expected Type %s, got %s", event.Type, decoded.Type)
+	}
+}
+
+func TestClient_HandleGetNotifications(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID := uuid.New()
+	roomID := uuid.New()
+
+	notificationStore.Add(userID, RoomNotification{
+		ID:         uuid.New().String(),
+		Type:       "message",
+		RoomID:     roomID,
+		Timestamp:  time.Now(),
+		Read:       false,
+		Actionable: true,
+	})
+
+	hub.mutex.Lock()
+	hub.userConnections[userID] = &Client{
+		hub:    hub,
+		userID: userID,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	hub.activeClients.Add(1)
+	hub.mutex.Unlock()
+
+	client := hub.userConnections[userID]
+	msg := &Message{
+		Type:      "get-notifications",
+		UserID:    userID,
+		RoomID:    roomID,
+		Timestamp: time.Now(),
+	}
+
+	client.handleGetNotifications(msg)
+
+	select {
+	case received := <-client.send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "notifications-list" {
+			t.Errorf("expected notifications-list, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for notifications")
+	}
+}

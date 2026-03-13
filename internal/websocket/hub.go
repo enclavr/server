@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -9,8 +10,51 @@ import (
 	"time"
 
 	"github.com/enclavr/server/internal/metrics"
+	"github.com/enclavr/server/pkg/validator"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+)
+
+type Logger interface {
+	Debug(msg string, fields ...interface{})
+	Info(msg string, fields ...interface{})
+	Warn(msg string, fields ...interface{})
+	Error(msg string, fields ...interface{})
+}
+
+type StructuredLogger struct{}
+
+func (l StructuredLogger) Debug(msg string, fields ...interface{}) {
+	log.Printf("[DEBUG] "+msg, fields...)
+}
+
+func (l StructuredLogger) Info(msg string, fields ...interface{}) {
+	log.Printf("[INFO] "+msg, fields...)
+}
+
+func (l StructuredLogger) Warn(msg string, fields ...interface{}) {
+	log.Printf("[WARN] "+msg, fields...)
+}
+
+func (l StructuredLogger) Error(msg string, fields ...interface{}) {
+	log.Printf("[ERROR] "+msg, fields...)
+}
+
+var wsLogger Logger = StructuredLogger{}
+
+func SetLogger(logger Logger) {
+	wsLogger = logger
+}
+
+const (
+	MaxErrorThreshold    = 10
+	IdleTimeout          = 5 * time.Minute
+	MaxMessageSize       = 512 * 1024
+	ReconnectRetryDelay  = 5 * time.Second
+	MaxReconnectAttempts = 3
+	MaxMessageQueueSize  = 256
+	PingInterval         = 30 * time.Second
+	PongTimeout          = 60 * time.Second
 )
 
 var messageBufferPool = sync.Pool{
@@ -18,6 +62,20 @@ var messageBufferPool = sync.Pool{
 		buf := make([]byte, 0, 512)
 		return &buf
 	},
+}
+
+type WebSocketError struct {
+	Code       string
+	Message    string
+	Connection uuid.UUID
+	UserID     uuid.UUID
+	Timestamp  time.Time
+	Ctx        context.Context
+	Cancel     context.CancelFunc
+}
+
+func (e *WebSocketError) Error() string {
+	return fmt.Sprintf("[%s] %s (conn=%s, user=%s)", e.Code, e.Message, e.Connection, e.UserID)
 }
 
 type ConnectionState int32
@@ -81,6 +139,13 @@ type Hub struct {
 
 	notificationSettings map[string]*RoomNotificationSettings
 	notificationMutex    sync.RWMutex
+
+	userActivities  map[uuid.UUID]*RoomActivity
+	activityMutex   sync.RWMutex
+	idleCheckTicker *time.Ticker
+
+	roomStats      map[uuid.UUID]*RoomStats
+	roomStatsMutex sync.RWMutex
 }
 
 type room struct {
@@ -186,9 +251,14 @@ func NewHub() *Hub {
 		typingUsers:          make(map[uuid.UUID]*TypingState),
 		typingTimeout:        5 * time.Second,
 		notificationSettings: make(map[string]*RoomNotificationSettings),
+		userActivities:       make(map[uuid.UUID]*RoomActivity),
+		roomStats:            make(map[uuid.UUID]*RoomStats),
+		idleCheckTicker:      time.NewTicker(30 * time.Second),
 	}
 	go hub.processBatch()
 	go hub.cleanupTypingUsers()
+	go hub.cleanupIdleUsers()
+	go hub.updateRoomStats()
 	return hub
 }
 
@@ -556,6 +626,54 @@ func (h *Hub) BroadcastToRoom(roomID uuid.UUID, msg *Message, excludeUserID uuid
 	h.broadcastToRoom(roomID, msg, excludeUserID)
 }
 
+func (h *Hub) updateUserActivity(userID, roomID uuid.UUID) {
+	h.activityMutex.Lock()
+	defer h.activityMutex.Unlock()
+
+	activity, exists := h.userActivities[userID]
+	if !exists {
+		activity = &RoomActivity{
+			UserID:   userID,
+			RoomID:   roomID,
+			Status:   "active",
+			JoinedAt: time.Now(),
+		}
+		h.userActivities[userID] = activity
+	}
+
+	now := time.Now()
+	if activity.Status == "idle" {
+		activeMsg := &Message{
+			Type:      "user-active",
+			RoomID:    roomID,
+			UserID:    userID,
+			Timestamp: now,
+		}
+		h.broadcastToRoom(roomID, activeMsg, userID)
+		log.Printf("[Hub] User %s became active in room %s", userID, roomID)
+	}
+
+	activity.Status = "active"
+	activity.LastActivity = now
+}
+
+func (h *Hub) setUserIdle(userID uuid.UUID) {
+	h.activityMutex.Lock()
+	defer h.activityMutex.Unlock()
+
+	if activity, exists := h.userActivities[userID]; exists {
+		activity.Status = "idle"
+		activity.LastActivity = time.Now()
+	}
+}
+
+func (h *Hub) GetUserActivity(userID uuid.UUID) (*RoomActivity, bool) {
+	h.activityMutex.RLock()
+	defer h.activityMutex.RUnlock()
+	activity, exists := h.userActivities[userID]
+	return activity, exists
+}
+
 func (m *Message) encode() []byte {
 	if m.Timestamp.IsZero() {
 		m.Timestamp = time.Now()
@@ -587,16 +705,31 @@ func (c *Client) ReadPump() {
 		c.hub.clearTypingUser(c.userID)
 		c.hub.unregister <- c
 		if closeErr := c.conn.Close(); closeErr != nil {
-			log.Printf("[Connection %s] Error closing connection for user %s: %v", c.connectionID, c.userID, closeErr)
+			wsLogger.Error("Error closing connection",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", closeErr)
 		}
 		c.SetState(StateDisconnected)
 		if lastErr := c.GetLastError(); lastErr != nil {
-			log.Printf("[Connection %s] Connection closed for user %s (remote: %s, errors: %d, last_error: %v, packets_in: %d, bytes_in: %d)",
-				c.connectionID, c.userID, c.remoteAddr, c.GetErrorCount(), lastErr, c.packetsIn.Load(), c.bytesIn.Load())
+			wsLogger.Info("Connection closed with errors",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"remote_addr", c.remoteAddr,
+				"error_count", c.GetErrorCount(),
+				"last_error", lastErr,
+				"packets_in", c.packetsIn.Load(),
+				"bytes_in", c.bytesIn.Load())
 		} else {
-			log.Printf("[Connection %s] Connection closed for user %s (remote: %s, errors: %d, packets_in: %d, bytes_in: %d)",
-				c.connectionID, c.userID, c.remoteAddr, c.GetErrorCount(), c.packetsIn.Load(), c.bytesIn.Load())
+			wsLogger.Info("Connection closed",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"remote_addr", c.remoteAddr,
+				"error_count", c.GetErrorCount(),
+				"packets_in", c.packetsIn.Load(),
+				"bytes_in", c.bytesIn.Load())
 		}
+		metrics.WebSocketConnections.Dec()
 	}()
 
 	c.SetState(StateConnecting)
@@ -604,15 +737,19 @@ func (c *Client) ReadPump() {
 		c.remoteAddr = c.conn.RemoteAddr().String()
 	}
 
-	c.conn.SetReadLimit(512 * 1024)
-	if err := c.conn.SetReadDeadline(time.Now().Add(60 * time.Second)); err != nil {
-		log.Printf("[Connection %s] Error setting read deadline: %v", c.connectionID, err)
+	c.conn.SetReadLimit(MaxMessageSize)
+	if err := c.conn.SetReadDeadline(time.Now().Add(PongTimeout)); err != nil {
+		wsLogger.Error("Error setting read deadline",
+			"connection_id", c.connectionID,
+			"error", err)
 		c.RecordError(err)
 		return
 	}
 	c.conn.SetPongHandler(func(string) error {
-		if err := c.conn.SetReadDeadline(time.Now().Add(60 * time.Second)); err != nil {
-			log.Printf("[Connection %s] Error setting read deadline in pong handler: %v", c.connectionID, err)
+		if err := c.conn.SetReadDeadline(time.Now().Add(PongTimeout)); err != nil {
+			wsLogger.Error("Error setting read deadline in pong handler",
+				"connection_id", c.connectionID,
+				"error", err)
 			c.RecordError(err)
 			return err
 		}
@@ -620,52 +757,122 @@ func (c *Client) ReadPump() {
 	})
 
 	c.SetState(StateConnected)
-	log.Printf("[Connection %s] Client connected: user=%s room=%s from=%s",
-		c.connectionID, c.userID, c.roomID, c.remoteAddr)
+	wsLogger.Info("Client connected",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"room_id", c.roomID,
+		"remote_addr", c.remoteAddr)
 
 	for {
 		messageType, message, err := c.conn.ReadMessage()
 		if err != nil {
 			c.packetsIn.Add(1)
-			c.bytesIn.Add(int64(len(message)))
+			if len(message) > 0 {
+				c.bytesIn.Add(int64(len(message)))
+			}
 
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseTLSHandshake) {
-				log.Printf("[Connection %s] WebSocket read error for user %s: %v (error_type: unexpected_close)",
-					c.connectionID, c.userID, err)
+				wsLogger.Warn("WebSocket unexpected close error",
+					"connection_id", c.connectionID,
+					"user_id", c.userID,
+					"error", err)
 				c.RecordError(err)
+			} else if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				wsLogger.Info("WebSocket closed normally",
+					"connection_id", c.connectionID,
+					"user_id", c.userID,
+					"error", err)
 			} else {
-				log.Printf("[Connection %s] WebSocket closed for user %s: %v", c.connectionID, c.userID, err)
+				wsLogger.Warn("WebSocket read error",
+					"connection_id", c.connectionID,
+					"user_id", c.userID,
+					"error", err)
 			}
 			break
 		}
 
 		c.packetsIn.Add(1)
-		c.bytesIn.Add(int64(len(message)))
+		if len(message) > 0 {
+			c.bytesIn.Add(int64(len(message)))
+		}
 
 		if messageType == websocket.PongMessage {
-			log.Printf("[Connection %s] Received pong from user %s", c.connectionID, c.userID)
 			continue
 		}
 
 		if messageType == websocket.CloseMessage {
-			log.Printf("[Connection %s] Received close message from user %s", c.connectionID, c.userID)
+			wsLogger.Info("Received close message",
+				"connection_id", c.connectionID,
+				"user_id", c.userID)
 			break
 		}
 
+		if messageType != websocket.TextMessage {
+			wsLogger.Debug("Ignoring non-text message",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"message_type", messageType)
+			continue
+		}
+
+		if len(message) > MaxMessageSize {
+			wsLogger.Warn("Message too large",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"size", len(message),
+				"max_size", MaxMessageSize)
+			c.RecordError(fmt.Errorf("message too large: %d bytes", len(message)))
+			c.sendErrorMessage("Message too large")
+			continue
+		}
+
 		if !c.rateLimit.Allow() {
-			log.Printf("[Connection %s] Rate limit exceeded for user %s", c.connectionID, c.userID)
+			wsLogger.Warn("Rate limit exceeded",
+				"connection_id", c.connectionID,
+				"user_id", c.userID)
 			c.RecordError(fmt.Errorf("rate limit exceeded"))
+			c.sendErrorMessage("Rate limit exceeded")
+			continue
+		}
+
+		if c.GetState() != StateConnected {
+			wsLogger.Debug("Discarding message in non-connected state",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"state", c.GetState())
 			continue
 		}
 
 		c.lastSeen.Store(time.Now().Unix())
+		c.hub.updateUserActivity(c.userID, c.roomID)
 
 		var msg Message
 		if err := msg.decode(message); err != nil {
-			log.Printf("[Connection %s] Error decoding message from user %s: %v (payload_size: %d)",
-				c.connectionID, c.userID, err, len(message))
+			wsLogger.Warn("Error decoding message",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err,
+				"payload_size", len(message))
 			c.RecordError(err)
+			c.sendErrorMessage("Invalid message format")
 			continue
+		}
+
+		if msg.Type == "" {
+			wsLogger.Warn("Message missing type",
+				"connection_id", c.connectionID,
+				"user_id", c.userID)
+			continue
+		}
+
+		if c.GetErrorCount() >= MaxErrorThreshold {
+			wsLogger.Error("Client exceeded max error threshold, disconnecting",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error_count", c.GetErrorCount(),
+				"max_threshold", MaxErrorThreshold)
+			c.sendErrorMessage("Too many errors, connection closed")
+			break
 		}
 
 		msg.UserID = c.userID
@@ -676,27 +883,50 @@ func (c *Client) ReadPump() {
 	}
 }
 
+func (c *Client) sendErrorMessage(errMsg string) {
+	errPayload := map[string]string{"error": errMsg}
+	payload, _ := json.Marshal(errPayload)
+	msg := &Message{
+		Type:      "error",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, msg)
+}
+
 func (c *Client) WritePump() {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(PingInterval)
 	defer func() {
 		ticker.Stop()
 		if closeErr := c.conn.Close(); closeErr != nil {
-			log.Printf("[Connection %s] Error closing connection in WritePump: %v", c.connectionID, closeErr)
+			wsLogger.Error("Error closing connection in WritePump",
+				"connection_id", c.connectionID,
+				"error", closeErr)
 		}
 	}()
+
+	writeTimeout := 10 * time.Second
 
 	for {
 		select {
 		case message, ok := <-c.send:
-			if err := c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
-				log.Printf("[Connection %s] Error setting write deadline: %v", c.connectionID, err)
+			if err := c.conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+				wsLogger.Error("Error setting write deadline",
+					"connection_id", c.connectionID,
+					"error", err)
 				c.RecordError(err)
 				return
 			}
 			if !ok {
-				log.Printf("[Connection %s] Send channel closed, sending close message for user %s", c.connectionID, c.userID)
+				wsLogger.Info("Send channel closed, sending close message",
+					"connection_id", c.connectionID,
+					"user_id", c.userID)
 				if err := c.conn.WriteMessage(websocket.CloseMessage, []byte{}); err != nil {
-					log.Printf("[Connection %s] Error sending close message: %v", c.connectionID, err)
+					wsLogger.Warn("Error sending close message",
+						"connection_id", c.connectionID,
+						"error", err)
 					c.RecordError(err)
 				}
 				return
@@ -709,9 +939,15 @@ func (c *Client) WritePump() {
 				c.packetsOut.Add(1)
 				c.bytesOut.Add(int64(len(message)))
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					log.Printf("[Connection %s] Unexpected close while writing to user %s: %v", c.connectionID, c.userID, err)
+					wsLogger.Warn("Unexpected close while writing",
+						"connection_id", c.connectionID,
+						"user_id", c.userID,
+						"error", err)
 				} else {
-					log.Printf("[Connection %s] Write error to user %s: %v", c.connectionID, c.userID, err)
+					wsLogger.Warn("Write error",
+						"connection_id", c.connectionID,
+						"user_id", c.userID,
+						"error", err)
 				}
 				c.RecordError(err)
 				return
@@ -719,16 +955,24 @@ func (c *Client) WritePump() {
 			c.lastSeen.Store(time.Now().Unix())
 
 		case <-ticker.C:
-			if err := c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
-				log.Printf("[Connection %s] Error setting write deadline in ping: %v", c.connectionID, err)
+			if err := c.conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+				wsLogger.Error("Error setting write deadline in ping",
+					"connection_id", c.connectionID,
+					"error", err)
 				c.RecordError(err)
 				return
 			}
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				log.Printf("[Connection %s] Error writing ping to user %s: %v", c.connectionID, c.userID, err)
+				wsLogger.Warn("Error writing ping",
+					"connection_id", c.connectionID,
+					"user_id", c.userID,
+					"error", err)
 				c.RecordError(err)
 				return
 			}
+			wsLogger.Debug("Ping sent",
+				"connection_id", c.connectionID,
+				"user_id", c.userID)
 		}
 	}
 }
@@ -810,6 +1054,124 @@ func (h *Hub) cleanupTypingUsers() {
 	}
 }
 
+func (h *Hub) cleanupIdleUsers() {
+	defer h.idleCheckTicker.Stop()
+
+	for {
+		select {
+		case <-h.shutdown:
+			return
+		case <-h.idleCheckTicker.C:
+			h.activityMutex.Lock()
+			now := time.Now()
+			for userID, activity := range h.userActivities {
+				if activity.Status == "idle" {
+					continue
+				}
+				if now.Sub(activity.LastActivity) > IdleTimeout {
+					oldStatus := activity.Status
+					activity.Status = "idle"
+					activity.LastActivity = now
+
+					idleMsg := &Message{
+						Type:      "user-idle",
+						RoomID:    activity.RoomID,
+						UserID:    userID,
+						Timestamp: now,
+					}
+					h.broadcastToRoom(activity.RoomID, idleMsg, userID)
+					log.Printf("[Hub] User %s transitioned from %s to idle in room %s", userID, oldStatus, activity.RoomID)
+				}
+			}
+			h.activityMutex.Unlock()
+		}
+	}
+}
+
+func (h *Hub) updateRoomStats() {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-h.shutdown:
+			return
+		case <-ticker.C:
+			h.mutex.RLock()
+			roomIDs := make([]uuid.UUID, 0, len(h.rooms))
+			for roomID := range h.rooms {
+				roomIDs = append(roomIDs, roomID)
+			}
+			h.mutex.RUnlock()
+
+			for _, roomID := range roomIDs {
+				h.updateRoomStat(roomID)
+			}
+		}
+	}
+}
+
+func (h *Hub) updateRoomStat(roomID uuid.UUID) {
+	h.mutex.RLock()
+	r, ok := h.rooms[roomID]
+	if !ok {
+		h.mutex.RUnlock()
+		return
+	}
+
+	r.mutex.RLock()
+	clientCount := len(r.clients)
+	r.mutex.RUnlock()
+
+	typingUsers := h.GetTypingUsers(roomID)
+
+	h.roomStatsMutex.Lock()
+	stats, exists := h.roomStats[roomID]
+	if !exists {
+		stats = &RoomStats{RoomID: roomID}
+		h.roomStats[roomID] = stats
+	}
+
+	stats.TotalUsers = clientCount
+	stats.TypingUsers = len(typingUsers)
+	stats.LastActivity = time.Now()
+
+	var activeUsers, idleUsers, mutedUsers, deafenedUsers, speakingUsers, screenSharing int
+
+	r.mutex.RLock()
+	for client := range r.clients {
+		activity, actExists := h.userActivities[client.userID]
+		if actExists && activity.Status == "active" {
+			activeUsers++
+		} else if actExists && activity.Status == "idle" {
+			idleUsers++
+		} else {
+			activeUsers++
+		}
+	}
+	r.mutex.RUnlock()
+
+	stats.ActiveUsers = activeUsers
+	stats.IdleUsers = idleUsers
+	stats.MutedUsers = mutedUsers
+	stats.DeafenedUsers = deafenedUsers
+	stats.SpeakingUsers = speakingUsers
+	stats.ScreenSharing = screenSharing
+
+	h.roomStatsMutex.Unlock()
+	h.mutex.RUnlock()
+}
+
+func (h *Hub) GetRoomStats(roomID uuid.UUID) *RoomStats {
+	h.roomStatsMutex.RLock()
+	defer h.roomStatsMutex.RUnlock()
+	stats, exists := h.roomStats[roomID]
+	if !exists {
+		return &RoomStats{RoomID: roomID}
+	}
+	return stats
+}
+
 func (c *Client) handleMessage(msg *Message) {
 	switch msg.Type {
 	case "voice-offer", "voice-answer", "voice-ice-candidate":
@@ -819,84 +1181,21 @@ func (c *Client) handleMessage(msg *Message) {
 	case "voice-mute", "voice-unmute":
 		c.hub.broadcast <- msg
 	case "user-joined":
-		notifyMsg := &Message{
-			Type:      "user-joined",
-			RoomID:    c.roomID,
-			UserID:    c.userID,
-			Timestamp: time.Now(),
-		}
-		c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
-		if c.hub.enableRedis {
-			c.hub.publishToRedis(notifyMsg)
-		}
-		c.hub.sendOnlineUsersList(c.roomID, c.userID)
+		c.handleUserJoined(msg)
 	case "user-left":
-		c.hub.clearTypingUser(c.userID)
-		notifyMsg := &Message{
-			Type:      "user-left",
-			RoomID:    c.roomID,
-			UserID:    c.userID,
-			Timestamp: time.Now(),
-		}
-		c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
-		if c.hub.enableRedis {
-			c.hub.publishToRedis(notifyMsg)
-		}
-		c.hub.UnregisterClient(c)
-		c.hub.sendOnlineUsersList(c.roomID, uuid.Nil)
+		c.handleUserLeft(msg)
 	case "user-away":
-		c.hub.setUserPresence(c.userID, c.roomID, "away")
-		notifyMsg := &Message{
-			Type:      "user-away",
-			RoomID:    c.roomID,
-			UserID:    c.userID,
-			Timestamp: time.Now(),
-		}
-		c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
-		if c.hub.enableRedis {
-			c.hub.publishToRedis(notifyMsg)
-		}
+		c.handleUserAway(msg)
 	case "user-back":
-		c.hub.setUserPresence(c.userID, c.roomID, "online")
-		notifyMsg := &Message{
-			Type:      "user-online",
-			RoomID:    c.roomID,
-			UserID:    c.userID,
-			Timestamp: time.Now(),
-		}
-		c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
-		if c.hub.enableRedis {
-			c.hub.publishToRedis(notifyMsg)
-		}
+		c.handleUserBack(msg)
 	case "typing":
-		var payload TypingPayload
-		if len(msg.Payload) > 0 {
-			_ = json.Unmarshal(msg.Payload, &payload)
-		}
-		c.hub.setTypingUser(c.userID, c.roomID, payload.Context)
-		notifyMsg := &Message{
-			Type:      "user-typing",
-			RoomID:    c.roomID,
-			UserID:    c.userID,
-			Payload:   msg.Payload,
-			Timestamp: time.Now(),
-		}
-		c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
-		if c.hub.enableRedis {
-			c.hub.publishToRedis(notifyMsg)
-		}
+		c.handleTyping(msg)
 	case "stop-typing":
-		c.hub.clearTypingUser(c.userID)
-		notifyMsg := &Message{
-			Type:      "user-stopped-typing",
-			RoomID:    c.roomID,
-			UserID:    c.userID,
-			Timestamp: time.Now(),
-		}
-		c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
-		if c.hub.enableRedis {
-			c.hub.publishToRedis(notifyMsg)
-		}
+		c.handleStopTyping(msg)
+	case "typing-start":
+		c.handleTypingStart(msg)
+	case "typing_stop":
+		c.handleTypingStop(msg)
 	case "get-online-users":
 		c.hub.sendOnlineUsersList(c.roomID, c.userID)
 	case "get-room-notifications":
@@ -931,8 +1230,55 @@ func (c *Client) handleMessage(msg *Message) {
 		c.sendConnectionHealth()
 	case "get-room-users":
 		c.hub.sendRoomUsersDetailed(c)
+	case "get-room-stats":
+		c.hub.sendRoomStats(c)
+	case "user-activity":
+		c.handleUserActivity(msg)
+	case "subscribe-room-events":
+		c.handleSubscribeRoomEvents(msg)
+	case "unsubscribe-room-events":
+		c.handleUnsubscribeRoomEvents(msg)
+	case "get-connection-quality":
+		c.handleGetConnectionQuality()
+	case "ping-with-timestamp":
+		c.handlePingWithTimestamp(msg)
+	case "set-presence":
+		c.handleSetPresence(msg)
+	case "get-presence":
+		c.handleGetPresence(msg)
+	case "typing-indicator":
+		c.handleTypingIndicator(msg)
+	case "room-event":
+		c.handleRoomEvent(msg)
+	case "mark-notification-read":
+		c.handleMarkNotificationRead(msg)
+	case "get-notifications":
+		c.handleGetNotifications(msg)
+	case "message-read":
+		c.handleMessageRead(msg)
+	case "message-updated":
+		c.handleMessageUpdated(msg)
+	case "thread-reply":
+		c.handleThreadReply(msg)
+	case "thread-message":
+		c.handleThreadMessage(msg)
+	case "user-blocked":
+		c.handleUserBlocked(msg)
+	case "user-unblocked":
+		c.handleUserUnblocked(msg)
+	case "client-reconnect":
+		c.handleClientReconnect(msg)
+	case "message-deleted":
+		c.handleMessageDeleted(msg)
+	case "thread-message-updated":
+		c.handleThreadMessageUpdated(msg)
+	case "thread-message-deleted":
+		c.handleThreadMessageDeleted(msg)
 	default:
-		log.Printf("[Connection %s] Unknown message type: %s from user %s", c.connectionID, msg.Type, c.userID)
+		wsLogger.Warn("Unknown message type",
+			"connection_id", c.connectionID,
+			"message_type", msg.Type,
+			"user_id", c.userID)
 	}
 }
 
@@ -1185,6 +1531,35 @@ type OnlineUser struct {
 	Muted         bool      `json:"muted,omitempty"`
 	Deafened      bool      `json:"deafened,omitempty"`
 	ScreenSharing bool      `json:"screen_sharing,omitempty"`
+	DeviceInfo    string    `json:"device_info,omitempty"`
+	ClientVersion string    `json:"client_version,omitempty"`
+}
+
+type PresenceInfo struct {
+	UserID   uuid.UUID `json:"user_id"`
+	Status   string    `json:"status"` // "online", "idle", "away", "dnd", "offline"
+	Since    time.Time `json:"since"`
+	Activity string    `json:"activity,omitempty"`
+	Custom   string    `json:"custom_status,omitempty"`
+}
+
+type RoomEvent struct {
+	Type      string          `json:"type"`
+	RoomID    uuid.UUID       `json:"room_id"`
+	UserID    uuid.UUID       `json:"user_id,omitempty"`
+	Payload   json.RawMessage `json:"payload,omitempty"`
+	Timestamp time.Time       `json:"timestamp"`
+}
+
+type RoomNotification struct {
+	ID         string    `json:"id"`
+	Type       string    `json:"type"` // "user_joined", "user_left", "typing", "mention", "message"
+	RoomID     uuid.UUID `json:"room_id"`
+	UserID     uuid.UUID `json:"user_id,omitempty"`
+	Message    string    `json:"message,omitempty"`
+	Timestamp  time.Time `json:"timestamp"`
+	Read       bool      `json:"read"`
+	Actionable bool      `json:"actionable"`
 }
 
 type RoomNotificationSettings struct {
@@ -1192,6 +1567,47 @@ type RoomNotificationSettings struct {
 	Sound         bool `json:"sound"`
 	MentionOnly   bool `json:"mention_only"`
 	DesktopNotify bool `json:"desktop_notify"`
+}
+
+type RoomActivity struct {
+	UserID       uuid.UUID `json:"user_id"`
+	RoomID       uuid.UUID `json:"room_id"`
+	Status       string    `json:"status"` // "active", "idle", "away"
+	LastActivity time.Time `json:"last_activity"`
+	JoinedAt     time.Time `json:"joined_at"`
+}
+
+type RoomStats struct {
+	RoomID        uuid.UUID `json:"room_id"`
+	TotalUsers    int       `json:"total_users"`
+	ActiveUsers   int       `json:"active_users"`
+	IdleUsers     int       `json:"idle_users"`
+	TypingUsers   int       `json:"typing_users"`
+	MutedUsers    int       `json:"muted_users"`
+	DeafenedUsers int       `json:"deafened_users"`
+	SpeakingUsers int       `json:"speaking_users"`
+	ScreenSharing int       `json:"screen_sharing"`
+	LastActivity  time.Time `json:"last_activity"`
+}
+
+type UserActivityPayload struct {
+	Status    string `json:"status,omitempty"` // "active", "idle", "away"
+	ChannelID string `json:"channel_id,omitempty"`
+	ThreadID  string `json:"thread_id,omitempty"`
+}
+
+type RoomNotificationEvent struct {
+	Type      string    `json:"type"` // "user-joined", "user-left"
+	UserID    uuid.UUID `json:"user_id"`
+	RoomID    uuid.UUID `json:"room_id"`
+	Timestamp time.Time `json:"timestamp"`
+	User      *UserInfo `json:"user,omitempty"`
+}
+
+type UserInfo struct {
+	ID        uuid.UUID `json:"id"`
+	Username  string    `json:"username,omitempty"`
+	AvatarURL string    `json:"avatar_url,omitempty"`
 }
 
 type ConnectionHealth struct {
@@ -1205,6 +1621,76 @@ type ConnectionHealth struct {
 	PacketsSent     int64     `json:"packets_sent"`
 	BytesReceived   int64     `json:"bytes_received"`
 	BytesSent       int64     `json:"bytes_sent"`
+	ErrorCount      int32     `json:"error_count"`
+	ConnectedAt     time.Time `json:"connected_at"`
+}
+
+type ConnectionQuality struct {
+	ConnectionID uuid.UUID `json:"connection_id"`
+	UserID       uuid.UUID `json:"user_id"`
+	Quality      string    `json:"quality"` // "excellent", "good", "fair", "poor", "disconnected"
+	LatencyMs    int64     `json:"latency_ms"`
+	PacketLoss   float64   `json:"packet_loss,omitempty"`
+}
+
+type TypingIndicator struct {
+	UserID    uuid.UUID `json:"user_id"`
+	RoomID    uuid.UUID `json:"room_id"`
+	Context   string    `json:"context"` // "room", "channel:{id}", "thread:{id}", "dm:{id}"
+	ContextID string    `json:"context_id,omitempty"`
+	IsTyping  bool      `json:"is_typing"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+type TypingDebouncer struct {
+	timers    map[uuid.UUID]*time.Timer
+	mutex     sync.Mutex
+	delay     time.Duration
+	onTimeout func(uuid.UUID)
+}
+
+func NewTypingDebouncer(delay time.Duration, onTimeout func(uuid.UUID)) *TypingDebouncer {
+	return &TypingDebouncer{
+		timers:    make(map[uuid.UUID]*time.Timer),
+		delay:     delay,
+		onTimeout: onTimeout,
+	}
+}
+
+func (td *TypingDebouncer) Trigger(userID uuid.UUID) {
+	td.mutex.Lock()
+	defer td.mutex.Unlock()
+
+	if timer, exists := td.timers[userID]; exists {
+		timer.Stop()
+	}
+
+	td.timers[userID] = time.AfterFunc(td.delay, func() {
+		td.mutex.Lock()
+		delete(td.timers, userID)
+		td.mutex.Unlock()
+		if td.onTimeout != nil {
+			td.onTimeout(userID)
+		}
+	})
+}
+
+func (td *TypingDebouncer) Stop(userID uuid.UUID) {
+	td.mutex.Lock()
+	defer td.mutex.Unlock()
+	if timer, exists := td.timers[userID]; exists {
+		timer.Stop()
+		delete(td.timers, userID)
+	}
+}
+
+func (td *TypingDebouncer) StopAll() {
+	td.mutex.Lock()
+	defer td.mutex.Unlock()
+	for _, timer := range td.timers {
+		timer.Stop()
+	}
+	td.timers = make(map[uuid.UUID]*time.Timer)
 }
 
 func (h *Hub) handleRedisUserMessage(msg *PubSubMessage) {
@@ -1481,4 +1967,957 @@ func (h *Hub) sendRoomUsersDetailed(client *Client) {
 		Timestamp: time.Now(),
 	}
 	h.sendToClient(client.userID, msg)
+}
+
+func (h *Hub) sendRoomStats(client *Client) {
+	stats := h.GetRoomStats(client.roomID)
+	payload, err := json.Marshal(stats)
+	if err != nil {
+		log.Printf("[Connection %s] Error marshaling room stats: %v", client.connectionID, err)
+		return
+	}
+
+	msg := &Message{
+		Type:      "room-stats",
+		RoomID:    client.roomID,
+		UserID:    client.userID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+	}
+	h.sendToClient(client.userID, msg)
+	log.Printf("[Connection %s] Sent room stats to user %s: total=%d, active=%d, typing=%d",
+		client.connectionID, client.userID, stats.TotalUsers, stats.ActiveUsers, stats.TypingUsers)
+}
+
+func (c *Client) handleUserActivity(msg *Message) {
+	var payload UserActivityPayload
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			log.Printf("[Connection %s] Error parsing user activity payload: %v", c.connectionID, err)
+			return
+		}
+	}
+
+	switch payload.Status {
+	case "active":
+		c.hub.updateUserActivity(c.userID, c.roomID)
+	case "idle":
+		c.hub.setUserIdle(c.userID)
+		idleMsg := &Message{
+			Type:      "user-idle",
+			RoomID:    c.roomID,
+			UserID:    c.userID,
+			Timestamp: time.Now(),
+		}
+		c.hub.broadcastToRoom(c.roomID, idleMsg, c.userID)
+	case "away":
+		c.hub.setUserPresence(c.userID, c.roomID, "away")
+		awayMsg := &Message{
+			Type:      "user-away",
+			RoomID:    c.roomID,
+			UserID:    c.userID,
+			Timestamp: time.Now(),
+		}
+		c.hub.broadcastToRoom(c.roomID, awayMsg, c.userID)
+	}
+
+	log.Printf("[Connection %s] User %s activity updated: %s", c.connectionID, c.userID, payload.Status)
+}
+
+func (c *Client) handleTypingStart(msg *Message) {
+	var payload TypingIndicator
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			log.Printf("[Connection %s] Error parsing typing indicator payload: %v", c.connectionID, err)
+			return
+		}
+	}
+
+	c.hub.setTypingUser(c.userID, c.roomID, payload.Context)
+
+	typingPayload := TypingIndicator{
+		UserID:    c.userID,
+		RoomID:    c.roomID,
+		Context:   payload.Context,
+		ContextID: payload.ContextID,
+		IsTyping:  true,
+		Timestamp: time.Now(),
+	}
+
+	payloadBytes, _ := json.Marshal(typingPayload)
+	notifyMsg := &Message{
+		Type:      "user-typing-start",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+	log.Printf("[Connection %s] User %s started typing in context: %s", c.connectionID, c.userID, payload.Context)
+}
+
+func (c *Client) handleTypingStop(msg *Message) {
+	c.hub.clearTypingUser(c.userID)
+
+	typingPayload := TypingIndicator{
+		UserID:    c.userID,
+		RoomID:    c.roomID,
+		IsTyping:  false,
+		Timestamp: time.Now(),
+	}
+
+	payloadBytes, _ := json.Marshal(typingPayload)
+	notifyMsg := &Message{
+		Type:      "user-typing-stop",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+	log.Printf("[Connection %s] User %s stopped typing", c.connectionID, c.userID)
+}
+
+func (c *Client) handleSubscribeRoomEvents(msg *Message) {
+	log.Printf("[Connection %s] User %s subscribed to room events for room %s",
+		c.connectionID, c.userID, c.roomID)
+
+	confirmMsg := &Message{
+		Type:      "room-events-subscribed",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, confirmMsg)
+}
+
+func (c *Client) handleUnsubscribeRoomEvents(msg *Message) {
+	log.Printf("[Connection %s] User %s unsubscribed from room events for room %s",
+		c.connectionID, c.userID, c.roomID)
+
+	confirmMsg := &Message{
+		Type:      "room-events-unsubscribed",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, confirmMsg)
+}
+
+func (c *Client) handleGetConnectionQuality() {
+	quality := c.calculateConnectionQuality()
+
+	payload, err := json.Marshal(quality)
+	if err != nil {
+		log.Printf("[Connection %s] Error marshaling connection quality: %v", c.connectionID, err)
+		return
+	}
+
+	msg := &Message{
+		Type:      "connection-quality",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, msg)
+	log.Printf("[Connection %s] Sent connection quality to user %s: %s (latency: %dms)",
+		c.connectionID, c.userID, quality.Quality, quality.LatencyMs)
+}
+
+func (c *Client) calculateConnectionQuality() *ConnectionQuality {
+	latency := c.latency.Load()
+
+	var quality string
+	switch {
+	case latency < 50:
+		quality = "excellent"
+	case latency < 100:
+		quality = "good"
+	case latency < 200:
+		quality = "fair"
+	default:
+		quality = "poor"
+	}
+
+	return &ConnectionQuality{
+		ConnectionID: c.connectionID,
+		UserID:       c.userID,
+		Quality:      quality,
+		LatencyMs:    latency,
+	}
+}
+
+func (c *Client) handlePingWithTimestamp(msg *Message) {
+	var clientTime int64
+	if len(msg.Payload) > 0 {
+		var payload struct {
+			ClientTime int64 `json:"client_time"`
+		}
+		if err := json.Unmarshal(msg.Payload, &payload); err == nil {
+			clientTime = payload.ClientTime
+		}
+	}
+
+	serverTime := time.Now().UnixMilli()
+	var roundTrip int64
+	if clientTime > 0 {
+		roundTrip = serverTime - clientTime
+		c.latency.Store(roundTrip / 2)
+	}
+
+	pongPayload := struct {
+		ServerTime int64 `json:"server_time"`
+		LatencyMs  int64 `json:"latency_ms"`
+	}{
+		ServerTime: serverTime,
+		LatencyMs:  roundTrip / 2,
+	}
+
+	payloadBytes, _ := json.Marshal(pongPayload)
+	pongMsg := &Message{
+		Type:      "pong-with-timestamp",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, pongMsg)
+}
+
+func (c *Client) handleUserJoined(msg *Message) {
+	notifyMsg := &Message{
+		Type:      "user-joined",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+	c.hub.sendOnlineUsersList(c.roomID, c.userID)
+
+	wsLogger.Info("User joined room",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"room_id", c.roomID)
+}
+
+func (c *Client) handleUserLeft(msg *Message) {
+	c.hub.clearTypingUser(c.userID)
+	notifyMsg := &Message{
+		Type:      "user-left",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+	c.hub.UnregisterClient(c)
+	c.hub.sendOnlineUsersList(c.roomID, uuid.Nil)
+
+	wsLogger.Info("User left room",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"room_id", c.roomID)
+}
+
+func (c *Client) handleUserAway(msg *Message) {
+	c.hub.setUserPresence(c.userID, c.roomID, "away")
+	notifyMsg := &Message{
+		Type:      "user-away",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+
+	wsLogger.Info("User set away status",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"room_id", c.roomID)
+}
+
+func (c *Client) handleUserBack(msg *Message) {
+	c.hub.setUserPresence(c.userID, c.roomID, "online")
+	notifyMsg := &Message{
+		Type:      "user-online",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+
+	wsLogger.Info("User back online",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"room_id", c.roomID)
+}
+
+func (c *Client) handleTyping(msg *Message) {
+	var payload TypingPayload
+	if len(msg.Payload) > 0 {
+		_ = json.Unmarshal(msg.Payload, &payload)
+	}
+	c.hub.setTypingUser(c.userID, c.roomID, payload.Context)
+	notifyMsg := &Message{
+		Type:      "user-typing",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   msg.Payload,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+}
+
+func (c *Client) handleStopTyping(msg *Message) {
+	c.hub.clearTypingUser(c.userID)
+	notifyMsg := &Message{
+		Type:      "user-stopped-typing",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+}
+
+type PresencePayload struct {
+	Status   string `json:"status"` // "online", "idle", "away", "dnd"
+	Since    int64  `json:"since"`
+	Activity string `json:"activity,omitempty"`
+	Custom   string `json:"custom_status,omitempty"`
+}
+
+func (c *Client) handleSetPresence(msg *Message) {
+	var payload PresencePayload
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing presence payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			return
+		}
+	}
+
+	c.hub.setUserPresence(c.userID, c.roomID, payload.Status)
+
+	presenceMsg := &Message{
+		Type:      "presence-updated",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   msg.Payload,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, presenceMsg, c.userID)
+
+	wsLogger.Info("User presence updated",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"status", payload.Status)
+}
+
+func (c *Client) handleGetPresence(msg *Message) {
+	var payload struct {
+		UserIDs []uuid.UUID `json:"user_ids"`
+	}
+	if len(msg.Payload) > 0 {
+		_ = json.Unmarshal(msg.Payload, &payload)
+	}
+
+	presences := make([]PresenceInfo, 0)
+	for _, uid := range payload.UserIDs {
+		if status, exists := c.hub.GetUserPresence(uid); exists {
+			presences = append(presences, PresenceInfo{
+				UserID: uid,
+				Status: status,
+			})
+		}
+	}
+
+	payloadBytes, _ := json.Marshal(presences)
+	responseMsg := &Message{
+		Type:      "presence-list",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, responseMsg)
+}
+
+func (c *Client) handleTypingIndicator(msg *Message) {
+	var payload TypingIndicator
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing typing indicator payload",
+				"connection_id", c.connectionID,
+				"error", err)
+			return
+		}
+	}
+
+	if payload.IsTyping {
+		c.hub.setTypingUser(c.userID, c.roomID, payload.Context)
+	} else {
+		c.hub.clearTypingUser(c.userID)
+	}
+
+	payload.UserID = c.userID
+	payload.Timestamp = time.Now()
+
+	payloadBytes, _ := json.Marshal(payload)
+	notifyMsg := &Message{
+		Type:      "typing-indicator",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+}
+
+func (c *Client) handleRoomEvent(msg *Message) {
+	var payload RoomEvent
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing room event payload",
+				"connection_id", c.connectionID,
+				"error", err)
+			return
+		}
+	}
+
+	payload.UserID = c.userID
+	payload.Timestamp = time.Now()
+
+	notifyMsg := &Message{
+		Type:      "room-event",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   msg.Payload,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+}
+
+type NotificationStore struct {
+	sync.RWMutex
+	notifications map[uuid.UUID][]RoomNotification
+}
+
+var notificationStore = &NotificationStore{
+	notifications: make(map[uuid.UUID][]RoomNotification),
+}
+
+func (ns *NotificationStore) Add(userID uuid.UUID, notification RoomNotification) {
+	ns.Lock()
+	defer ns.Unlock()
+	ns.notifications[userID] = append([]RoomNotification{notification}, ns.notifications[userID]...)
+
+	if len(ns.notifications[userID]) > 100 {
+		ns.notifications[userID] = ns.notifications[userID][:100]
+	}
+}
+
+func (ns *NotificationStore) Get(userID uuid.UUID, limit int) []RoomNotification {
+	ns.RLock()
+	defer ns.RUnlock()
+	notifs := ns.notifications[userID]
+	if len(notifs) > limit {
+		return notifs[:limit]
+	}
+	return notifs
+}
+
+func (ns *NotificationStore) MarkRead(userID, notificationID uuid.UUID) {
+	ns.Lock()
+	defer ns.Unlock()
+	for i := range ns.notifications[userID] {
+		if ns.notifications[userID][i].ID == notificationID.String() {
+			ns.notifications[userID][i].Read = true
+			break
+		}
+	}
+}
+
+func (c *Client) handleMarkNotificationRead(msg *Message) {
+	var payload struct {
+		NotificationID string `json:"notification_id"`
+	}
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing notification read payload",
+				"connection_id", c.connectionID,
+				"error", err)
+			return
+		}
+	}
+
+	if notificationID, err := uuid.Parse(payload.NotificationID); err == nil {
+		notificationStore.MarkRead(c.userID, notificationID)
+
+		responseMsg := &Message{
+			Type:      "notification-marked-read",
+			RoomID:    c.roomID,
+			UserID:    c.userID,
+			Payload:   msg.Payload,
+			Timestamp: time.Now(),
+		}
+		c.hub.sendToClient(c.userID, responseMsg)
+	}
+}
+
+func (c *Client) handleGetNotifications(msg *Message) {
+	var payload struct {
+		Limit int `json:"limit"`
+	}
+	if len(msg.Payload) > 0 {
+		_ = json.Unmarshal(msg.Payload, &payload)
+	}
+	if payload.Limit == 0 {
+		payload.Limit = 20
+	}
+
+	notifications := notificationStore.Get(c.userID, payload.Limit)
+
+	payloadBytes, _ := json.Marshal(notifications)
+	responseMsg := &Message{
+		Type:      "notifications-list",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, responseMsg)
+}
+
+func (c *Client) handleMessageRead(msg *Message) {
+	var payload struct {
+		MessageID string `json:"message_id"`
+	}
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing message read payload",
+				"connection_id", c.connectionID,
+				"error", err)
+			return
+		}
+	}
+
+	notifyMsg := &Message{
+		Type:      "message-read",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   msg.Payload,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	notificationStore.Add(c.userID, RoomNotification{
+		ID:        uuid.New().String(),
+		Type:      "message",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Message:   "Message read",
+		Timestamp: time.Now(),
+		Read:      false,
+	})
+
+	wsLogger.Info("User read message",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"message_id", payload.MessageID)
+}
+
+func (c *Client) handleMessageUpdated(msg *Message) {
+	var payload struct {
+		MessageID string `json:"message_id"`
+		Content   string `json:"content"`
+	}
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing message updated payload",
+				"connection_id", c.connectionID,
+				"error", err)
+			return
+		}
+	}
+
+	if err := validator.ValidateMessageContent(payload.Content); err != nil {
+		wsLogger.Warn("Invalid message content in message-updated",
+			"connection_id", c.connectionID,
+			"error", err)
+		c.sendErrorMessage("Invalid message content: " + err.Error())
+		return
+	}
+
+	sanitizedContent := validator.SanitizeMessageContent(payload.Content)
+
+	notifyMsg := &Message{
+		Type:      "message-updated",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   json.RawMessage(fmt.Sprintf(`{"message_id":"%s","content":"%s"}`, payload.MessageID, sanitizedContent)),
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	wsLogger.Info("User updated message",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"message_id", payload.MessageID)
+}
+
+func (c *Client) handleThreadReply(msg *Message) {
+	var payload struct {
+		ParentID string `json:"parent_id"`
+		Content  string `json:"content"`
+	}
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing thread reply payload",
+				"connection_id", c.connectionID,
+				"error", err)
+			return
+		}
+	}
+
+	if err := validator.ValidateMessageContent(payload.Content); err != nil {
+		wsLogger.Warn("Invalid thread reply content",
+			"connection_id", c.connectionID,
+			"error", err)
+		c.sendErrorMessage("Invalid message content: " + err.Error())
+		return
+	}
+
+	sanitizedContent := validator.SanitizeMessageContent(payload.Content)
+
+	notifyMsg := &Message{
+		Type:      "thread-reply",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   json.RawMessage(fmt.Sprintf(`{"parent_id":"%s","content":"%s"}`, payload.ParentID, sanitizedContent)),
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	notificationStore.Add(c.userID, RoomNotification{
+		ID:         uuid.New().String(),
+		Type:       "message",
+		RoomID:     c.roomID,
+		UserID:     c.userID,
+		Message:    "Thread reply received",
+		Timestamp:  time.Now(),
+		Read:       false,
+		Actionable: true,
+	})
+
+	wsLogger.Info("User replied to thread",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"parent_id", payload.ParentID)
+}
+
+func (c *Client) handleThreadMessage(msg *Message) {
+	var payload struct {
+		ThreadID string `json:"thread_id"`
+		Content  string `json:"content"`
+	}
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing thread message payload",
+				"connection_id", c.connectionID,
+				"error", err)
+			return
+		}
+	}
+
+	if err := validator.ValidateMessageContent(payload.Content); err != nil {
+		wsLogger.Warn("Invalid thread message content",
+			"connection_id", c.connectionID,
+			"error", err)
+		c.sendErrorMessage("Invalid message content: " + err.Error())
+		return
+	}
+
+	sanitizedContent := validator.SanitizeMessageContent(payload.Content)
+
+	notifyMsg := &Message{
+		Type:      "thread-message",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   json.RawMessage(fmt.Sprintf(`{"thread_id":"%s","content":"%s"}`, payload.ThreadID, sanitizedContent)),
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	wsLogger.Info("User sent thread message",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"thread_id", payload.ThreadID)
+}
+
+func (c *Client) handleUserBlocked(msg *Message) {
+	var payload struct {
+		BlockedUserID string `json:"blocked_user_id"`
+	}
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing user blocked payload",
+				"connection_id", c.connectionID,
+				"error", err)
+			return
+		}
+	}
+
+	blockedUserID, err := uuid.Parse(payload.BlockedUserID)
+	if err != nil {
+		wsLogger.Warn("Invalid blocked user ID",
+			"connection_id", c.connectionID,
+			"blocked_user_id", payload.BlockedUserID)
+		return
+	}
+
+	if blockedUserID == c.userID {
+		wsLogger.Warn("User cannot block themselves",
+			"connection_id", c.connectionID,
+			"user_id", c.userID)
+		return
+	}
+
+	notifyMsg := &Message{
+		Type:         "user-blocked",
+		RoomID:       c.roomID,
+		UserID:       c.userID,
+		TargetUserID: blockedUserID,
+		Payload:      msg.Payload,
+		Timestamp:    time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	wsLogger.Info("User blocked another user",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"blocked_user_id", blockedUserID)
+}
+
+func (c *Client) handleUserUnblocked(msg *Message) {
+	var payload struct {
+		UnblockedUserID string `json:"unblocked_user_id"`
+	}
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing user unblocked payload",
+				"connection_id", c.connectionID,
+				"error", err)
+			return
+		}
+	}
+
+	unblockedUserID, err := uuid.Parse(payload.UnblockedUserID)
+	if err != nil {
+		wsLogger.Warn("Invalid unblocked user ID",
+			"connection_id", c.connectionID,
+			"unblocked_user_id", payload.UnblockedUserID)
+		return
+	}
+
+	notifyMsg := &Message{
+		Type:         "user-unblocked",
+		RoomID:       c.roomID,
+		UserID:       c.userID,
+		TargetUserID: unblockedUserID,
+		Payload:      msg.Payload,
+		Timestamp:    time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	wsLogger.Info("User unblocked another user",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"unblocked_user_id", unblockedUserID)
+}
+
+func (c *Client) handleClientReconnect(msg *Message) {
+	wsLogger.Info("Client reconnecting",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"room_id", c.roomID)
+
+	c.hub.sendRoomState(c)
+
+	clients := c.hub.GetRoomClients(c.roomID)
+	typingUsers := c.hub.GetTypingUsers(c.roomID)
+
+	typingPayload, _ := json.Marshal(typingUsers)
+	typingMsg := &Message{
+		Type:      "typing-users-list",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   typingPayload,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, typingMsg)
+
+	reconnectResponse := &Message{
+		Type:      "reconnect-ack",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, reconnectResponse)
+
+	onlineUsers := make([]OnlineUser, 0, len(clients))
+	for _, client := range clients {
+		onlineUsers = append(onlineUsers, OnlineUser{
+			UserID:        client.userID,
+			ConnectionID:  client.connectionID,
+			State:         client.GetState().String(),
+			ConnectedAt:   client.connectedAt,
+			LastSeen:      client.GetLastSeen(),
+			RemoteAddress: client.remoteAddr,
+		})
+	}
+
+	onlinePayload, _ := json.Marshal(onlineUsers)
+	onlineMsg := &Message{
+		Type:      "online-users-list",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   onlinePayload,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, onlineMsg)
+
+	wsLogger.Info("Client reconnect complete",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"room_id", c.roomID,
+		"online_users", len(onlineUsers),
+		"typing_users", len(typingUsers))
+}
+
+func (c *Client) handleMessageDeleted(msg *Message) {
+	var payload struct {
+		MessageID string `json:"message_id"`
+	}
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing message deleted payload",
+				"connection_id", c.connectionID,
+				"error", err)
+			return
+		}
+	}
+
+	notifyMsg := &Message{
+		Type:      "message-deleted",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   msg.Payload,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	wsLogger.Info("User deleted message",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"message_id", payload.MessageID)
+}
+
+func (c *Client) handleThreadMessageUpdated(msg *Message) {
+	var payload struct {
+		MessageID string `json:"message_id"`
+		Content   string `json:"content"`
+	}
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing thread message updated payload",
+				"connection_id", c.connectionID,
+				"error", err)
+			return
+		}
+	}
+
+	if err := validator.ValidateMessageContent(payload.Content); err != nil {
+		wsLogger.Warn("Invalid thread message content",
+			"connection_id", c.connectionID,
+			"error", err)
+		c.sendErrorMessage("Invalid message content: " + err.Error())
+		return
+	}
+
+	sanitizedContent := validator.SanitizeMessageContent(payload.Content)
+
+	notifyMsg := &Message{
+		Type:      "thread-message-updated",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   json.RawMessage(fmt.Sprintf(`{"message_id":"%s","content":"%s"}`, payload.MessageID, sanitizedContent)),
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	wsLogger.Info("User updated thread message",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"message_id", payload.MessageID)
+}
+
+func (c *Client) handleThreadMessageDeleted(msg *Message) {
+	var payload struct {
+		MessageID string `json:"message_id"`
+	}
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing thread message deleted payload",
+				"connection_id", c.connectionID,
+				"error", err)
+			return
+		}
+	}
+
+	notifyMsg := &Message{
+		Type:      "thread-message-deleted",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   msg.Payload,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	wsLogger.Info("User deleted thread message",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"message_id", payload.MessageID)
 }
