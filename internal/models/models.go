@@ -966,3 +966,121 @@ func (us *UserStatusModel) BeforeCreate(tx *gorm.DB) error {
 	}
 	return nil
 }
+
+type ScheduledMessage struct {
+	ID          uuid.UUID `gorm:"type:uuid;primary_key" json:"id"`
+	RoomID      uuid.UUID `gorm:"type:uuid;not null;index" json:"room_id"`
+	UserID      uuid.UUID `gorm:"type:uuid;not null;index" json:"user_id"`
+	Content     string    `gorm:"type:text;not null" json:"content"`
+	ScheduledAt time.Time `gorm:"not null;index" json:"scheduled_at"`
+	IsSent      bool      `gorm:"default:false" json:"is_sent"`
+	IsCancelled bool      `gorm:"default:false" json:"is_cancelled"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+
+	Room Room `gorm:"foreignKey:RoomID" json:"-"`
+	User User `gorm:"foreignKey:UserID" json:"-"`
+}
+
+func (sm *ScheduledMessage) BeforeCreate(tx *gorm.DB) error {
+	if sm.ID == uuid.Nil {
+		sm.ID = uuid.New()
+	}
+	if sm.CreatedAt.IsZero() {
+		sm.CreatedAt = time.Now()
+	}
+	if sm.UpdatedAt.IsZero() {
+		sm.UpdatedAt = time.Now()
+	}
+	return nil
+}
+
+type MessageReminder struct {
+	ID          uuid.UUID `gorm:"type:uuid;primary_key" json:"id"`
+	UserID      uuid.UUID `gorm:"type:uuid;not null;index" json:"user_id"`
+	MessageID   uuid.UUID `gorm:"type:uuid;not null;index" json:"message_id"`
+	RemindAt    time.Time `gorm:"not null;index" json:"remind_at"`
+	IsTriggered bool      `gorm:"default:false" json:"is_triggered"`
+	CreatedAt   time.Time `json:"created_at"`
+
+	User    User    `gorm:"foreignKey:UserID" json:"-"`
+	Message Message `gorm:"foreignKey:MessageID" json:"-"`
+}
+
+func (mr *MessageReminder) BeforeCreate(tx *gorm.DB) error {
+	if mr.ID == uuid.Nil {
+		mr.ID = uuid.New()
+	}
+	if mr.CreatedAt.IsZero() {
+		mr.CreatedAt = time.Now()
+	}
+	return nil
+}
+
+type RoomTemplate struct {
+	ID          uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	Name        string         `gorm:"size:100;not null;index" json:"name"`
+	Description string         `gorm:"size:500" json:"description"`
+	CategoryID  *uuid.UUID     `gorm:"type:uuid" json:"category_id"`
+	CreatedBy   uuid.UUID      `gorm:"type:uuid;not null;index" json:"created_by"`
+	Settings    string         `gorm:"type:jsonb" json:"settings"`
+	IsPublic    bool           `gorm:"default:false" json:"is_public"`
+	UseCount    int            `gorm:"default:0" json:"use_count"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+
+	Category Category `gorm:"foreignKey:CategoryID" json:"-"`
+	User     User     `gorm:"foreignKey:CreatedBy" json:"-"`
+}
+
+func (rt *RoomTemplate) BeforeCreate(tx *gorm.DB) error {
+	if rt.ID == uuid.Nil {
+		rt.ID = uuid.New()
+	}
+	if rt.CreatedAt.IsZero() {
+		rt.CreatedAt = time.Now()
+	}
+	if rt.UpdatedAt.IsZero() {
+		rt.UpdatedAt = time.Now()
+	}
+	return nil
+}
+
+type PrivacyLevel string
+
+const (
+	PrivacyLevelEveryone PrivacyLevel = "everyone"
+	PrivacyLevelFriends  PrivacyLevel = "friends"
+	PrivacyLevelNobody   PrivacyLevel = "nobody"
+)
+
+type UserPrivacySettings struct {
+	ID                    uuid.UUID `gorm:"type:uuid;primary_key" json:"id"`
+	UserID                uuid.UUID `gorm:"type:uuid;not null;uniqueIndex" json:"user_id"`
+	AllowDirectMessages   string    `gorm:"size:20;default:'everyone'" json:"allow_direct_messages"`
+	AllowRoomInvites      string    `gorm:"size:20;default:'everyone'" json:"allow_room_invites"`
+	AllowVoiceCalls       string    `gorm:"size:20;default:'everyone'" json:"allow_voice_calls"`
+	ShowOnlineStatus      bool      `gorm:"default:true" json:"show_online_status"`
+	ShowReadReceipts      bool      `gorm:"default:true" json:"show_read_receipts"`
+	ShowTypingIndicator   bool      `gorm:"default:true" json:"show_typing_indicator"`
+	AllowSearchByEmail    bool      `gorm:"default:false" json:"allow_search_by_email"`
+	AllowSearchByUsername bool      `gorm:"default:true" json:"allow_search_by_username"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
+
+	User User `gorm:"foreignKey:UserID" json:"-"`
+}
+
+func (ups *UserPrivacySettings) BeforeCreate(tx *gorm.DB) error {
+	if ups.ID == uuid.Nil {
+		ups.ID = uuid.New()
+	}
+	if ups.CreatedAt.IsZero() {
+		ups.CreatedAt = time.Now()
+	}
+	if ups.UpdatedAt.IsZero() {
+		ups.UpdatedAt = time.Now()
+	}
+	return nil
+}
