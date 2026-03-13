@@ -264,7 +264,7 @@ func (h *TwoFactorHandler) Verify(w http.ResponseWriter, r *http.Request) {
 		if err := h.db.Where("user_id = ?", userID).First(&recovery).Error; err == nil {
 			codes := parseRecoveryCodes(recovery.Codes)
 			for _, c := range codes {
-				if subtle.ConstantTimeCompare([]byte(c.Hashed), []byte(req.Code)) == 1 {
+				if subtle.ConstantTimeCompare([]byte(c.Code), []byte(req.Code)) == 1 {
 					isValid = true
 					break
 				}
