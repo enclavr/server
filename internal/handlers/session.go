@@ -51,12 +51,12 @@ func (h *SessionHandler) GetSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	currentToken := r.Header.Get("Authorization")
-	currentSessionID := ""
+	var currentSessionID uuid.UUID
 
 	if len(currentToken) > 7 && currentToken[:7] == "Bearer " {
 		claims, err := h.auth.ValidateToken(currentToken[7:])
 		if err == nil {
-			currentSessionID = claims.UserID.String()
+			currentSessionID = claims.SessionID
 		}
 	}
 
@@ -68,7 +68,7 @@ func (h *SessionHandler) GetSessions(w http.ResponseWriter, r *http.Request) {
 			ExpiresAt: s.ExpiresAt,
 			IPAddress: s.IPAddress,
 			UserAgent: s.UserAgent,
-			Current:   s.Token == currentSessionID,
+			Current:   s.ID == currentSessionID && time.Now().Before(s.ExpiresAt),
 		}
 	}
 
@@ -146,7 +146,8 @@ func (h *SessionHandler) RotateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accessToken, err := h.auth.GenerateToken(&user)
+	sessionID := uuid.New()
+	accessToken, err := h.auth.GenerateToken(&user, sessionID)
 	if err != nil {
 		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
 		return
@@ -159,6 +160,17 @@ func (h *SessionHandler) RotateToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.storeRefreshToken(userID, refreshToken)
+
+	session := models.Session{
+		ID:        sessionID,
+		UserID:    userID,
+		Token:     accessToken,
+		ExpiresAt: time.Now().Add(h.cfg.JWTExpiration),
+		CreatedAt: time.Now(),
+		IPAddress: r.RemoteAddr,
+		UserAgent: r.UserAgent(),
+	}
+	h.db.Create(&session)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{

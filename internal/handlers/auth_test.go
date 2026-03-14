@@ -50,7 +50,8 @@ func setupTestHandler(t *testing.T) *AuthHandler {
 	oauthService := services.NewOAuthService(authCfg)
 	testDB := &database.Database{DB: db}
 	cfg := &config.Config{}
-	handler := NewAuthHandler(testDB, authService, emailService, oauthService, cfg, false)
+	loginTracker := auth.NewLoginAttemptTracker(5, 15*time.Minute, 15*time.Minute)
+	handler := NewAuthHandler(testDB, authService, emailService, oauthService, cfg, false, loginTracker)
 	return handler
 }
 
@@ -311,7 +312,8 @@ func setupAdminHandler(t *testing.T) *AuthHandler {
 	oauthService := services.NewOAuthService(authCfg)
 	testDB := &database.Database{DB: db}
 	cfg := &config.Config{}
-	return NewAuthHandler(testDB, authService, emailService, oauthService, cfg, true)
+	loginTracker := auth.NewLoginAttemptTracker(5, 15*time.Minute, 15*time.Minute)
+	return NewAuthHandler(testDB, authService, emailService, oauthService, cfg, true, loginTracker)
 }
 
 // TestRegister_FirstUserIsAdmin_Enabled verifies that when firstIsAdmin=true,

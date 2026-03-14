@@ -131,8 +131,9 @@ func main() {
 	}
 	emailService := services.NewEmailService(emailServiceConfig)
 	oauthService := services.NewOAuthService(&cfg.Auth)
+	loginTracker := auth.NewLoginAttemptTracker(5, 15*time.Minute, 15*time.Minute)
 
-	authHandler := handlers.NewAuthHandler(db, authService, emailService, oauthService, cfg, cfg.Admin.FirstIsAdmin)
+	authHandler := handlers.NewAuthHandler(db, authService, emailService, oauthService, cfg, cfg.Admin.FirstIsAdmin, loginTracker)
 	roomHandler := handlers.NewRoomHandler(db)
 	voiceHandler := handlers.NewVoiceHandler(db, hub, cfg)
 	oidcHandler := handlers.NewOIDCHandler(db, &cfg.Auth)

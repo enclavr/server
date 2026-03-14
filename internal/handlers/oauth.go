@@ -201,7 +201,7 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.sendAuthResponse(w, user)
+	h.sendAuthResponse(w, user, r)
 }
 
 func (h *OAuthHandler) handleGoogleUser(ctx context.Context, token *oauth2.Token) (*models.User, error) {
@@ -354,8 +354,9 @@ func (h *OAuthHandler) findOrCreateOAuthUser(email, name, avatarURL, provider, p
 	return &user, nil
 }
 
-func (h *OAuthHandler) sendAuthResponse(w http.ResponseWriter, user *models.User) {
-	accessToken, err := h.authService.GenerateToken(user)
+func (h *OAuthHandler) sendAuthResponse(w http.ResponseWriter, user *models.User, r *http.Request) {
+	sessionID := uuid.New()
+	accessToken, err := h.authService.GenerateToken(user, sessionID)
 	if err != nil {
 		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
 		return
@@ -366,6 +367,17 @@ func (h *OAuthHandler) sendAuthResponse(w http.ResponseWriter, user *models.User
 		http.Error(w, "Failed to generate refresh token", http.StatusInternalServerError)
 		return
 	}
+
+	session := models.Session{
+		ID:        sessionID,
+		UserID:    user.ID,
+		Token:     accessToken,
+		ExpiresAt: time.Now().Add(h.cfg.JWTExpiration),
+		CreatedAt: time.Now(),
+		IPAddress: r.RemoteAddr,
+		UserAgent: r.UserAgent(),
+	}
+	h.db.Create(&session)
 
 	response := map[string]interface{}{
 		"access_token":  accessToken,

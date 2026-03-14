@@ -26,9 +26,10 @@ type AuthHandler struct {
 	oauthService *services.OAuthService
 	cfg          *config.Config
 	firstIsAdmin bool
+	loginTracker *auth.LoginAttemptTracker
 }
 
-func NewAuthHandler(db *database.Database, authService *auth.AuthService, emailService *services.EmailService, oauthService *services.OAuthService, cfg *config.Config, firstIsAdmin bool) *AuthHandler {
+func NewAuthHandler(db *database.Database, authService *auth.AuthService, emailService *services.EmailService, oauthService *services.OAuthService, cfg *config.Config, firstIsAdmin bool, loginTracker *auth.LoginAttemptTracker) *AuthHandler {
 	return &AuthHandler{
 		db:           db,
 		authService:  authService,
@@ -36,6 +37,7 @@ func NewAuthHandler(db *database.Database, authService *auth.AuthService, emailS
 		oauthService: oauthService,
 		cfg:          cfg,
 		firstIsAdmin: firstIsAdmin,
+		loginTracker: loginTracker,
 	}
 }
 
@@ -163,7 +165,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.sendAuthResponse(w, &user)
+	h.sendAuthResponse(w, &user, r)
 }
 
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
@@ -178,10 +180,19 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	identifier := req.Username
+	if h.loginTracker != nil && h.loginTracker.IsLockedOut(identifier) {
+		http.Error(w, "Too many login attempts, please try again later", http.StatusTooManyRequests)
+		return
+	}
+
 	var user models.User
 	if err := h.db.Where("username = ? OR email = ?", req.Username, req.Username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			h.authService.CheckPassword(req.Password, "")
+			if h.loginTracker != nil {
+				h.loginTracker.RecordFailure(identifier)
+			}
 			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 			return
 		}
@@ -190,8 +201,15 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !h.authService.CheckPassword(req.Password, user.PasswordHash) {
+		if h.loginTracker != nil {
+			h.loginTracker.RecordFailure(identifier)
+		}
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
+	}
+
+	if h.loginTracker != nil {
+		h.loginTracker.RecordSuccess(identifier)
 	}
 
 	if user.TwoFactorEnabled {
@@ -200,7 +218,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.sendAuthResponse(w, &user)
+	h.sendAuthResponse(w, &user, r)
 }
 
 func (h *AuthHandler) LoginWith2FA(w http.ResponseWriter, r *http.Request) {
@@ -230,7 +248,7 @@ func (h *AuthHandler) LoginWith2FA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.sendAuthResponse(w, &user)
+	h.sendAuthResponse(w, &user, r)
 }
 
 func (h *AuthHandler) OAuthBegin(w http.ResponseWriter, r *http.Request) {
@@ -303,7 +321,7 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.sendAuthResponse(w, user)
+	h.sendAuthResponse(w, user, r)
 }
 
 func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
@@ -327,11 +345,12 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 
 	h.db.Where("user_id = ? AND token = ?", user.ID, req.RefreshToken).Delete(&models.RefreshToken{})
 
-	h.sendAuthResponse(w, &user)
+	h.sendAuthResponse(w, &user, r)
 }
 
-func (h *AuthHandler) sendAuthResponse(w http.ResponseWriter, user *models.User) {
-	accessToken, err := h.authService.GenerateToken(user)
+func (h *AuthHandler) sendAuthResponse(w http.ResponseWriter, user *models.User, r *http.Request) {
+	sessionID := uuid.New()
+	accessToken, err := h.authService.GenerateToken(user, sessionID)
 	if err != nil {
 		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
 		return
@@ -342,6 +361,17 @@ func (h *AuthHandler) sendAuthResponse(w http.ResponseWriter, user *models.User)
 		http.Error(w, "Failed to generate refresh token", http.StatusInternalServerError)
 		return
 	}
+
+	session := models.Session{
+		ID:        sessionID,
+		UserID:    user.ID,
+		Token:     accessToken,
+		ExpiresAt: time.Now().Add(h.cfg.Auth.JWTExpiration),
+		CreatedAt: time.Now(),
+		IPAddress: r.RemoteAddr,
+		UserAgent: r.UserAgent(),
+	}
+	h.db.Create(&session)
 
 	response := AuthResponse{
 		AccessToken:  accessToken,

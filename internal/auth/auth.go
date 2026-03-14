@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 	"unicode"
 
@@ -26,6 +27,7 @@ var (
 	Err2FARequired         = errors.New("2FA verification required")
 	ErrWeakPassword        = errors.New("password does not meet complexity requirements")
 	ErrInvalidRecoveryCode = errors.New("invalid recovery code")
+	ErrTooManyAttempts     = errors.New("too many login attempts, please try again later")
 )
 
 const (
@@ -37,9 +39,10 @@ const (
 )
 
 type Claims struct {
-	UserID   uuid.UUID `json:"user_id"`
-	Username string    `json:"username"`
-	IsAdmin  bool      `json:"is_admin"`
+	UserID    uuid.UUID `json:"user_id"`
+	SessionID uuid.UUID `json:"session_id,omitempty"`
+	Username  string    `json:"username"`
+	IsAdmin   bool      `json:"is_admin"`
 	jwt.RegisteredClaims
 }
 
@@ -103,7 +106,7 @@ func (s *AuthService) ValidatePasswordStrength(password string) error {
 	return nil
 }
 
-func (s *AuthService) GenerateToken(user *models.User) (string, error) {
+func (s *AuthService) GenerateToken(user *models.User, sessionID ...uuid.UUID) (string, error) {
 	claims := Claims{
 		UserID:   user.ID,
 		Username: user.Username,
@@ -113,6 +116,10 @@ func (s *AuthService) GenerateToken(user *models.User) (string, error) {
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			Issuer:    "enclavr",
 		},
+	}
+
+	if len(sessionID) > 0 {
+		claims.SessionID = sessionID[0]
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -272,4 +279,99 @@ func ConstantTimeCompare(a, b string) bool {
 func (s *AuthService) ValidateRecoveryCode(storedHash, providedCode string) bool {
 	err := bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(providedCode))
 	return err == nil
+}
+
+type LoginAttempt struct {
+	Count        int
+	FirstAttempt time.Time
+	LockoutUntil time.Time
+}
+
+type LoginAttemptTracker struct {
+	attempts        map[string]*LoginAttempt
+	mu              sync.RWMutex
+	maxAttempts     int
+	lockoutDuration time.Duration
+	windowDuration  time.Duration
+}
+
+func NewLoginAttemptTracker(maxAttempts int, lockoutDuration, windowDuration time.Duration) *LoginAttemptTracker {
+	t := &LoginAttemptTracker{
+		attempts:        make(map[string]*LoginAttempt),
+		maxAttempts:     maxAttempts,
+		lockoutDuration: lockoutDuration,
+		windowDuration:  windowDuration,
+	}
+	go t.cleanup()
+	return t
+}
+
+func (t *LoginAttemptTracker) cleanup() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		t.mu.Lock()
+		now := time.Now()
+		for key, attempt := range t.attempts {
+			if now.Sub(attempt.FirstAttempt) > t.windowDuration*2 {
+				delete(t.attempts, key)
+			}
+		}
+		t.mu.Unlock()
+	}
+}
+
+func (t *LoginAttemptTracker) RecordFailure(identifier string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	now := time.Now()
+	attempt, exists := t.attempts[identifier]
+	if !exists {
+		t.attempts[identifier] = &LoginAttempt{
+			Count:        1,
+			FirstAttempt: now,
+		}
+		return
+	}
+
+	if now.Sub(attempt.FirstAttempt) > t.windowDuration {
+		t.attempts[identifier] = &LoginAttempt{
+			Count:        1,
+			FirstAttempt: now,
+		}
+		return
+	}
+
+	attempt.Count++
+	if attempt.Count >= t.maxAttempts {
+		attempt.LockoutUntil = now.Add(t.lockoutDuration)
+	}
+}
+
+func (t *LoginAttemptTracker) RecordSuccess(identifier string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.attempts, identifier)
+}
+
+func (t *LoginAttemptTracker) IsLockedOut(identifier string) bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	attempt, exists := t.attempts[identifier]
+	if !exists {
+		return false
+	}
+
+	now := time.Now()
+	if now.Before(attempt.LockoutUntil) {
+		return true
+	}
+
+	if now.Sub(attempt.FirstAttempt) > t.windowDuration {
+		return false
+	}
+
+	return attempt.Count >= t.maxAttempts
 }
