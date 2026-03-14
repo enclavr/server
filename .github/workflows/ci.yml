@@ -55,9 +55,10 @@ jobs:
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
           POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
 
-      - name: Run tests with SQLite (fallback)
-        if: env.POSTGRES_HOST == ''
-        run: go test -v -race -coverprofile=coverage.out ./...
+      - name: Run tests with SQLite
+        run: |
+          # Skip tests that require PostgreSQL or Redis when using SQLite
+          go test -v -race -coverprofile=coverage.out -skip "TestRedis|TestPostgres|TestExtension" ./...
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4
