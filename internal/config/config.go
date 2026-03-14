@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -98,6 +99,11 @@ func Load() *Config {
 	var allowedOrigins []string
 	if allowedOriginsEnv != "" {
 		allowedOrigins = strings.Split(allowedOriginsEnv, ",")
+	}
+
+	jwtSecret := getEnv("JWT_SECRET", "")
+	if jwtSecret == "" || jwtSecret == "your-secret-key-change-in-production" {
+		log.Fatal("FATAL: JWT_SECRET must be set and not be the default value. Set JWT_SECRET environment variable.")
 	}
 
 	return &Config{

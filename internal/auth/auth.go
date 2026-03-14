@@ -5,7 +5,9 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"time"
+	"unicode"
 
 	"github.com/enclavr/server/internal/config"
 	"github.com/enclavr/server/internal/models"
@@ -17,11 +19,21 @@ import (
 )
 
 var (
-	ErrInvalidCredentials = errors.New("invalid credentials")
-	ErrTokenExpired       = errors.New("token expired")
-	ErrInvalidToken       = errors.New("invalid token")
-	ErrInvalid2FA         = errors.New("invalid 2FA code")
-	Err2FARequired        = errors.New("2FA verification required")
+	ErrInvalidCredentials  = errors.New("invalid credentials")
+	ErrTokenExpired        = errors.New("token expired")
+	ErrInvalidToken        = errors.New("invalid token")
+	ErrInvalid2FA          = errors.New("invalid 2FA code")
+	Err2FARequired         = errors.New("2FA verification required")
+	ErrWeakPassword        = errors.New("password does not meet complexity requirements")
+	ErrInvalidRecoveryCode = errors.New("invalid recovery code")
+)
+
+const (
+	MinPasswordLength = 8
+	RequireUppercase  = true
+	RequireLowercase  = true
+	RequireNumber     = true
+	RequireSpecial    = true
 )
 
 type Claims struct {
@@ -53,6 +65,42 @@ func (s *AuthService) HashPassword(password string) (string, error) {
 func (s *AuthService) CheckPassword(password, hash string) bool {
 	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
 	return err == nil
+}
+
+func (s *AuthService) ValidatePasswordStrength(password string) error {
+	if len(password) < MinPasswordLength {
+		return fmt.Errorf("password must be at least %d characters", MinPasswordLength)
+	}
+
+	var hasUpper, hasLower, hasNumber, hasSpecial bool
+
+	for _, char := range password {
+		switch {
+		case unicode.IsUpper(char):
+			hasUpper = true
+		case unicode.IsLower(char):
+			hasLower = true
+		case unicode.IsNumber(char):
+			hasNumber = true
+		case unicode.IsPunct(char) || unicode.IsSymbol(char):
+			hasSpecial = true
+		}
+	}
+
+	if RequireUppercase && !hasUpper {
+		return errors.New("password must contain at least one uppercase letter")
+	}
+	if RequireLowercase && !hasLower {
+		return errors.New("password must contain at least one lowercase letter")
+	}
+	if RequireNumber && !hasNumber {
+		return errors.New("password must contain at least one number")
+	}
+	if RequireSpecial && !hasSpecial {
+		return errors.New("password must contain at least one special character")
+	}
+
+	return nil
 }
 
 func (s *AuthService) GenerateToken(user *models.User) (string, error) {
@@ -219,4 +267,9 @@ func (s *AuthService) GenerateRecoveryCodes() ([]string, error) {
 
 func ConstantTimeCompare(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+func (s *AuthService) ValidateRecoveryCode(storedHash, providedCode string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(providedCode))
+	return err == nil
 }

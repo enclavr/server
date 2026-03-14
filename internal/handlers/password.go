@@ -19,16 +19,18 @@ import (
 )
 
 type PasswordResetHandler struct {
-	db    *database.Database
-	cfg   *config.AuthConfig
-	email *config.EmailConfig
+	db          *database.Database
+	authService *auth.AuthService
+	cfg         *config.AuthConfig
+	email       *config.EmailConfig
 }
 
-func NewPasswordResetHandler(db *database.Database, cfg *config.AuthConfig, email *config.EmailConfig) *PasswordResetHandler {
+func NewPasswordResetHandler(db *database.Database, authService *auth.AuthService, cfg *config.AuthConfig, email *config.EmailConfig) *PasswordResetHandler {
 	return &PasswordResetHandler{
-		db:    db,
-		cfg:   cfg,
-		email: email,
+		db:          db,
+		authService: authService,
+		cfg:         cfg,
+		email:       email,
 	}
 }
 
@@ -98,8 +100,8 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if len(req.NewPassword) < 8 {
-		http.Error(w, "Password must be at least 8 characters", http.StatusBadRequest)
+	if err := h.authService.ValidatePasswordStrength(req.NewPassword); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -116,7 +118,7 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	hashedPassword, err := auth.NewAuthService(h.cfg).HashPassword(req.NewPassword)
+	hashedPassword, err := h.authService.HashPassword(req.NewPassword)
 	if err != nil {
 		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
 		return
@@ -359,8 +361,8 @@ func (h *PasswordResetHandler) ChangePassword(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if len(req.NewPassword) < 8 {
-		http.Error(w, "Password must be at least 8 characters", http.StatusBadRequest)
+	if err := h.authService.ValidatePasswordStrength(req.NewPassword); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -371,14 +373,13 @@ func (h *PasswordResetHandler) ChangePassword(w http.ResponseWriter, r *http.Req
 	}
 
 	if user.PasswordHash != "" {
-		authService := auth.NewAuthService(h.cfg)
-		if !authService.CheckPassword(req.OldPassword, user.PasswordHash) {
+		if !h.authService.CheckPassword(req.OldPassword, user.PasswordHash) {
 			http.Error(w, "Current password is incorrect", http.StatusUnauthorized)
 			return
 		}
 	}
 
-	hashedPassword, err := auth.NewAuthService(h.cfg).HashPassword(req.NewPassword)
+	hashedPassword, err := h.authService.HashPassword(req.NewPassword)
 	if err != nil {
 		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
 		return

@@ -117,8 +117,8 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.Password) < 8 {
-		http.Error(w, "Password must be at least 8 characters", http.StatusBadRequest)
+	if err := h.authService.ValidatePasswordStrength(req.Password); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -324,6 +324,8 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
 	}
+
+	h.db.Where("user_id = ? AND token = ?", user.ID, req.RefreshToken).Delete(&models.RefreshToken{})
 
 	h.sendAuthResponse(w, &user)
 }
@@ -589,8 +591,8 @@ func (h *AuthHandler) CompletePasswordReset(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if len(req.NewPassword) < 8 {
-		http.Error(w, "Password must be at least 8 characters", http.StatusBadRequest)
+	if err := h.authService.ValidatePasswordStrength(req.NewPassword); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -733,8 +735,8 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.NewPassword) < 8 {
-		http.Error(w, "Password must be at least 8 characters", http.StatusBadRequest)
+	if err := h.authService.ValidatePasswordStrength(req.NewPassword); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -757,6 +759,8 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	h.db.Model(&user).Update("password_hash", hashedPassword)
 
+	h.db.Where("user_id = ?", user.ID).Delete(&models.RefreshToken{})
+
 	if h.emailService != nil && h.emailService.IsEnabled() {
 		_ = h.emailService.SendPasswordChangedEmail(r.Context(), services.EmailRecipient{
 			To:   user.Email,
@@ -767,7 +771,7 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"message": "Password changed successfully",
+		"message": "Password changed successfully, all sessions have been invalidated",
 	})
 }
 

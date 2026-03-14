@@ -137,7 +137,7 @@ func main() {
 	voiceHandler := handlers.NewVoiceHandler(db, hub, cfg)
 	oidcHandler := handlers.NewOIDCHandler(db, &cfg.Auth)
 	oauthHandler := handlers.NewOAuthHandler(db, authService, &cfg.Auth)
-	passwordResetHandler := handlers.NewPasswordResetHandler(db, &cfg.Auth, &cfg.Email)
+	passwordResetHandler := handlers.NewPasswordResetHandler(db, authService, &cfg.Auth, &cfg.Email)
 	emailVerificationHandler := handlers.NewEmailVerificationHandler(db, &cfg.Auth, &cfg.Email)
 	twoFactorHandler := handlers.NewTwoFactorHandler(db, authService, &cfg.Auth)
 	sessionHandler := handlers.NewSessionHandler(db, &cfg.Auth, authService)
