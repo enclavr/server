@@ -2380,3 +2380,432 @@ func TestClient_HandleGetNotifications(t *testing.T) {
 		t.Error("timeout waiting for notifications")
 	}
 }
+
+func TestClient_HandleTypingWithContext(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID1 := uuid.New()
+	userID2 := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client1 := &Client{
+		hub:    hub,
+		userID: userID1,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	client2 := &Client{
+		hub:    hub,
+		userID: userID2,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.rooms[roomID].clients[client1] = true
+	hub.rooms[roomID].clients[client2] = true
+	hub.userConnections[userID1] = client1
+	hub.userConnections[userID2] = client2
+	hub.activeClients.Add(2)
+	hub.mutex.Unlock()
+
+	payload, _ := json.Marshal(TypingEvent{
+		ChannelID:   "channel-123",
+		ContextType: "channel",
+		IsTyping:    true,
+	})
+	msg := &Message{
+		Type:      "typing-with-context",
+		UserID:    userID1,
+		RoomID:    roomID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+	}
+
+	client1.handleTypingWithContext(msg)
+
+	select {
+	case received := <-client2.send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "typing-with-context" {
+			t.Errorf("expected typing-with-context, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for typing with context message")
+	}
+}
+
+func TestClient_HandlePresenceBulk(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID1 := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.userConnections[userID1] = &Client{
+		hub:    hub,
+		userID: userID1,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	hub.activeClients.Add(1)
+
+	hub.setUserPresence(userID1, roomID, "online")
+	hub.mutex.Unlock()
+
+	userIDs := []uuid.UUID{userID1, uuid.New()}
+	payload, _ := json.Marshal(map[string]interface{}{"user_ids": userIDs})
+	msg := &Message{
+		Type:      "presence-bulk",
+		UserID:    userID1,
+		RoomID:    roomID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+	}
+
+	client := hub.userConnections[userID1]
+	client.handlePresenceBulk(msg)
+
+	select {
+	case received := <-client.send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "presence-bulk-response" {
+			t.Errorf("expected presence-bulk-response, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for presence bulk response")
+	}
+}
+
+func TestClient_HandleUserKicked(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID1 := uuid.New()
+	userID2 := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client1 := &Client{
+		hub:    hub,
+		userID: userID1,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	client2 := &Client{
+		hub:    hub,
+		userID: userID2,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.rooms[roomID].clients[client1] = true
+	hub.rooms[roomID].clients[client2] = true
+	hub.userConnections[userID1] = client1
+	hub.userConnections[userID2] = client2
+	hub.activeClients.Add(2)
+	hub.mutex.Unlock()
+
+	payload, _ := json.Marshal(map[string]string{
+		"target_user_id": userID2.String(),
+		"reason":         "Violation of rules",
+	})
+	msg := &Message{
+		Type:      "user-kicked",
+		UserID:    userID1,
+		RoomID:    roomID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+	}
+
+	client1.handleUserKicked(msg)
+
+	select {
+	case received := <-client2.send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "user-kicked" {
+			t.Errorf("expected user-kicked, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for kick notification")
+	}
+}
+
+func TestClient_HandleUserBanned(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID1 := uuid.New()
+	userID2 := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client1 := &Client{
+		hub:    hub,
+		userID: userID1,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	client2 := &Client{
+		hub:    hub,
+		userID: userID2,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.rooms[roomID].clients[client1] = true
+	hub.rooms[roomID].clients[client2] = true
+	hub.userConnections[userID1] = client1
+	hub.userConnections[userID2] = client2
+	hub.activeClients.Add(2)
+	hub.mutex.Unlock()
+
+	payload, _ := json.Marshal(map[string]string{
+		"target_user_id": userID2.String(),
+		"reason":         "Repeated violations",
+		"duration":       "permanent",
+	})
+	msg := &Message{
+		Type:      "user-banned",
+		UserID:    userID1,
+		RoomID:    roomID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+	}
+
+	client1.handleUserBanned(msg)
+
+	select {
+	case received := <-client2.send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "user-banned" {
+			t.Errorf("expected user-banned, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for ban notification")
+	}
+}
+
+func TestClient_HandleRoleChanged(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID1 := uuid.New()
+	userID2 := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client1 := &Client{
+		hub:    hub,
+		userID: userID1,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	client2 := &Client{
+		hub:    hub,
+		userID: userID2,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.rooms[roomID].clients[client1] = true
+	hub.rooms[roomID].clients[client2] = true
+	hub.userConnections[userID1] = client1
+	hub.userConnections[userID2] = client2
+	hub.activeClients.Add(2)
+	hub.mutex.Unlock()
+
+	payload, _ := json.Marshal(map[string]string{
+		"target_user_id": userID2.String(),
+		"old_role":       "member",
+		"new_role":       "moderator",
+	})
+	msg := &Message{
+		Type:      "role-changed",
+		UserID:    userID1,
+		RoomID:    roomID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+	}
+
+	client1.handleRoleChanged(msg)
+
+	select {
+	case received := <-client2.send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "role-changed" {
+			t.Errorf("expected role-changed, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for role change notification")
+	}
+}
+
+func TestClient_HandleGetRoomPresence(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID1 := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.userConnections[userID1] = &Client{
+		hub:    hub,
+		userID: userID1,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	hub.activeClients.Add(1)
+
+	hub.setUserPresence(userID1, roomID, "online")
+	hub.mutex.Unlock()
+
+	msg := &Message{
+		Type:      "get-room-presence",
+		UserID:    userID1,
+		RoomID:    roomID,
+		Timestamp: time.Now(),
+	}
+
+	client := hub.userConnections[userID1]
+	client.handleGetRoomPresence(msg)
+
+	select {
+	case received := <-client.send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "room-presence-list" {
+			t.Errorf("expected room-presence-list, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for room presence list")
+	}
+}
+
+func TestTypingEvent_Marshal(t *testing.T) {
+	event := TypingEvent{
+		UserID:      uuid.New(),
+		RoomID:      uuid.New(),
+		ChannelID:   "channel-123",
+		ContextType: "channel",
+		IsTyping:    true,
+		Timestamp:   time.Now(),
+	}
+
+	data, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	var decoded TypingEvent
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if decoded.ChannelID != event.ChannelID {
+		t.Errorf("expected ChannelID %s, got %s", event.ChannelID, decoded.ChannelID)
+	}
+	if decoded.IsTyping != event.IsTyping {
+		t.Errorf("expected IsTyping %v, got %v", event.IsTyping, decoded.IsTyping)
+	}
+}
+
+func TestRoomNotification_Kicked(t *testing.T) {
+	notification := RoomNotification{
+		ID:           uuid.New().String(),
+		Type:         "user_kicked",
+		RoomID:       uuid.New(),
+		UserID:       uuid.New(),
+		TargetUserID: uuid.New(),
+		Message:      "You have been kicked",
+		Reason:       "Rule violation",
+		Timestamp:    time.Now(),
+		Read:         false,
+		Actionable:   false,
+	}
+
+	data, err := json.Marshal(notification)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	var decoded RoomNotification
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if decoded.Type != "user_kicked" {
+		t.Errorf("expected type user_kicked, got %s", decoded.Type)
+	}
+	if decoded.Reason != "Rule violation" {
+		t.Errorf("expected reason, got %s", decoded.Reason)
+	}
+}
+
+func TestRoomNotification_Banned(t *testing.T) {
+	notification := RoomNotification{
+		ID:           uuid.New().String(),
+		Type:         "user_banned",
+		RoomID:       uuid.New(),
+		UserID:       uuid.New(),
+		TargetUserID: uuid.New(),
+		Message:      "You have been banned",
+		Reason:       "Spam",
+		Duration:     "permanent",
+		Timestamp:    time.Now(),
+		Read:         false,
+		Actionable:   false,
+	}
+
+	data, err := json.Marshal(notification)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	var decoded RoomNotification
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if decoded.Type != "user_banned" {
+		t.Errorf("expected type user_banned, got %s", decoded.Type)
+	}
+	if decoded.Duration != "permanent" {
+		t.Errorf("expected duration permanent, got %s", decoded.Duration)
+	}
+}

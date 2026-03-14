@@ -115,6 +115,16 @@ type TypingPayload struct {
 	ThreadID  string `json:"thread_id,omitempty"`
 }
 
+type TypingEvent struct {
+	UserID      uuid.UUID `json:"user_id"`
+	RoomID      uuid.UUID `json:"room_id"`
+	ChannelID   string    `json:"channel_id,omitempty"`
+	ThreadID    string    `json:"thread_id,omitempty"`
+	ContextType string    `json:"context_type,omitempty"` // "room", "channel", "thread"
+	IsTyping    bool      `json:"is_typing"`
+	Timestamp   time.Time `json:"timestamp"`
+}
+
 type Hub struct {
 	rooms           map[uuid.UUID]*room
 	broadcast       chan *Message
@@ -1274,6 +1284,22 @@ func (c *Client) handleMessage(msg *Message) {
 		c.handleThreadMessageUpdated(msg)
 	case "thread-message-deleted":
 		c.handleThreadMessageDeleted(msg)
+	case "typing-with-context":
+		c.handleTypingWithContext(msg)
+	case "presence-bulk":
+		c.handlePresenceBulk(msg)
+	case "room-notification-event":
+		c.handleRoomNotificationEvent(msg)
+	case "get-room-presence":
+		c.handleGetRoomPresence(msg)
+	case "user-kicked":
+		c.handleUserKicked(msg)
+	case "user-banned":
+		c.handleUserBanned(msg)
+	case "role-changed":
+		c.handleRoleChanged(msg)
+	case "typing-bulk":
+		c.handleTypingBulk(msg)
 	default:
 		wsLogger.Warn("Unknown message type",
 			"connection_id", c.connectionID,
@@ -1536,11 +1562,14 @@ type OnlineUser struct {
 }
 
 type PresenceInfo struct {
-	UserID   uuid.UUID `json:"user_id"`
-	Status   string    `json:"status"` // "online", "idle", "away", "dnd", "offline"
-	Since    time.Time `json:"since"`
-	Activity string    `json:"activity,omitempty"`
-	Custom   string    `json:"custom_status,omitempty"`
+	UserID        uuid.UUID `json:"user_id"`
+	Status        string    `json:"status"` // "online", "idle", "away", "dnd", "offline"
+	Since         time.Time `json:"since"`
+	Activity      string    `json:"activity,omitempty"`
+	CustomStatus  string    `json:"custom_status,omitempty"`
+	Device        string    `json:"device,omitempty"`    // "mobile", "desktop", "web"
+	LastSeen      time.Time `json:"last_seen,omitempty"` // For offline users
+	ClientVersion string    `json:"client_version,omitempty"`
 }
 
 type RoomEvent struct {
@@ -1552,14 +1581,18 @@ type RoomEvent struct {
 }
 
 type RoomNotification struct {
-	ID         string    `json:"id"`
-	Type       string    `json:"type"` // "user_joined", "user_left", "typing", "mention", "message"
-	RoomID     uuid.UUID `json:"room_id"`
-	UserID     uuid.UUID `json:"user_id,omitempty"`
-	Message    string    `json:"message,omitempty"`
-	Timestamp  time.Time `json:"timestamp"`
-	Read       bool      `json:"read"`
-	Actionable bool      `json:"actionable"`
+	ID           string          `json:"id"`
+	Type         string          `json:"type"` // "user_joined", "user_left", "typing", "mention", "message", "user_kicked", "user_banned", "role_changed", "room_archived"
+	RoomID       uuid.UUID       `json:"room_id"`
+	UserID       uuid.UUID       `json:"user_id,omitempty"`
+	TargetUserID uuid.UUID       `json:"target_user_id,omitempty"`
+	Message      string          `json:"message,omitempty"`
+	Timestamp    time.Time       `json:"timestamp"`
+	Read         bool            `json:"read"`
+	Actionable   bool            `json:"actionable"`
+	Reason       string          `json:"reason,omitempty"`
+	Duration     string          `json:"duration,omitempty"` // For bans: "permanent" or "24h", "7d", etc.
+	Payload      json.RawMessage `json:"payload,omitempty"`
 }
 
 type RoomNotificationSettings struct {
@@ -2028,7 +2061,11 @@ func (c *Client) handleTypingStart(msg *Message) {
 	var payload TypingIndicator
 	if len(msg.Payload) > 0 {
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
-			log.Printf("[Connection %s] Error parsing typing indicator payload: %v", c.connectionID, err)
+			wsLogger.Warn("Error parsing typing indicator payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			c.sendErrorMessage("Invalid typing payload format")
 			return
 		}
 	}
@@ -2044,7 +2081,13 @@ func (c *Client) handleTypingStart(msg *Message) {
 		Timestamp: time.Now(),
 	}
 
-	payloadBytes, _ := json.Marshal(typingPayload)
+	payloadBytes, err := json.Marshal(typingPayload)
+	if err != nil {
+		wsLogger.Error("Error marshaling typing payload",
+			"connection_id", c.connectionID,
+			"error", err)
+		return
+	}
 	notifyMsg := &Message{
 		Type:      "user-typing-start",
 		RoomID:    c.roomID,
@@ -2056,7 +2099,10 @@ func (c *Client) handleTypingStart(msg *Message) {
 	if c.hub.enableRedis {
 		c.hub.publishToRedis(notifyMsg)
 	}
-	log.Printf("[Connection %s] User %s started typing in context: %s", c.connectionID, c.userID, payload.Context)
+	wsLogger.Debug("User started typing",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"context", payload.Context)
 }
 
 func (c *Client) handleTypingStop(msg *Message) {
@@ -2069,7 +2115,13 @@ func (c *Client) handleTypingStop(msg *Message) {
 		Timestamp: time.Now(),
 	}
 
-	payloadBytes, _ := json.Marshal(typingPayload)
+	payloadBytes, err := json.Marshal(typingPayload)
+	if err != nil {
+		wsLogger.Error("Error marshaling typing stop payload",
+			"connection_id", c.connectionID,
+			"error", err)
+		return
+	}
 	notifyMsg := &Message{
 		Type:      "user-typing-stop",
 		RoomID:    c.roomID,
@@ -2081,7 +2133,9 @@ func (c *Client) handleTypingStop(msg *Message) {
 	if c.hub.enableRedis {
 		c.hub.publishToRedis(notifyMsg)
 	}
-	log.Printf("[Connection %s] User %s stopped typing", c.connectionID, c.userID)
+	wsLogger.Debug("User stopped typing",
+		"connection_id", c.connectionID,
+		"user_id", c.userID)
 }
 
 func (c *Client) handleSubscribeRoomEvents(msg *Message) {
@@ -2920,4 +2974,462 @@ func (c *Client) handleThreadMessageDeleted(msg *Message) {
 		"connection_id", c.connectionID,
 		"user_id", c.userID,
 		"message_id", payload.MessageID)
+}
+
+func (c *Client) handleTypingWithContext(msg *Message) {
+	var payload TypingEvent
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing typing with context payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			c.sendErrorMessage("Invalid typing payload format")
+			return
+		}
+	}
+
+	if payload.IsTyping {
+		contextStr := payload.ContextType
+		if payload.ChannelID != "" {
+			contextStr = "channel:" + payload.ChannelID
+		} else if payload.ThreadID != "" {
+			contextStr = "thread:" + payload.ThreadID
+		}
+		c.hub.setTypingUser(c.userID, c.roomID, contextStr)
+	} else {
+		c.hub.clearTypingUser(c.userID)
+	}
+
+	payload.UserID = c.userID
+	payload.RoomID = c.roomID
+	payload.Timestamp = time.Now()
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		wsLogger.Error("Error marshaling typing with context payload",
+			"connection_id", c.connectionID,
+			"error", err)
+		return
+	}
+
+	notifyMsg := &Message{
+		Type:      "typing-with-context",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+
+	wsLogger.Debug("Typing with context",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"is_typing", payload.IsTyping,
+		"context", payload.ContextType)
+}
+
+func (c *Client) handlePresenceBulk(msg *Message) {
+	var payload struct {
+		UserIDs []uuid.UUID `json:"user_ids"`
+	}
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing presence bulk payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			c.sendErrorMessage("Invalid payload format")
+			return
+		}
+	}
+
+	presences := make([]PresenceInfo, 0, len(payload.UserIDs))
+	for _, uid := range payload.UserIDs {
+		if status, exists := c.hub.GetUserPresence(uid); exists {
+			presences = append(presences, PresenceInfo{
+				UserID: uid,
+				Status: status,
+				Since:  time.Now(),
+			})
+		} else {
+			presences = append(presences, PresenceInfo{
+				UserID: uid,
+				Status: "offline",
+				Since:  time.Now(),
+			})
+		}
+	}
+
+	payloadBytes, err := json.Marshal(presences)
+	if err != nil {
+		wsLogger.Error("Error marshaling presence bulk response",
+			"connection_id", c.connectionID,
+			"error", err)
+		return
+	}
+
+	responseMsg := &Message{
+		Type:      "presence-bulk-response",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, responseMsg)
+
+	wsLogger.Debug("Sent presence bulk response",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"count", len(presences))
+}
+
+func (c *Client) handleRoomNotificationEvent(msg *Message) {
+	var payload RoomNotification
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing room notification event payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			c.sendErrorMessage("Invalid notification payload format")
+			return
+		}
+	}
+
+	payload.RoomID = c.roomID
+	payload.UserID = c.userID
+	payload.Timestamp = time.Now()
+
+	if payload.ID == "" {
+		payload.ID = uuid.New().String()
+	}
+
+	notificationStore.Add(c.userID, payload)
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		wsLogger.Error("Error marshaling room notification event",
+			"connection_id", c.connectionID,
+			"error", err)
+		return
+	}
+
+	notifyMsg := &Message{
+		Type:      "room-notification-event",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+
+	wsLogger.Info("Room notification event",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"type", payload.Type)
+}
+
+func (c *Client) handleGetRoomPresence(msg *Message) {
+	presenceList := c.hub.GetRoomPresence(c.roomID)
+
+	presences := make([]PresenceInfo, 0, len(presenceList))
+	for _, p := range presenceList {
+		presences = append(presences, PresenceInfo{
+			UserID:       p.UserID,
+			Status:       p.Status,
+			Since:        p.UpdatedAt,
+			CustomStatus: "",
+		})
+	}
+
+	payloadBytes, err := json.Marshal(presences)
+	if err != nil {
+		wsLogger.Error("Error marshaling room presence",
+			"connection_id", c.connectionID,
+			"error", err)
+		return
+	}
+
+	responseMsg := &Message{
+		Type:      "room-presence-list",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, responseMsg)
+
+	wsLogger.Debug("Sent room presence list",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"count", len(presences))
+}
+
+func (c *Client) handleUserKicked(msg *Message) {
+	var payload struct {
+		TargetUserID string `json:"target_user_id"`
+		Reason       string `json:"reason"`
+	}
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing user kicked payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			c.sendErrorMessage("Invalid payload format")
+			return
+		}
+	}
+
+	targetUserID, err := uuid.Parse(payload.TargetUserID)
+	if err != nil {
+		wsLogger.Warn("Invalid target user ID for kick",
+			"connection_id", c.connectionID,
+			"target_user_id", payload.TargetUserID)
+		return
+	}
+
+	notification := RoomNotification{
+		ID:           uuid.New().String(),
+		Type:         "user_kicked",
+		RoomID:       c.roomID,
+		UserID:       c.userID,
+		TargetUserID: targetUserID,
+		Message:      "You have been kicked from the room",
+		Reason:       payload.Reason,
+		Timestamp:    time.Now(),
+		Read:         false,
+		Actionable:   false,
+	}
+
+	notificationStore.Add(targetUserID, notification)
+
+	payloadBytes, err := json.Marshal(notification)
+	if err != nil {
+		wsLogger.Error("Error marshaling kick notification",
+			"connection_id", c.connectionID,
+			"error", err)
+		return
+	}
+
+	notifyMsg := &Message{
+		Type:         "user-kicked",
+		RoomID:       c.roomID,
+		UserID:       c.userID,
+		TargetUserID: targetUserID,
+		Payload:      payloadBytes,
+		Timestamp:    time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, uuid.Nil)
+
+	wsLogger.Info("User kicked",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"target_user_id", targetUserID,
+		"reason", payload.Reason)
+}
+
+func (c *Client) handleUserBanned(msg *Message) {
+	var payload struct {
+		TargetUserID string `json:"target_user_id"`
+		Reason       string `json:"reason"`
+		Duration     string `json:"duration"` // "permanent" or "24h", "7d", etc.
+	}
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing user banned payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			c.sendErrorMessage("Invalid payload format")
+			return
+		}
+	}
+
+	targetUserID, err := uuid.Parse(payload.TargetUserID)
+	if err != nil {
+		wsLogger.Warn("Invalid target user ID for ban",
+			"connection_id", c.connectionID,
+			"target_user_id", payload.TargetUserID)
+		return
+	}
+
+	duration := "permanent"
+	if payload.Duration != "" {
+		duration = payload.Duration
+	}
+
+	notification := RoomNotification{
+		ID:           uuid.New().String(),
+		Type:         "user_banned",
+		RoomID:       c.roomID,
+		UserID:       c.userID,
+		TargetUserID: targetUserID,
+		Message:      "You have been banned from the room",
+		Reason:       payload.Reason,
+		Duration:     duration,
+		Timestamp:    time.Now(),
+		Read:         false,
+		Actionable:   false,
+	}
+
+	notificationStore.Add(targetUserID, notification)
+
+	payloadBytes, err := json.Marshal(notification)
+	if err != nil {
+		wsLogger.Error("Error marshaling ban notification",
+			"connection_id", c.connectionID,
+			"error", err)
+		return
+	}
+
+	notifyMsg := &Message{
+		Type:         "user-banned",
+		RoomID:       c.roomID,
+		UserID:       c.userID,
+		TargetUserID: targetUserID,
+		Payload:      payloadBytes,
+		Timestamp:    time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, uuid.Nil)
+
+	wsLogger.Info("User banned",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"target_user_id", targetUserID,
+		"reason", payload.Reason,
+		"duration", duration)
+}
+
+func (c *Client) handleRoleChanged(msg *Message) {
+	var payload struct {
+		TargetUserID string `json:"target_user_id"`
+		OldRole      string `json:"old_role"`
+		NewRole      string `json:"new_role"`
+	}
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing role changed payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			c.sendErrorMessage("Invalid payload format")
+			return
+		}
+	}
+
+	targetUserID, err := uuid.Parse(payload.TargetUserID)
+	if err != nil {
+		wsLogger.Warn("Invalid target user ID for role change",
+			"connection_id", c.connectionID,
+			"target_user_id", payload.TargetUserID)
+		return
+	}
+
+	rolePayload := map[string]string{
+		"target_user_id": targetUserID.String(),
+		"old_role":       payload.OldRole,
+		"new_role":       payload.NewRole,
+	}
+	payloadBytes, err := json.Marshal(rolePayload)
+	if err != nil {
+		wsLogger.Error("Error marshaling role changed payload",
+			"connection_id", c.connectionID,
+			"error", err)
+		return
+	}
+
+	notification := RoomNotification{
+		ID:         uuid.New().String(),
+		Type:       "role_changed",
+		RoomID:     c.roomID,
+		UserID:     c.userID,
+		Message:    fmt.Sprintf("Role changed from %s to %s", payload.OldRole, payload.NewRole),
+		Timestamp:  time.Now(),
+		Read:       false,
+		Actionable: false,
+	}
+
+	notificationStore.Add(targetUserID, notification)
+
+	notifyMsg := &Message{
+		Type:         "role-changed",
+		RoomID:       c.roomID,
+		UserID:       c.userID,
+		TargetUserID: targetUserID,
+		Payload:      payloadBytes,
+		Timestamp:    time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, uuid.Nil)
+
+	wsLogger.Info("User role changed",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"target_user_id", targetUserID,
+		"old_role", payload.OldRole,
+		"new_role", payload.NewRole)
+}
+
+type TypingBulkPayload struct {
+	TypingUsers []TypingEvent `json:"typing_users"`
+}
+
+func (c *Client) handleTypingBulk(msg *Message) {
+	var payload TypingBulkPayload
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing typing bulk payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			c.sendErrorMessage("Invalid payload format")
+			return
+		}
+	}
+
+	for _, typingUser := range payload.TypingUsers {
+		if typingUser.IsTyping {
+			contextStr := typingUser.ContextType
+			if typingUser.ChannelID != "" {
+				contextStr = "channel:" + typingUser.ChannelID
+			} else if typingUser.ThreadID != "" {
+				contextStr = "thread:" + typingUser.ThreadID
+			}
+			c.hub.setTypingUser(typingUser.UserID, c.roomID, contextStr)
+		} else {
+			c.hub.clearTypingUser(typingUser.UserID)
+		}
+	}
+
+	typingUsers := c.hub.GetTypingUsers(c.roomID)
+	typingPayload, err := json.Marshal(typingUsers)
+	if err != nil {
+		wsLogger.Error("Error marshaling typing bulk response",
+			"connection_id", c.connectionID,
+			"error", err)
+		return
+	}
+
+	responseMsg := &Message{
+		Type:      "typing-bulk-response",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   typingPayload,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, responseMsg)
+
+	wsLogger.Debug("Handled typing bulk request",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"count", len(payload.TypingUsers))
 }
