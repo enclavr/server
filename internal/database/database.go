@@ -2,6 +2,7 @@ package database
 
 import (
 	"log"
+	"strings"
 	"time"
 
 	"github.com/enclavr/server/internal/config"
@@ -42,9 +43,13 @@ func New(cfg *config.DatabaseConfig) (*Database, error) {
 }
 
 func (d *Database) Migrate() error {
-	d.Exec("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"")
-	d.Exec("CREATE EXTENSION IF NOT EXISTS pg_trgm")
-	d.Exec("CREATE EXTENSION IF NOT EXISTS pg_stat_statements")
+	isPostgres := isPostgresDB(d)
+
+	if isPostgres {
+		d.Exec("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"")
+		d.Exec("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+		d.Exec("CREATE EXTENSION IF NOT EXISTS pg_stat_statements")
+	}
 
 	err := d.AutoMigrate(
 		&models.Category{},
@@ -100,7 +105,6 @@ func (d *Database) Migrate() error {
 		return err
 	}
 
-	d.Exec("CREATE INDEX IF NOT EXISTS idx_messages_content_fts ON messages USING gin(to_tsvector('english', content))")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_messages_room_id_created_at ON messages(room_id, created_at DESC)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_presence_user_id ON presences(user_id)")
@@ -188,4 +192,10 @@ func (d *Database) Migrate() error {
 
 	log.Println("Database migration completed")
 	return nil
+}
+
+func isPostgresDB(db *Database) bool {
+	var result string
+	db.Raw("SELECT version()").Scan(&result)
+	return strings.Contains(result, "PostgreSQL")
 }

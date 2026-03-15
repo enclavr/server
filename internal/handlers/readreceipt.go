@@ -75,9 +75,10 @@ func (h *ReadReceiptHandler) MarkMessageRead(w http.ResponseWriter, r *http.Requ
 		UserID:    userID,
 		Timestamp: time.Now(),
 	}
-	wsPayload, _ := json.Marshal(map[string]string{
+	wsPayload, _ := json.Marshal(map[string]interface{}{
 		"message_id": req.MessageID.String(),
 		"user_id":    userID.String(),
+		"read_at":    time.Now().Format(time.RFC3339),
 	})
 	wsMsg.Payload = wsPayload
 	h.hub.BroadcastToRoom(req.RoomID, wsMsg, userID)

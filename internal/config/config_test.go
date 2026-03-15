@@ -9,7 +9,7 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	_ = os.Unsetenv("SERVER_PORT")
 	_ = os.Unsetenv("DB_HOST")
-	_ = os.Unsetenv("JWT_SECRET")
+	_ = os.Setenv("JWT_SECRET", "test-jwt-secret-for-testing")
 	_ = os.Unsetenv("ALLOWED_ORIGINS")
 
 	cfg := Load()
@@ -202,6 +202,7 @@ func TestDatabaseDSN(t *testing.T) {
 }
 
 func TestLoadVoiceConfig(t *testing.T) {
+	_ = os.Setenv("JWT_SECRET", "test-jwt-secret-for-testing")
 	_ = os.Setenv("STUN_SERVER", "stun:custom.stun.com:3478")
 	_ = os.Setenv("TURN_SERVER", "turn:custom.turn.com:3478")
 	_ = os.Setenv("TURN_USER", "user")
@@ -234,6 +235,7 @@ func TestLoadVoiceConfig(t *testing.T) {
 }
 
 func TestLoadRedisConfig(t *testing.T) {
+	_ = os.Setenv("JWT_SECRET", "test-jwt-secret-for-testing")
 	_ = os.Setenv("REDIS_HOST", "redis.example.com")
 	_ = os.Setenv("REDIS_PORT", "6380")
 	_ = os.Setenv("REDIS_PASSWORD", "redispass")
@@ -266,6 +268,7 @@ func TestLoadRedisConfig(t *testing.T) {
 }
 
 func TestLoadPushConfig(t *testing.T) {
+	_ = os.Setenv("JWT_SECRET", "test-jwt-secret-for-testing")
 	_ = os.Setenv("VAPID_PUBLIC_KEY", "publickey")
 	_ = os.Setenv("VAPID_PRIVATE_KEY", "privatekey")
 	_ = os.Setenv("VAPID_SUBJECT", "mailto:test@example.com")

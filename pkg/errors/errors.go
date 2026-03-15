@@ -9,16 +9,29 @@ import (
 type Code string
 
 const (
-	ErrCodeInternal     Code = "INTERNAL_ERROR"
-	ErrCodeNotFound     Code = "NOT_FOUND"
-	ErrCodeUnauthorized Code = "UNAUTHORIZED"
-	ErrCodeForbidden    Code = "FORBIDDEN"
-	ErrCodeBadRequest   Code = "BAD_REQUEST"
-	ErrCodeConflict     Code = "CONFLICT"
-	ErrCodeRateLimit    Code = "RATE_LIMITED"
-	ErrCodeValidation   Code = "VALIDATION_ERROR"
-	ErrCodeTooLarge     Code = "PAYLOAD_TOO_LARGE"
-	ErrCodeUnavailable  Code = "SERVICE_UNAVAILABLE"
+	ErrCodeInternal             Code = "INTERNAL_ERROR"
+	ErrCodeNotFound             Code = "NOT_FOUND"
+	ErrCodeUnauthorized         Code = "UNAUTHORIZED"
+	ErrCodeForbidden            Code = "FORBIDDEN"
+	ErrCodeBadRequest           Code = "BAD_REQUEST"
+	ErrCodeConflict             Code = "CONFLICT"
+	ErrCodeRateLimit            Code = "RATE_LIMITED"
+	ErrCodeValidation           Code = "VALIDATION_ERROR"
+	ErrCodeTooLarge             Code = "PAYLOAD_TOO_LARGE"
+	ErrCodeUnavailable          Code = "SERVICE_UNAVAILABLE"
+	ErrCodeTimeout              Code = "TIMEOUT"
+	ErrCodeInvalidToken         Code = "INVALID_TOKEN"
+	ErrCodeTokenExpired         Code = "TOKEN_EXPIRED"
+	ErrCodeAccountLocked        Code = "ACCOUNT_LOCKED"
+	ErrCodeAccountDisabled      Code = "ACCOUNT_DISABLED"
+	ErrCodeEmailNotVerified     Code = "EMAIL_NOT_VERIFIED"
+	ErrCodeInvalidCredentials   Code = "INVALID_CREDENTIALS"
+	ErrCode2FARequired          Code = "TWO_FACTOR_REQUIRED"
+	ErrCode2FAInvalid           Code = "TWO_FACTOR_INVALID"
+	ErrCodeWebhookFailed        Code = "WEBHOOK_FAILED"
+	ErrCodeDatabaseError        Code = "DATABASE_ERROR"
+	ErrCodeCacheError           Code = "CACHE_ERROR"
+	ErrCodeExternalServiceError Code = "EXTERNAL_SERVICE_ERROR"
 )
 
 type Error struct {
@@ -80,6 +93,22 @@ func ToHTTPStatus(code Code) int {
 		return http.StatusRequestEntityTooLarge
 	case ErrCodeUnavailable:
 		return http.StatusServiceUnavailable
+	case ErrCodeTimeout:
+		return http.StatusRequestTimeout
+	case ErrCodeInvalidToken, ErrCodeTokenExpired:
+		return http.StatusUnauthorized
+	case ErrCodeAccountLocked, ErrCodeAccountDisabled:
+		return http.StatusForbidden
+	case ErrCodeEmailNotVerified:
+		return http.StatusForbidden
+	case ErrCodeInvalidCredentials:
+		return http.StatusUnauthorized
+	case ErrCode2FARequired, ErrCode2FAInvalid:
+		return http.StatusUnauthorized
+	case ErrCodeWebhookFailed:
+		return http.StatusBadGateway
+	case ErrCodeDatabaseError, ErrCodeCacheError, ErrCodeExternalServiceError:
+		return http.StatusServiceUnavailable
 	default:
 		return http.StatusInternalServerError
 	}
@@ -137,4 +166,72 @@ func Internal(err error) *Error {
 		return New(ErrCodeInternal, "An internal error occurred")
 	}
 	return Wrap(err, ErrCodeInternal, "An internal error occurred")
+}
+
+func InvalidToken() *Error {
+	return New(ErrCodeInvalidToken, "Invalid authentication token")
+}
+
+func TokenExpired() *Error {
+	return New(ErrCodeTokenExpired, "Authentication token has expired")
+}
+
+func AccountLocked(reason string) *Error {
+	return New(ErrCodeAccountLocked, fmt.Sprintf("Account is locked: %s", reason))
+}
+
+func AccountDisabled() *Error {
+	return New(ErrCodeAccountDisabled, "Account has been disabled")
+}
+
+func EmailNotVerified() *Error {
+	return New(ErrCodeEmailNotVerified, "Email address has not been verified")
+}
+
+func InvalidCredentials() *Error {
+	return New(ErrCodeInvalidCredentials, "Invalid username or password")
+}
+
+func TwoFactorRequired() *Error {
+	return New(ErrCode2FARequired, "Two-factor authentication is required")
+}
+
+func TwoFactorInvalid() *Error {
+	return New(ErrCode2FAInvalid, "Invalid two-factor authentication code")
+}
+
+func WebhookFailed(err error) *Error {
+	if err == nil {
+		return New(ErrCodeWebhookFailed, "Webhook delivery failed")
+	}
+	return Wrap(err, ErrCodeWebhookFailed, "Webhook delivery failed")
+}
+
+func DatabaseError(err error) *Error {
+	if err == nil {
+		return New(ErrCodeDatabaseError, "A database error occurred")
+	}
+	return Wrap(err, ErrCodeDatabaseError, "A database error occurred")
+}
+
+func CacheError(err error) *Error {
+	if err == nil {
+		return New(ErrCodeCacheError, "A cache error occurred")
+	}
+	return Wrap(err, ErrCodeCacheError, "A cache error occurred")
+}
+
+func ExternalServiceError(service string, err error) *Error {
+	if err == nil {
+		return New(ErrCodeExternalServiceError, fmt.Sprintf("External service '%s' is unavailable", service))
+	}
+	return Wrap(err, ErrCodeExternalServiceError, fmt.Sprintf("External service '%s' error", service))
+}
+
+func Timeout() *Error {
+	return New(ErrCodeTimeout, "The request timed out")
+}
+
+func RateLimitExceeded(limit string) *Error {
+	return New(ErrCodeRateLimit, fmt.Sprintf("Rate limit exceeded: %s", limit))
 }

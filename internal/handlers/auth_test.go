@@ -68,7 +68,7 @@ func TestRegister(t *testing.T) {
 			body: RegisterRequest{
 				Username: "testuser",
 				Email:    "test@example.com",
-				Password: "password123",
+				Password: "Password1!!",
 			},
 			expectedStatus: http.StatusOK,
 		},
@@ -76,7 +76,7 @@ func TestRegister(t *testing.T) {
 			name: "missing username",
 			body: RegisterRequest{
 				Email:    "test@example.com",
-				Password: "password123",
+				Password: "Password1!!",
 			},
 			expectedStatus: http.StatusBadRequest,
 		},
@@ -84,12 +84,12 @@ func TestRegister(t *testing.T) {
 			name: "missing email",
 			body: RegisterRequest{
 				Username: "testuser",
-				Password: "password123",
+				Password: "Password1!!",
 			},
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name: "missing password",
+			name: "missing Secure1!!",
 			body: RegisterRequest{
 				Username: "testuser",
 				Email:    "test@example.com",
@@ -101,7 +101,7 @@ func TestRegister(t *testing.T) {
 			body: RegisterRequest{
 				Username: "testuser2",
 				Email:    "test2@example.com",
-				Password: "password123",
+				Password: "Password1!!",
 			},
 			expectedStatus: http.StatusOK,
 		},
@@ -143,7 +143,7 @@ func TestRegister_DuplicateEmail(t *testing.T) {
 	registerBody := RegisterRequest{
 		Username: "testuser",
 		Email:    "test@example.com",
-		Password: "password123",
+		Password: "Password1!!",
 	}
 	body, _ := json.Marshal(registerBody)
 	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(body))
@@ -171,7 +171,7 @@ func TestLogin(t *testing.T) {
 	registerBody := RegisterRequest{
 		Username: "testuser",
 		Email:    "test@example.com",
-		Password: "password123",
+		Password: "Password1!!",
 	}
 	body, _ := json.Marshal(registerBody)
 	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(body))
@@ -188,15 +188,15 @@ func TestLogin(t *testing.T) {
 			name: "valid login",
 			body: LoginRequest{
 				Username: "testuser",
-				Password: "password123",
+				Password: "Password1!!",
 			},
 			expectedStatus: http.StatusOK,
 		},
 		{
-			name: "wrong password",
+			name: "wrong Secure1!!",
 			body: LoginRequest{
 				Username: "testuser",
-				Password: "wrongpassword",
+				Password: "Wrong1!!",
 			},
 			expectedStatus: http.StatusUnauthorized,
 		},
@@ -204,14 +204,14 @@ func TestLogin(t *testing.T) {
 			name: "nonexistent user",
 			body: LoginRequest{
 				Username: "nonexistent",
-				Password: "password123",
+				Password: "Password1!!",
 			},
 			expectedStatus: http.StatusUnauthorized,
 		},
 		{
 			name: "missing username",
 			body: LoginRequest{
-				Password: "password123",
+				Password: "Password1!!",
 			},
 			expectedStatus: http.StatusUnauthorized,
 		},
@@ -239,7 +239,7 @@ func TestRefreshToken(t *testing.T) {
 	registerBody := RegisterRequest{
 		Username: "testuser",
 		Email:    "test@example.com",
-		Password: "password123",
+		Password: "Password1!!",
 	}
 	body, _ := json.Marshal(registerBody)
 	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(body))
@@ -324,7 +324,7 @@ func TestRegister_FirstUserIsAdmin_Enabled(t *testing.T) {
 	body, _ := json.Marshal(RegisterRequest{
 		Username: "firstuser",
 		Email:    "first@example.com",
-		Password: "password123",
+		Password: "Password1!!",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -354,7 +354,7 @@ func TestRegister_SecondUserIsNotAdmin(t *testing.T) {
 	firstBody, _ := json.Marshal(RegisterRequest{
 		Username: "firstuser",
 		Email:    "first@example.com",
-		Password: "password1",
+		Password: "Password2!!",
 	})
 	req1 := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(firstBody))
 	req1.Header.Set("Content-Type", "application/json")
@@ -376,7 +376,7 @@ func TestRegister_SecondUserIsNotAdmin(t *testing.T) {
 	secondBody, _ := json.Marshal(RegisterRequest{
 		Username: "seconduser",
 		Email:    "second@example.com",
-		Password: "password2",
+		Password: "Password3!!",
 	})
 	req2 := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(secondBody))
 	req2.Header.Set("Content-Type", "application/json")
@@ -403,7 +403,7 @@ func TestRegister_FirstUserIsAdmin_Disabled(t *testing.T) {
 	body, _ := json.Marshal(RegisterRequest{
 		Username: "user1",
 		Email:    "user1@example.com",
-		Password: "password123",
+		Password: "Password1!!",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -439,7 +439,7 @@ func TestRegister_FirstUserIsAdmin_ThirdUser(t *testing.T) {
 		body, _ := json.Marshal(RegisterRequest{
 			Username: tc.username,
 			Email:    tc.email,
-			Password: "password",
+			Password: "Secure1!!",
 		})
 		req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -467,7 +467,7 @@ func TestRegister_ResponseBody(t *testing.T) {
 	body, _ := json.Marshal(RegisterRequest{
 		Username: "bodycheck",
 		Email:    "body@example.com",
-		Password: "securepass",
+		Password: "Secure1!!",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -509,16 +509,21 @@ func TestLogin_ResponseBody(t *testing.T) {
 	regBody, err := json.Marshal(RegisterRequest{
 		Username: "loginuser",
 		Email:    "login@example.com",
-		Password: "loginpass",
+		Password: "Login1!!",
 	})
 	if err != nil {
 		t.Fatalf("failed to marshal register request: %v", err)
 	}
 	regReq := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(regBody))
 	regReq.Header.Set("Content-Type", "application/json")
-	handler.Register(httptest.NewRecorder(), regReq)
+	regW := httptest.NewRecorder()
+	handler.Register(regW, regReq)
 
-	body, err := json.Marshal(LoginRequest{Username: "loginuser", Password: "loginpass"})
+	if regW.Code != http.StatusOK {
+		t.Fatalf("registration failed: %d - %s", regW.Code, regW.Body.String())
+	}
+
+	body, err := json.Marshal(LoginRequest{Username: "loginuser", Password: "Login1!!"})
 	if err != nil {
 		t.Fatalf("failed to marshal login request: %v", err)
 	}
@@ -552,14 +557,14 @@ func TestLogin_AdminUserToken(t *testing.T) {
 	regBody, _ := json.Marshal(RegisterRequest{
 		Username: "adminlogin",
 		Email:    "adminlogin@example.com",
-		Password: "adminpass",
+		Password: "Admin1!!",
 	})
 	regReq := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(regBody))
 	regReq.Header.Set("Content-Type", "application/json")
 	handler.Register(httptest.NewRecorder(), regReq)
 
 	// Login and check is_admin
-	body, _ := json.Marshal(LoginRequest{Username: "adminlogin", Password: "adminpass"})
+	body, _ := json.Marshal(LoginRequest{Username: "adminlogin", Password: "Admin1!!"})
 	req := httptest.NewRequest(http.MethodPost, "/login", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -585,7 +590,7 @@ func TestRegister_GetMe_IsAdmin(t *testing.T) {
 	regBody, _ := json.Marshal(RegisterRequest{
 		Username: "meadmin",
 		Email:    "meadmin@example.com",
-		Password: "mepassword",
+		Password: "meSecure1!!",
 	})
 	reqReg := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(regBody))
 	reqReg.Header.Set("Content-Type", "application/json")
@@ -622,7 +627,7 @@ func TestGetMe(t *testing.T) {
 	registerBody := RegisterRequest{
 		Username: "testuser",
 		Email:    "test@example.com",
-		Password: "password123",
+		Password: "Password1!!",
 	}
 	body, _ := json.Marshal(registerBody)
 	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(body))
