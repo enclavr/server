@@ -54,11 +54,16 @@ type RefreshClaims struct {
 }
 
 type AuthService struct {
-	cfg *config.AuthConfig
+	cfg       *config.AuthConfig
+	encryptor *Encryptor
 }
 
 func NewAuthService(cfg *config.AuthConfig) *AuthService {
 	return &AuthService{cfg: cfg}
+}
+
+func NewAuthServiceWithEncryption(cfg *config.AuthConfig, encryptor *Encryptor) *AuthService {
+	return &AuthService{cfg: cfg, encryptor: encryptor}
 }
 
 func (s *AuthService) HashPassword(password string) (string, error) {
@@ -202,6 +207,24 @@ func (s *AuthService) GenerateTwoFactorSecret() (string, error) {
 
 func (s *AuthService) ValidateTwoFactorCode(secret, code string) bool {
 	return totp.Validate(code, secret)
+}
+
+func (s *AuthService) EncryptSecret(secret string) (string, error) {
+	if s.encryptor == nil {
+		return secret, nil
+	}
+	return s.encryptor.Encrypt(secret)
+}
+
+func (s *AuthService) DecryptSecret(encryptedSecret string) (string, error) {
+	if s.encryptor == nil {
+		return encryptedSecret, nil
+	}
+	return s.encryptor.Decrypt(encryptedSecret)
+}
+
+func (s *AuthService) HasEncryptor() bool {
+	return s.encryptor != nil
 }
 
 func (s *AuthService) GenerateEmailVerificationToken(userID uuid.UUID) (string, error) {

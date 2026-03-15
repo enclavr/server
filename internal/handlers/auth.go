@@ -242,7 +242,17 @@ func (h *AuthHandler) LoginWith2FA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.authService.ValidateTwoFactorCode(user.TwoFactorSecret, req.Code) {
+	secret := user.TwoFactorSecret
+	if h.authService.HasEncryptor() {
+		decrypted, err := h.authService.DecryptSecret(user.TwoFactorSecret)
+		if err != nil {
+			http.Error(w, "Internal error", http.StatusInternalServerError)
+			return
+		}
+		secret = decrypted
+	}
+
+	if !h.authService.ValidateTwoFactorCode(secret, req.Code) {
 		http.Error(w, "Invalid 2FA code", http.StatusUnauthorized)
 		return
 	}
@@ -496,9 +506,19 @@ func (h *AuthHandler) ConfirmTwoFactor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	secretToStore := req.Secret
+	if h.authService.HasEncryptor() {
+		encrypted, err := h.authService.EncryptSecret(req.Secret)
+		if err != nil {
+			http.Error(w, "Failed to encrypt secret", http.StatusInternalServerError)
+			return
+		}
+		secretToStore = encrypted
+	}
+
 	h.db.Model(&user).Updates(map[string]interface{}{
 		"two_factor_enabled": true,
-		"two_factor_secret":  req.Secret,
+		"two_factor_secret":  secretToStore,
 	})
 
 	h.db.Create(&models.TwoFactorRecovery{

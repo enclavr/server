@@ -64,11 +64,28 @@ func (h *CategoryHandler) GetCategories(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	type categoryWithCount struct {
+		models.Category
+		RoomCount int64 `gorm:"column:room_count"`
+	}
+
+	var results []categoryWithCount
+	if len(categories) > 0 {
+		catIDs := make([]uuid.UUID, len(categories))
+		for i, c := range categories {
+			catIDs[i] = c.ID
+		}
+		h.db.Model(&models.Room{}).Select("category_id, COUNT(*) as room_count").Where("category_id IN ?", catIDs).Group("category_id").Scan(&results)
+	}
+
+	roomCountMap := make(map[uuid.UUID]int64)
+	for _, r := range results {
+		roomCountMap[r.Category.ID] = r.RoomCount
+	}
+
 	responses := make([]CategoryResponse, 0, len(categories))
 	for _, cat := range categories {
-		var roomCount int64
-		h.db.Model(&models.Room{}).Where("category_id = ?", cat.ID).Count(&roomCount)
-		responses = append(responses, h.categoryToResponse(&cat, int(roomCount)))
+		responses = append(responses, h.categoryToResponse(&cat, int(roomCountMap[cat.ID])))
 	}
 
 	w.Header().Set("Content-Type", "application/json")

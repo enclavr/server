@@ -98,14 +98,26 @@ func (h *AuditHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 	countQuery.Count(&total)
 
 	logResponses := make([]AuditLogResponse, len(logs))
-	for i, log := range logs {
-		var username string
-		h.db.Model(&models.User{}).Where("id = ?", log.UserID).Pluck("username", &username)
 
+	userIDs := make([]uuid.UUID, len(logs))
+	for i, log := range logs {
+		userIDs[i] = log.UserID
+	}
+
+	userIDToUsername := make(map[uuid.UUID]string)
+	if len(userIDs) > 0 {
+		var users []models.User
+		h.db.Where("id IN ?", userIDs).Find(&users)
+		for _, u := range users {
+			userIDToUsername[u.ID] = u.Username
+		}
+	}
+
+	for i, log := range logs {
 		logResponses[i] = AuditLogResponse{
 			ID:         log.ID,
 			UserID:     log.UserID,
-			Username:   username,
+			Username:   userIDToUsername[log.UserID],
 			Action:     log.Action,
 			TargetType: log.TargetType,
 			TargetID:   log.TargetID,

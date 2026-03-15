@@ -10,6 +10,9 @@ import (
 
 const MaxMessageLength = 4000
 const MinMessageLength = 1
+const MaxMessagesPerMinute = 20
+const MaxConsecutiveMessages = 5
+const MessageCooldownMs = 500
 
 var (
 	ErrMessageTooShort   = errors.New("message content is too short")
