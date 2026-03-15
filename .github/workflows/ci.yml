@@ -58,7 +58,7 @@ jobs:
       - name: Run tests with SQLite
         run: |
           # Skip tests that require PostgreSQL or Redis when using SQLite
-          go test -v -race -coverprofile=coverage.out -skip "TestRedis|TestPostgres|TestExtension" ./...
+          go test -v -race -coverprofile=coverage.out -skip "TestRedis|TestPostgres|TestExtension|TestCacheService|TestTypingDebouncer|TestRateLimiterStore" ./...
         env:
           JWT_SECRET: test-jwt-secret-for-ci
 
