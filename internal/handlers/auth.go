@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/enclavr/server/internal/auth"
@@ -491,6 +490,12 @@ func (h *AuthHandler) ConfirmTwoFactor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	hashedCodes, err := h.authService.HashRecoveryCodes(recoveryCodes)
+	if err != nil {
+		http.Error(w, "Failed to hash recovery codes", http.StatusInternalServerError)
+		return
+	}
+
 	h.db.Model(&user).Updates(map[string]interface{}{
 		"two_factor_enabled": true,
 		"two_factor_secret":  req.Secret,
@@ -499,7 +504,7 @@ func (h *AuthHandler) ConfirmTwoFactor(w http.ResponseWriter, r *http.Request) {
 	h.db.Create(&models.TwoFactorRecovery{
 		ID:        uuid.New(),
 		UserID:    user.ID,
-		Codes:     strings.Join(recoveryCodes, ","),
+		Codes:     hashedCodes,
 		CreatedAt: time.Now(),
 	})
 

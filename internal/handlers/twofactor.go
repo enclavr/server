@@ -2,11 +2,11 @@ package handlers
 
 import (
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/enclavr/server/internal/auth"
@@ -262,11 +262,11 @@ func (h *TwoFactorHandler) Verify(w http.ResponseWriter, r *http.Request) {
 	if !isValid {
 		var recovery models.TwoFactorRecovery
 		if err := h.db.Where("user_id = ?", userID).First(&recovery).Error; err == nil {
-			codes := parseRecoveryCodes(recovery.Codes)
-			for _, c := range codes {
-				if subtle.ConstantTimeCompare([]byte(c.Code), []byte(req.Code)) == 1 {
-					isValid = true
-					break
+			isValid = h.authService.ValidateRecoveryCode(recovery.Codes, req.Code)
+			if isValid {
+				newCodes, err := h.authService.RemoveUsedRecoveryCode(recovery.Codes, req.Code)
+				if err == nil {
+					h.db.Model(&recovery).Update("codes", newCodes)
 				}
 			}
 		}
@@ -300,17 +300,25 @@ func (h *TwoFactorHandler) GetRecoveryCodes(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	codes := parseRecoveryCodes(recovery.Codes)
-	var codeList []string
-	for _, c := range codes {
-		codeList = append(codeList, c.Code)
+	if strings.Contains(recovery.Codes, ",") && !strings.Contains(recovery.Codes, "|||") {
+		codes := parseRecoveryCodes(recovery.Codes)
+		var codeList []string
+		for _, c := range codes {
+			codeList = append(codeList, c.Code)
+		}
+		hashedCodes, _ := h.authService.HashRecoveryCodes(codeList)
+		h.db.Model(&recovery).Update("codes", hashedCodes)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"codes": codeList,
+		})
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string][]string{"codes": codeList}); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		return
-	}
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"message": "Recovery codes were provided during 2FA setup. Store them securely - they cannot be retrieved again.",
+	})
 }
 
 func generateRecoveryCodes(count int) []string {

@@ -140,6 +140,19 @@ func (h *SessionHandler) RotateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	currentToken := r.Header.Get("Authorization")
+	var oldSessionID uuid.UUID
+	if len(currentToken) > 7 && currentToken[:7] == "Bearer " {
+		claims, err := h.auth.ValidateToken(currentToken[7:])
+		if err == nil {
+			oldSessionID = claims.SessionID
+		}
+	}
+
+	if oldSessionID != uuid.Nil {
+		h.db.Where("id = ? AND user_id = ?", oldSessionID, userID).Delete(&models.Session{})
+	}
+
 	var user models.User
 	if err := h.db.First(&user, userID).Error; err != nil {
 		http.Error(w, "User not found", http.StatusNotFound)

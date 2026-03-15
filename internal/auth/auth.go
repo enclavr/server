@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 	"unicode"
@@ -272,13 +273,45 @@ func (s *AuthService) GenerateRecoveryCodes() ([]string, error) {
 	return codes, nil
 }
 
-func ConstantTimeCompare(a, b string) bool {
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+func (s *AuthService) HashRecoveryCodes(codes []string) (string, error) {
+	hashedCodes := make([]string, len(codes))
+	for i, code := range codes {
+		hash, err := bcrypt.GenerateFromPassword([]byte(code), bcrypt.DefaultCost)
+		if err != nil {
+			return "", err
+		}
+		hashedCodes[i] = string(hash)
+	}
+	return strings.Join(hashedCodes, "|||"), nil
 }
 
-func (s *AuthService) ValidateRecoveryCode(storedHash, providedCode string) bool {
-	err := bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(providedCode))
-	return err == nil
+func (s *AuthService) ValidateRecoveryCode(hashedCodes, providedCode string) bool {
+	hashedList := strings.Split(hashedCodes, "|||")
+	for _, hashedCode := range hashedList {
+		if err := bcrypt.CompareHashAndPassword([]byte(hashedCode), []byte(providedCode)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *AuthService) RemoveUsedRecoveryCode(hashedCodes, usedCode string) (string, error) {
+	hashedList := strings.Split(hashedCodes, "|||")
+	newList := make([]string, 0, len(hashedList))
+	for _, hashedCode := range hashedList {
+		if err := bcrypt.CompareHashAndPassword([]byte(hashedCode), []byte(usedCode)); err == nil {
+			continue
+		}
+		newList = append(newList, hashedCode)
+	}
+	if len(newList) == len(hashedList) {
+		return "", ErrInvalidRecoveryCode
+	}
+	return strings.Join(newList, "|||"), nil
+}
+
+func ConstantTimeCompare(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 type LoginAttempt struct {
