@@ -1916,29 +1916,41 @@ func TestClient_HandleMessage_TypingWithContext(t *testing.T) {
 }
 
 func TestTypingDebouncer_Trigger(t *testing.T) {
+	var mu sync.Mutex
 	triggered := false
 	debouncer := NewTypingDebouncer(100*time.Millisecond, func(uid uuid.UUID) {
+		mu.Lock()
 		triggered = true
+		mu.Unlock()
 	})
 
 	userID := uuid.New()
 	debouncer.Trigger(userID)
 
+	mu.Lock()
 	if triggered {
+		mu.Unlock()
 		t.Error("triggered should be false before timeout")
 	}
+	mu.Unlock()
 
 	time.Sleep(150 * time.Millisecond)
 
+	mu.Lock()
 	if !triggered {
+		mu.Unlock()
 		t.Error("triggered should be true after timeout")
 	}
+	mu.Unlock()
 }
 
 func TestTypingDebouncer_Stop(t *testing.T) {
+	var mu sync.Mutex
 	triggered := false
 	debouncer := NewTypingDebouncer(100*time.Millisecond, func(uid uuid.UUID) {
+		mu.Lock()
 		triggered = true
+		mu.Unlock()
 	})
 
 	userID := uuid.New()
@@ -1947,15 +1959,21 @@ func TestTypingDebouncer_Stop(t *testing.T) {
 
 	time.Sleep(150 * time.Millisecond)
 
+	mu.Lock()
 	if triggered {
+		mu.Unlock()
 		t.Error("triggered should be false after Stop")
 	}
+	mu.Unlock()
 }
 
 func TestTypingDebouncer_StopAll(t *testing.T) {
+	var mu sync.Mutex
 	triggered := 0
 	debouncer := NewTypingDebouncer(100*time.Millisecond, func(uid uuid.UUID) {
+		mu.Lock()
 		triggered++
+		mu.Unlock()
 	})
 
 	debouncer.Trigger(uuid.New())
@@ -1966,9 +1984,12 @@ func TestTypingDebouncer_StopAll(t *testing.T) {
 
 	time.Sleep(150 * time.Millisecond)
 
+	mu.Lock()
 	if triggered != 0 {
+		mu.Unlock()
 		t.Errorf("expected triggered to be 0, got %d", triggered)
 	}
+	mu.Unlock()
 }
 
 func TestPresencePayload_Marshal(t *testing.T) {
