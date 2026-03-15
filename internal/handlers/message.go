@@ -174,21 +174,45 @@ func (h *MessageHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(messages) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode([]MessageResponse{}); err != nil {
+			log.Printf("Error encoding response: %v", err)
+		}
+		return
+	}
+
+	userIDs := make([]uuid.UUID, len(messages))
+	for i, msg := range messages {
+		userIDs[i] = msg.UserID
+	}
+
+	userIDToUser := make(map[uuid.UUID]models.User)
+	var users []models.User
+	if err := h.db.Where("id IN ?", userIDs).Find(&users).Error; err == nil {
+		for _, user := range users {
+			userIDToUser[user.ID] = user
+		}
+	}
+
 	var response []MessageResponse
 	for _, msg := range messages {
-		var user models.User
-		h.db.First(&user, "id = ?", msg.UserID)
-
 		content := msg.Content
 		if msg.IsDeleted {
 			content = ""
+		}
+
+		user := userIDToUser[msg.UserID]
+		username := ""
+		if user.ID != uuid.Nil {
+			username = user.Username
 		}
 
 		response = append(response, MessageResponse{
 			ID:        msg.ID,
 			RoomID:    msg.RoomID,
 			UserID:    msg.UserID,
-			Username:  user.Username,
+			Username:  username,
 			Type:      string(msg.Type),
 			Content:   content,
 			IsEdited:  msg.IsEdited,

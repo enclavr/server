@@ -127,17 +127,11 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var roomsJoined int64
-	h.db.Model(&models.UserRoom{}).Where("user_id = ?", userID).Count(&roomsJoined)
-
-	var messagesSent int64
-	h.db.Model(&models.Message{}).Where("user_id = ?", userID).Count(&messagesSent)
-
-	var dmsReceived int64
-	h.db.Model(&models.DirectMessage{}).Where("receiver_id = ?", userID).Count(&dmsReceived)
-
-	var reactionsGiven int64
-	h.db.Model(&models.MessageReaction{}).Where("user_id = ?", userID).Count(&reactionsGiven)
+	var stats UserStats
+	h.db.Model(&models.UserRoom{}).Where("user_id = ?", userID).Count(&stats.RoomsJoined)
+	h.db.Model(&models.Message{}).Where("user_id = ?", userID).Count(&stats.MessagesSent)
+	h.db.Model(&models.DirectMessage{}).Where("receiver_id = ?", userID).Count(&stats.DMsReceived)
+	h.db.Model(&models.MessageReaction{}).Where("user_id = ?", userID).Count(&stats.ReactionsGiven)
 
 	profile := UserProfileResponse{
 		ID:        user.ID,
@@ -145,12 +139,7 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		Email:     user.Email,
 		CreatedAt: user.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		IsAdmin:   user.IsAdmin,
-		Stats: UserStats{
-			RoomsJoined:    roomsJoined,
-			MessagesSent:   messagesSent,
-			DMsReceived:    dmsReceived,
-			ReactionsGiven: reactionsGiven,
-		},
+		Stats:     stats,
 	}
 
 	if user.DisplayName != "" {

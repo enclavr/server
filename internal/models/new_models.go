@@ -151,3 +151,69 @@ func (un *UserNotification) BeforeCreate(tx *gorm.DB) error {
 	}
 	return nil
 }
+
+type OAuthProvider string
+
+const (
+	OAuthProviderGoogle    OAuthProvider = "google"
+	OAuthProviderGitHub    OAuthProvider = "github"
+	OAuthProviderDiscord   OAuthProvider = "discord"
+	OAuthProviderTwitter   OAuthProvider = "twitter"
+	OAuthProviderSlack     OAuthProvider = "slack"
+	OAuthProviderMicrosoft OAuthProvider = "microsoft"
+)
+
+type OAuthAccount struct {
+	ID           uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	UserID       uuid.UUID      `gorm:"type:uuid;not null;index" json:"user_id"`
+	Provider     OAuthProvider  `gorm:"type:varchar(20);not null" json:"provider"`
+	ProviderID   string         `gorm:"size:255;not null" json:"provider_id"`
+	AccessToken  string         `gorm:"type:text" json:"-"`
+	RefreshToken string         `gorm:"type:text" json:"-"`
+	ExpiresAt    *time.Time     `json:"expires_at"`
+	Scope        string         `gorm:"size:500" json:"scope"`
+	AvatarURL    string         `gorm:"size:500" json:"avatar_url"`
+	ProfileData  string         `gorm:"type:jsonb" json:"profile_data"`
+	IsActive     bool           `gorm:"default:true" json:"is_active"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
+
+	User User `gorm:"foreignKey:UserID" json:"-"`
+}
+
+func (oa *OAuthAccount) BeforeCreate(tx *gorm.DB) error {
+	if oa.ID == uuid.Nil {
+		oa.ID = uuid.New()
+	}
+	if oa.CreatedAt.IsZero() {
+		oa.CreatedAt = time.Now()
+	}
+	return nil
+}
+
+type RoomMute struct {
+	ID          uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	UserID      uuid.UUID      `gorm:"type:uuid;not null;index" json:"user_id"`
+	RoomID      uuid.UUID      `gorm:"type:uuid;not null;index" json:"room_id"`
+	MutedBy     uuid.UUID      `gorm:"type:uuid;not null" json:"muted_by"`
+	Reason      string         `gorm:"size:500" json:"reason"`
+	ExpiresAt   *time.Time     `json:"expires_at"`
+	IsPermanent bool           `gorm:"default:false" json:"is_permanent"`
+	CreatedAt   time.Time      `json:"created_at"`
+	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+
+	User        User `gorm:"foreignKey:UserID" json:"-"`
+	Room        Room `gorm:"foreignKey:RoomID" json:"-"`
+	MutedByUser User `gorm:"foreignKey:MutedBy" json:"-"`
+}
+
+func (rm *RoomMute) BeforeCreate(tx *gorm.DB) error {
+	if rm.ID == uuid.Nil {
+		rm.ID = uuid.New()
+	}
+	if rm.CreatedAt.IsZero() {
+		rm.CreatedAt = time.Now()
+	}
+	return nil
+}
