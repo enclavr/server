@@ -161,6 +161,7 @@ func main() {
 	soundboardHandler := handlers.NewSoundboardHandler(db, hub)
 	analyticsHandler := handlers.NewAnalyticsHandler(db)
 	auditHandler := handlers.NewAuditHandler(db)
+	attachmentHandler := handlers.NewAttachmentHandler(db)
 	exportHandler := handlers.NewExportHandler(db)
 	pushHandler := handlers.NewPushHandler(db)
 	banHandler := handlers.NewBanHandler(db)
@@ -338,6 +339,11 @@ func main() {
 	mux.HandleFunc("/api/analytics/users", middleware.RequireAuth(authService, analyticsHandler.GetTopUsers))
 
 	mux.HandleFunc("/api/audit/logs", middleware.RequireAuth(authService, auditHandler.GetAuditLogs))
+	mux.HandleFunc("/api/attachments", middleware.RequireAuth(authService, attachmentHandler.GetMessageAttachments))
+	mux.HandleFunc("/api/attachment/create", middleware.RequireAuth(authService, attachmentHandler.CreateAttachment))
+	mux.HandleFunc("/api/attachment", middleware.RequireAuth(authService, attachmentHandler.GetAttachment))
+	mux.HandleFunc("/api/attachment/update", middleware.RequireAuth(authService, attachmentHandler.UpdateAttachment))
+	mux.HandleFunc("/api/attachment/delete", middleware.RequireAuth(authService, attachmentHandler.DeleteAttachment))
 	mux.HandleFunc("/api/export", middleware.RequireAuth(authService, exportHandler.ExportServer))
 
 	mux.HandleFunc("/api/push/subscribe", middleware.RequireAuth(authService, pushHandler.Subscribe))

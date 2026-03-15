@@ -190,6 +190,14 @@ func (d *Database) Migrate() error {
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_notifications_user_type ON user_notifications(user_id, type)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_notifications_created ON user_notifications(created_at DESC)")
 
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_audit_logs_user_action ON audit_logs(user_id, action, created_at DESC)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_message_reactions_message_user ON message_reactions(message_id, user_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_user_status_status ON user_statuses(status, updated_at DESC)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_attachments_message_created ON attachments(message_id, created_at DESC)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_poll_votes_option_user ON poll_votes(option_id, user_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_scheduled_messages_room_scheduled ON scheduled_messages(room_id, scheduled_at ASC) WHERE is_sent = false AND is_cancelled = false")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_message_reminders_user_triggered ON message_reminders(user_id, remind_at ASC) WHERE is_triggered = false")
+
 	log.Println("Database migration completed")
 	return nil
 }
