@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/enclavr/server/internal/auth"
+	"github.com/enclavr/server/internal/database"
+	"github.com/enclavr/server/internal/models"
 	"github.com/getsentry/sentry-go"
 	"github.com/google/uuid"
 )
@@ -23,6 +25,7 @@ const (
 	IsAdminKey    ContextKey = "is_admin"
 	RequestIDKey  ContextKey = "request_id"
 	BookmarkIDKey ContextKey = "bookmark_id"
+	SessionIDKey  ContextKey = "session_id"
 )
 
 type IPRateLimiter struct {
@@ -126,6 +129,10 @@ func getClientIP(r *http.Request) string {
 }
 
 func JWTAuth(authService *auth.AuthService) func(http.Handler) http.Handler {
+	return JWTAuthWithSession(authService, nil)
+}
+
+func JWTAuthWithSession(authService *auth.AuthService, db *database.Database) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -150,10 +157,22 @@ func JWTAuth(authService *auth.AuthService) func(http.Handler) http.Handler {
 				return
 			}
 
+			if db != nil && claims.SessionID != uuid.Nil {
+				var session models.Session
+				err := db.Where("id = ? AND user_id = ? AND expires_at > ?", claims.SessionID, claims.UserID, time.Now()).First(&session).Error
+				if err != nil {
+					http.Error(w, "Session expired or invalid", http.StatusUnauthorized)
+					return
+				}
+			}
+
 			ctx := r.Context()
 			ctx = context.WithValue(ctx, UserIDKey, claims.UserID)
 			ctx = context.WithValue(ctx, UsernameKey, claims.Username)
 			ctx = context.WithValue(ctx, IsAdminKey, claims.IsAdmin)
+			if claims.SessionID != uuid.Nil {
+				ctx = context.WithValue(ctx, SessionIDKey, claims.SessionID)
+			}
 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -235,6 +254,13 @@ func GetIsAdmin(r *http.Request) bool {
 		return isAdmin
 	}
 	return false
+}
+
+func GetSessionID(r *http.Request) uuid.UUID {
+	if sessionID, ok := r.Context().Value(SessionIDKey).(uuid.UUID); ok {
+		return sessionID
+	}
+	return uuid.Nil
 }
 
 func GetRequestID(r *http.Request) string {

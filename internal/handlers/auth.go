@@ -46,6 +46,11 @@ type RegisterRequest struct {
 	Password string `json:"password"`
 }
 
+const (
+	MaxFailedLoginAttempts = 5
+	AccountLockoutDuration = 15 * time.Minute
+)
+
 type LoginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
@@ -199,12 +204,36 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if user.LockedUntil != nil && time.Now().Before(*user.LockedUntil) {
+		http.Error(w, "Account is temporarily locked due to too many failed login attempts", http.StatusTooManyRequests)
+		return
+	}
+
 	if !h.authService.CheckPassword(req.Password, user.PasswordHash) {
+		failedCount := user.FailedLoginCount + 1
+		updates := map[string]interface{}{
+			"failed_login_count": failedCount,
+		}
+
+		if failedCount >= MaxFailedLoginAttempts {
+			lockedUntil := time.Now().Add(AccountLockoutDuration)
+			updates["locked_until"] = lockedUntil
+		}
+
+		h.db.Model(&user).Updates(updates)
+
 		if h.loginTracker != nil {
 			h.loginTracker.RecordFailure(identifier)
 		}
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
+	}
+
+	if user.FailedLoginCount > 0 || user.LockedUntil != nil {
+		h.db.Model(&user).Updates(map[string]interface{}{
+			"failed_login_count": 0,
+			"locked_until":       nil,
+		})
 	}
 
 	if h.loginTracker != nil {
@@ -352,12 +381,25 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.db.Where("user_id = ? AND token = ?", user.ID, req.RefreshToken).Delete(&models.RefreshToken{})
+	if claims.TokenFamily != "" {
+		h.db.Where("user_id = ? AND token_family = ?", user.ID, claims.TokenFamily).Delete(&models.RefreshToken{})
+		h.db.Where("user_id = ?", user.ID).Delete(&models.Session{})
+		http.Error(w, "Token reuse detected, all sessions revoked", http.StatusUnauthorized)
+		return
+	}
 
-	h.sendAuthResponse(w, &user, r)
+	if claims.TokenFamily == "" {
+		h.db.Where("user_id = ? AND token = ?", user.ID, req.RefreshToken).Delete(&models.RefreshToken{})
+	}
+
+	h.sendAuthResponseWithRotation(w, &user, r)
 }
 
 func (h *AuthHandler) sendAuthResponse(w http.ResponseWriter, user *models.User, r *http.Request) {
+	h.sendAuthResponseWithRotation(w, user, r)
+}
+
+func (h *AuthHandler) sendAuthResponseWithRotation(w http.ResponseWriter, user *models.User, r *http.Request) {
 	sessionID := uuid.New()
 	accessToken, err := h.authService.GenerateToken(user, sessionID)
 	if err != nil {
@@ -365,7 +407,13 @@ func (h *AuthHandler) sendAuthResponse(w http.ResponseWriter, user *models.User,
 		return
 	}
 
-	refreshToken, err := h.authService.GenerateRefreshToken(user)
+	tokenFamily, err := auth.GenerateTokenFamily()
+	if err != nil {
+		http.Error(w, "Failed to generate token family", http.StatusInternalServerError)
+		return
+	}
+
+	refreshToken, err := h.authService.GenerateRefreshTokenWithFamily(user, tokenFamily)
 	if err != nil {
 		http.Error(w, "Failed to generate refresh token", http.StatusInternalServerError)
 		return
@@ -381,6 +429,16 @@ func (h *AuthHandler) sendAuthResponse(w http.ResponseWriter, user *models.User,
 		UserAgent: r.UserAgent(),
 	}
 	h.db.Create(&session)
+
+	dbRefreshToken := models.RefreshToken{
+		ID:          uuid.New(),
+		UserID:      user.ID,
+		Token:       refreshToken,
+		TokenFamily: tokenFamily,
+		ExpiresAt:   time.Now().Add(h.cfg.Auth.RefreshExpiration),
+		CreatedAt:   time.Now(),
+	}
+	h.db.Create(&dbRefreshToken)
 
 	response := AuthResponse{
 		AccessToken:  accessToken,

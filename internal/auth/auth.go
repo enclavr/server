@@ -32,11 +32,13 @@ var (
 )
 
 const (
-	MinPasswordLength = 8
-	RequireUppercase  = true
-	RequireLowercase  = true
-	RequireNumber     = true
-	RequireSpecial    = true
+	MinPasswordLength    = 8
+	RequireUppercase     = true
+	RequireLowercase     = true
+	RequireNumber        = true
+	RequireSpecial       = true
+	PasswordHistoryCount = 5
+	PasswordMaxAgeDays   = 90
 )
 
 type Claims struct {
@@ -48,8 +50,9 @@ type Claims struct {
 }
 
 type RefreshClaims struct {
-	UserID uuid.UUID `json:"user_id"`
-	Type   string    `json:"type"`
+	UserID      uuid.UUID `json:"user_id"`
+	Type        string    `json:"type"`
+	TokenFamily string    `json:"token_family,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -112,6 +115,27 @@ func (s *AuthService) ValidatePasswordStrength(password string) error {
 	return nil
 }
 
+func (s *AuthService) CheckPasswordHistory(password string, historyHashes []string) error {
+	if len(historyHashes) == 0 {
+		return nil
+	}
+
+	for _, hash := range historyHashes {
+		if s.CheckPassword(password, hash) {
+			return fmt.Errorf("password cannot be one of the last %d passwords used", PasswordHistoryCount)
+		}
+	}
+	return nil
+}
+
+func (s *AuthService) IsPasswordExpired(passwordChangedAt *time.Time) bool {
+	if passwordChangedAt == nil {
+		return true
+	}
+	expiryDate := passwordChangedAt.AddDate(0, 0, PasswordMaxAgeDays)
+	return time.Now().After(expiryDate)
+}
+
 func (s *AuthService) GenerateToken(user *models.User, sessionID ...uuid.UUID) (string, error) {
 	claims := Claims{
 		UserID:   user.ID,
@@ -133,9 +157,14 @@ func (s *AuthService) GenerateToken(user *models.User, sessionID ...uuid.UUID) (
 }
 
 func (s *AuthService) GenerateRefreshToken(user *models.User) (string, error) {
+	return s.GenerateRefreshTokenWithFamily(user, "")
+}
+
+func (s *AuthService) GenerateRefreshTokenWithFamily(user *models.User, tokenFamily string) (string, error) {
 	claims := RefreshClaims{
-		UserID: user.ID,
-		Type:   "refresh",
+		UserID:      user.ID,
+		Type:        "refresh",
+		TokenFamily: tokenFamily,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(s.cfg.RefreshExpiration)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -149,6 +178,9 @@ func (s *AuthService) GenerateRefreshToken(user *models.User) (string, error) {
 
 func (s *AuthService) ValidateToken(tokenString string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
 		return []byte(s.cfg.JWTSecret), nil
 	})
 
@@ -165,6 +197,9 @@ func (s *AuthService) ValidateToken(tokenString string) (*Claims, error) {
 
 func (s *AuthService) ValidateRefreshToken(tokenString string) (*RefreshClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &RefreshClaims{}, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
 		return []byte(s.cfg.JWTSecret), nil
 	})
 
@@ -181,6 +216,14 @@ func (s *AuthService) ValidateRefreshToken(tokenString string) (*RefreshClaims, 
 
 func GenerateState() (string, error) {
 	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(b), nil
+}
+
+func GenerateTokenFamily() (string, error) {
+	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
@@ -267,6 +310,9 @@ func (s *AuthService) ValidatePasswordResetToken(tokenString string) (*RefreshCl
 
 func (s *AuthService) validateTokenType(tokenString, expectedType string) (*RefreshClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &RefreshClaims{}, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
 		return []byte(s.cfg.JWTSecret), nil
 	})
 
