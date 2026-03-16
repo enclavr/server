@@ -613,28 +613,73 @@ func (h *Hub) sendToClient(targetUserID uuid.UUID, msg *Message) {
 }
 
 func (h *Hub) broadcastToRoom(roomID uuid.UUID, msg *Message, excludeUserID uuid.UUID) {
+	if roomID == uuid.Nil {
+		wsLogger.Warn("broadcastToRoom called with nil roomID",
+			"exclude_user_id", excludeUserID,
+			"message_type", msg.Type)
+		return
+	}
+
 	roomMutex := h.getRoomMutex(roomID)
 	if roomMutex != nil {
 		roomMutex.RLock()
 	}
-	if r, ok := h.rooms[roomID]; ok {
-		r.mutex.RLock()
-		for client := range r.clients {
-			if client.userID != excludeUserID {
-				select {
-				case client.send <- msg.encode():
-				default:
-					close(client.send)
-					delete(r.clients, client)
-					h.activeClients.Add(-1)
-				}
-			}
+	r, ok := h.rooms[roomID]
+	if !ok {
+		wsLogger.Debug("Broadcast to non-existent room",
+			"room_id", roomID,
+			"message_type", msg.Type)
+		if roomMutex != nil {
+			roomMutex.RUnlock()
 		}
-		r.mutex.RUnlock()
+		return
 	}
+	r.mutex.RLock()
+	clientCount := len(r.clients)
+	if clientCount == 0 {
+		wsLogger.Debug("Broadcast to empty room",
+			"room_id", roomID,
+			"message_type", msg.Type)
+		r.mutex.RUnlock()
+		if roomMutex != nil {
+			roomMutex.RUnlock()
+		}
+		return
+	}
+
+	deliveredCount := 0
+	for client := range r.clients {
+		if excludeUserID != (uuid.UUID{}) && client.userID == excludeUserID {
+			continue
+		}
+		select {
+		case client.send <- msg.encode():
+			deliveredCount++
+		default:
+			wsLogger.Warn("Failed to deliver message, channel full",
+				"connection_id", client.connectionID,
+				"user_id", client.userID,
+				"room_id", roomID)
+			close(client.send)
+			delete(r.clients, client)
+			h.activeClients.Add(-1)
+		}
+	}
+	r.mutex.RUnlock()
 	if roomMutex != nil {
 		roomMutex.RUnlock()
 	}
+
+	h.totalMessages.Add(1)
+	metrics.MessagesSent.Add(float64(deliveredCount))
+	metrics.WebSocketMessagesTotal.WithLabelValues(msg.Type, "sent").Add(float64(deliveredCount))
+
+	wsLogger.Debug("Broadcast to room",
+		"room_id", roomID,
+		"message_type", msg.Type,
+		"client_count", clientCount,
+		"delivered", deliveredCount,
+		"excluded", excludeUserID)
 }
 
 func (h *Hub) BroadcastToRoom(roomID uuid.UUID, msg *Message, excludeUserID uuid.UUID) {
@@ -1246,10 +1291,32 @@ func (h *Hub) GetRoomStats(roomID uuid.UUID) *RoomStats {
 }
 
 func (c *Client) handleMessage(msg *Message) {
+	defer func() {
+		if r := recover(); r != nil {
+			wsLogger.Error("Panic recovered in handleMessage",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"room_id", c.roomID,
+				"message_type", msg.Type,
+				"panic", r)
+			c.RecordError(fmt.Errorf("panic in message handler: %v", r))
+			c.sendErrorMessage("Internal error processing message")
+		}
+	}()
+
 	if msg == nil {
 		wsLogger.Error("Received nil message",
 			"connection_id", c.connectionID,
 			"user_id", c.userID)
+		return
+	}
+
+	if c.GetState() != StateConnected && c.GetState() != StateConnecting {
+		wsLogger.Warn("Received message in invalid state",
+			"connection_id", c.connectionID,
+			"user_id", c.userID,
+			"state", c.GetState(),
+			"message_type", msg.Type)
 		return
 	}
 
@@ -1392,6 +1459,16 @@ func (c *Client) handleMessage(msg *Message) {
 		c.handleUserPresenceSubscribe(msg)
 	case "ping-pong":
 		c.handlePingPong(msg)
+	case "client-ready":
+		c.handleClientReady(msg)
+	case "typing-status":
+		c.handleTypingStatus(msg)
+	case "user-presence-bulk-subscribe":
+		c.handlePresenceBulkSubscribe(msg)
+	case "notification-preferences":
+		c.handleNotificationPreferences(msg)
+	case "get-notification-preferences":
+		c.handleGetNotificationPreferences(msg)
 	default:
 		wsLogger.Warn("Unknown message type",
 			"connection_id", c.connectionID,
@@ -3841,4 +3918,357 @@ func (c *Client) handlePingPong(msg *Message) {
 		"connection_id", c.connectionID,
 		"user_id", c.userID,
 		"latency_ms", latencyMs)
+}
+
+type ClientReadyPayload struct {
+	ClientVersion string `json:"client_version,omitempty"`
+	DeviceInfo    string `json:"device_info,omitempty"`
+	Platform      string `json:"platform,omitempty"` // "web", "desktop", "mobile"
+	Locale        string `json:"locale,omitempty"`
+}
+
+func (c *Client) handleClientReady(msg *Message) {
+	var payload ClientReadyPayload
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing client-ready payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			return
+		}
+	}
+
+	wsLogger.Info("Client ready",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"room_id", c.roomID,
+		"client_version", payload.ClientVersion,
+		"platform", payload.Platform)
+
+	c.SetState(StateConnected)
+
+	confirmMsg := &Message{
+		Type:      "client-ready-ack",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, confirmMsg)
+
+	c.hub.sendRoomState(c)
+	c.hub.sendOnlineUsersList(c.roomID, c.userID)
+
+	typingUsers := c.hub.GetTypingUsers(c.roomID)
+	typingPayload, _ := json.Marshal(typingUsers)
+	typingMsg := &Message{
+		Type:      "typing-users-list",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   typingPayload,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, typingMsg)
+
+	wsLogger.Debug("Sent initial room state to client",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"room_id", c.roomID)
+}
+
+type TypingStatusPayload struct {
+	Context     string `json:"context"`      // "room", "channel:123", "thread:456", "dm:789"
+	ContextID   string `json:"context_id"`   // ID of channel/thread/dm
+	ContextType string `json:"context_type"` // "room", "channel", "thread", "dm"
+	IsTyping    bool   `json:"is_typing"`
+}
+
+func (c *Client) handleTypingStatus(msg *Message) {
+	var payload TypingStatusPayload
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing typing-status payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			c.sendErrorMessage("Invalid typing status payload")
+			return
+		}
+	}
+
+	contextKey := payload.Context
+	if payload.ContextID != "" {
+		if payload.ContextType != "" {
+			contextKey = payload.ContextType + ":" + payload.ContextID
+		} else if payload.Context != "" {
+			contextKey = payload.Context
+		}
+	}
+
+	if payload.IsTyping {
+		c.hub.setTypingUser(c.userID, c.roomID, contextKey)
+	} else {
+		c.hub.clearTypingUser(c.userID)
+	}
+
+	statusPayload := TypingStatusPayload{
+		Context:     contextKey,
+		ContextID:   payload.ContextID,
+		ContextType: payload.ContextType,
+		IsTyping:    payload.IsTyping,
+	}
+
+	payloadBytes, _ := json.Marshal(statusPayload)
+	notifyMsg := &Message{
+		Type:      "typing-status-update",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+
+	wsLogger.Debug("Typing status updated",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"context", contextKey,
+		"is_typing", payload.IsTyping)
+}
+
+func (c *Client) handlePresenceBulkSubscribe(msg *Message) {
+	var payload struct {
+		UserIDs []uuid.UUID `json:"user_ids"`
+	}
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing presence bulk subscribe payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			c.sendErrorMessage("Invalid payload format")
+			return
+		}
+	}
+
+	userPresenceSubscriptions.Lock()
+	defer userPresenceSubscriptions.Unlock()
+	if userPresenceSubscriptions.subscriptions[c.userID] == nil {
+		userPresenceSubscriptions.subscriptions[c.userID] = make(map[uuid.UUID]bool)
+	}
+	for _, targetUserID := range payload.UserIDs {
+		userPresenceSubscriptions.subscriptions[c.userID][targetUserID] = true
+	}
+
+	presences := make([]PresenceInfo, 0, len(payload.UserIDs))
+	for _, uid := range payload.UserIDs {
+		if status, exists := c.hub.GetUserPresence(uid); exists {
+			presences = append(presences, PresenceInfo{
+				UserID: uid,
+				Status: status,
+				Since:  time.Now(),
+			})
+		} else {
+			presences = append(presences, PresenceInfo{
+				UserID: uid,
+				Status: "offline",
+			})
+		}
+	}
+
+	responsePayload, _ := json.Marshal(presences)
+	responseMsg := &Message{
+		Type:      "presence-bulk-update",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   responsePayload,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, responseMsg)
+
+	wsLogger.Debug("Presence bulk subscription handled",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"count", len(payload.UserIDs))
+}
+
+type NotificationPreferencePayload struct {
+	RoomID         string `json:"room_id,omitempty"`
+	Mentions       *bool  `json:"mentions,omitempty"`
+	Messages       *bool  `json:"messages,omitempty"`
+	Reactions      *bool  `json:"reactions,omitempty"`
+	VoiceActivity  *bool  `json:"voice_activity,omitempty"`
+	ThreadReplies  *bool  `json:"thread_replies,omitempty"`
+	DirectMessages *bool  `json:"direct_messages,omitempty"`
+	CustomKeyword  string `json:"custom_keyword,omitempty"`
+	SoundEnabled   *bool  `json:"sound_enabled,omitempty"`
+	DesktopEnabled *bool  `json:"desktop_enabled,omitempty"`
+	MobileEnabled  *bool  `json:"mobile_enabled,omitempty"`
+	MuteDuration   int    `json:"mute_duration,omitempty"` // minutes, 0 = indefinite
+}
+
+type RoomNotificationPreferences struct {
+	RoomID         string    `json:"room_id"`
+	Mentions       bool      `json:"mentions"`
+	Messages       bool      `json:"messages"`
+	Reactions      bool      `json:"reactions"`
+	VoiceActivity  bool      `json:"voice_activity"`
+	ThreadReplies  bool      `json:"thread_replies"`
+	DirectMessages bool      `json:"direct_messages"`
+	CustomKeyword  string    `json:"custom_keyword,omitempty"`
+	SoundEnabled   bool      `json:"sound_enabled"`
+	DesktopEnabled bool      `json:"desktop_enabled"`
+	MobileEnabled  bool      `json:"mobile_enabled"`
+	MuteDuration   int       `json:"mute_duration"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+func (c *Client) handleNotificationPreferences(msg *Message) {
+	var payload NotificationPreferencePayload
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing notification preferences payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			c.sendErrorMessage("Invalid notification preferences payload")
+			return
+		}
+	}
+
+	roomID := c.roomID
+	if payload.RoomID != "" {
+		if parsedRoomID, err := uuid.Parse(payload.RoomID); err == nil {
+			roomID = parsedRoomID
+		}
+	}
+
+	key := fmt.Sprintf("%s:%s", c.userID, roomID)
+	c.hub.notificationMutex.RLock()
+	existing, exists := c.hub.notificationSettings[key]
+	c.hub.notificationMutex.RUnlock()
+
+	prefs := &RoomNotificationPreferences{
+		RoomID:    roomID.String(),
+		UpdatedAt: time.Now(),
+	}
+
+	if exists && existing != nil {
+		prefs.Mentions = existing.MentionOnly || existing.Enabled
+		prefs.Messages = existing.Enabled
+		prefs.SoundEnabled = existing.Sound
+		prefs.DesktopEnabled = existing.DesktopNotify
+	} else {
+		prefs.Mentions = true
+		prefs.Messages = true
+		prefs.Reactions = true
+		prefs.VoiceActivity = true
+		prefs.ThreadReplies = true
+		prefs.DirectMessages = true
+		prefs.SoundEnabled = true
+		prefs.DesktopEnabled = true
+		prefs.MobileEnabled = true
+	}
+
+	if payload.Mentions != nil {
+		prefs.Mentions = *payload.Mentions
+	}
+	if payload.Messages != nil {
+		prefs.Messages = *payload.Messages
+	}
+	if payload.Reactions != nil {
+		prefs.Reactions = *payload.Reactions
+	}
+	if payload.VoiceActivity != nil {
+		prefs.VoiceActivity = *payload.VoiceActivity
+	}
+	if payload.ThreadReplies != nil {
+		prefs.ThreadReplies = *payload.ThreadReplies
+	}
+	if payload.DirectMessages != nil {
+		prefs.DirectMessages = *payload.DirectMessages
+	}
+	if payload.CustomKeyword != "" {
+		prefs.CustomKeyword = payload.CustomKeyword
+	}
+	if payload.SoundEnabled != nil {
+		prefs.SoundEnabled = *payload.SoundEnabled
+	}
+	if payload.DesktopEnabled != nil {
+		prefs.DesktopEnabled = *payload.DesktopEnabled
+	}
+	if payload.MobileEnabled != nil {
+		prefs.MobileEnabled = *payload.MobileEnabled
+	}
+	if payload.MuteDuration > 0 {
+		prefs.MuteDuration = payload.MuteDuration
+	}
+
+	c.hub.notificationMutex.Lock()
+	c.hub.notificationSettings[key] = &RoomNotificationSettings{
+		Enabled:       prefs.Messages,
+		Sound:         prefs.SoundEnabled,
+		MentionOnly:   !prefs.Mentions,
+		DesktopNotify: prefs.DesktopEnabled,
+	}
+	c.hub.notificationMutex.Unlock()
+
+	prefsPayload, _ := json.Marshal(prefs)
+	confirmMsg := &Message{
+		Type:      "notification-preferences-updated",
+		RoomID:    roomID,
+		UserID:    c.userID,
+		Payload:   prefsPayload,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, confirmMsg)
+
+	wsLogger.Info("Notification preferences updated",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"room_id", roomID)
+}
+
+func (c *Client) handleGetNotificationPreferences(msg *Message) {
+	roomID := c.roomID
+	var payload struct {
+		RoomID string `json:"room_id,omitempty"`
+	}
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err == nil && payload.RoomID != "" {
+			if parsedRoomID, err := uuid.Parse(payload.RoomID); err == nil {
+				roomID = parsedRoomID
+			}
+		}
+	}
+
+	key := fmt.Sprintf("%s:%s", c.userID, roomID)
+	c.hub.mutex.RLock()
+	existing, exists := c.hub.notificationSettings[key]
+	c.hub.mutex.RUnlock()
+
+	prefs := &RoomNotificationPreferences{
+		RoomID:    roomID.String(),
+		UpdatedAt: time.Now(),
+	}
+
+	if exists && existing != nil {
+		prefs.Mentions = existing.MentionOnly || existing.Enabled
+		prefs.Messages = existing.Enabled
+		prefs.SoundEnabled = existing.Sound
+		prefs.DesktopEnabled = existing.DesktopNotify
+	}
+
+	prefsPayload, _ := json.Marshal(prefs)
+	responseMsg := &Message{
+		Type:      "notification-preferences",
+		RoomID:    roomID,
+		UserID:    c.userID,
+		Payload:   prefsPayload,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, responseMsg)
 }
