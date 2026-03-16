@@ -123,3 +123,35 @@ func (ale *AuditLogExclusion) BeforeCreate(tx *gorm.DB) error {
 	}
 	return nil
 }
+
+type MessageAttachmentMetadata struct {
+	ID               uuid.UUID `gorm:"type:uuid;primary_key" json:"id"`
+	AttachmentID     uuid.UUID `gorm:"type:uuid;not null;index" json:"attachment_id"`
+	BlurHash         string    `gorm:"size:100" json:"blur_hash"`
+	OriginalFilename string    `gorm:"size:500" json:"original_filename"`
+	FileExtension    string    `gorm:"size:20" json:"file_extension"`
+	Encoding         string    `gorm:"size:50" json:"encoding"`
+	BitRate          *int      `json:"bit_rate"`
+	SampleRate       *int      `json:"sample_rate"`
+	Channels         *int      `json:"channels"`
+	DurationMs       *int      `json:"duration_ms"`
+	Width            *int      `json:"width"`
+	Height           *int      `json:"height"`
+	AspectRatio      string    `gorm:"size:20" json:"aspect_ratio"`
+	ColorModel       string    `gorm:"size:50" json:"color_model"`
+	PaletteColors    string    `gorm:"type:jsonb" json:"palette_colors"`
+	Metadata         string    `gorm:"type:jsonb" json:"metadata"`
+	CreatedAt        time.Time `json:"created_at"`
+
+	Attachment Attachment `gorm:"foreignKey:AttachmentID" json:"-"`
+}
+
+func (mam *MessageAttachmentMetadata) BeforeCreate(tx *gorm.DB) error {
+	if mam.ID == uuid.Nil {
+		mam.ID = uuid.New()
+	}
+	if mam.CreatedAt.IsZero() {
+		mam.CreatedAt = time.Now()
+	}
+	return nil
+}
