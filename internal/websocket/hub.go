@@ -46,6 +46,18 @@ func SetLogger(logger Logger) {
 	wsLogger = logger
 }
 
+type TraceContext struct {
+	TraceID uuid.UUID
+	SpanID  uuid.UUID
+}
+
+func NewTraceContext() TraceContext {
+	return TraceContext{
+		TraceID: uuid.New(),
+		SpanID:  uuid.New(),
+	}
+}
+
 const (
 	MaxErrorThreshold    = 10
 	IdleTimeout          = 5 * time.Minute
@@ -55,6 +67,8 @@ const (
 	MaxMessageQueueSize  = 256
 	PingInterval         = 30 * time.Second
 	PongTimeout          = 60 * time.Second
+	MaxReconnectDelay    = 30 * time.Second
+	MinReconnectDelay    = 1 * time.Second
 )
 
 var messageBufferPool = sync.Pool{
@@ -76,6 +90,42 @@ type WebSocketError struct {
 
 func (e *WebSocketError) Error() string {
 	return fmt.Sprintf("[%s] %s (conn=%s, user=%s)", e.Code, e.Message, e.Connection, e.UserID)
+}
+
+type ReconnectBackoff struct {
+	attempt    int
+	maxAttempt int
+	delay      time.Duration
+	minDelay   time.Duration
+	maxDelay   time.Duration
+}
+
+func NewReconnectBackoff() *ReconnectBackoff {
+	return &ReconnectBackoff{
+		attempt:    0,
+		maxAttempt: MaxReconnectAttempts,
+		delay:      MinReconnectDelay,
+		minDelay:   MinReconnectDelay,
+		maxDelay:   MaxReconnectDelay,
+	}
+}
+
+func (rb *ReconnectBackoff) Reset() {
+	rb.attempt = 0
+	rb.delay = rb.minDelay
+}
+
+func (rb *ReconnectBackoff) Next() (time.Duration, bool) {
+	if rb.attempt >= rb.maxAttempt {
+		return 0, false
+	}
+	rb.attempt++
+	delay := rb.delay
+	rb.delay = time.Duration(float64(rb.delay) * 2)
+	if rb.delay > rb.maxDelay {
+		rb.delay = rb.maxDelay
+	}
+	return delay, true
 }
 
 type ConnectionState int32
@@ -620,6 +670,13 @@ func (h *Hub) broadcastToRoom(roomID uuid.UUID, msg *Message, excludeUserID uuid
 		return
 	}
 
+	if msg == nil {
+		wsLogger.Error("broadcastToRoom called with nil message",
+			"room_id", roomID,
+			"exclude_user_id", excludeUserID)
+		return
+	}
+
 	roomMutex := h.getRoomMutex(roomID)
 	if roomMutex != nil {
 		roomMutex.RLock()
@@ -767,13 +824,23 @@ func (c *Client) ReadPump() {
 		c.hub.clearTypingUser(c.userID)
 		c.hub.unregister <- c
 
+		disconnectDuration := time.Since(c.connectedAt)
+		closeCode := websocket.CloseNormalClosure
+		closeReason := "normal"
+
 		if c.conn != nil {
 			if closeErr := c.conn.Close(); closeErr != nil {
+				if ce, ok := closeErr.(*websocket.CloseError); ok {
+					closeCode = ce.Code
+					closeReason = string(websocket.FormatCloseMessage(ce.Code, ce.Text))
+				}
 				wsLogger.Error("Error closing connection",
 					"connection_id", c.connectionID,
 					"user_id", c.userID,
 					"remote_addr", c.remoteAddr,
-					"error", closeErr)
+					"close_code", closeCode,
+					"close_reason", closeReason,
+					"error", closeErr.Error())
 			}
 		} else {
 			wsLogger.Warn("Connection was nil during cleanup",
@@ -785,31 +852,27 @@ func (c *Client) ReadPump() {
 
 		errorCount := c.GetErrorCount()
 		lastErr := c.GetLastError()
+
+		fields := []interface{}{
+			"connection_id", c.connectionID,
+			"user_id", c.userID,
+			"room_id", c.roomID,
+			"remote_addr", c.remoteAddr,
+			"error_count", errorCount,
+			"packets_in", c.packetsIn.Load(),
+			"bytes_in", c.bytesIn.Load(),
+			"packets_out", c.packetsOut.Load(),
+			"bytes_out", c.bytesOut.Load(),
+			"connected_duration", disconnectDuration.String(),
+			"close_code", closeCode,
+			"close_reason", closeReason,
+		}
+
 		if lastErr != nil {
 			wsLogger.Info("Connection closed with errors",
-				"connection_id", c.connectionID,
-				"user_id", c.userID,
-				"room_id", c.roomID,
-				"remote_addr", c.remoteAddr,
-				"error_count", errorCount,
-				"last_error", lastErr,
-				"packets_in", c.packetsIn.Load(),
-				"bytes_in", c.bytesIn.Load(),
-				"packets_out", c.packetsOut.Load(),
-				"bytes_out", c.bytesOut.Load(),
-				"connected_duration", time.Since(c.connectedAt).String())
+				append(fields, "last_error", lastErr.Error())...)
 		} else {
-			wsLogger.Info("Connection closed cleanly",
-				"connection_id", c.connectionID,
-				"user_id", c.userID,
-				"room_id", c.roomID,
-				"remote_addr", c.remoteAddr,
-				"error_count", errorCount,
-				"packets_in", c.packetsIn.Load(),
-				"bytes_in", c.bytesIn.Load(),
-				"packets_out", c.packetsOut.Load(),
-				"bytes_out", c.bytesOut.Load(),
-				"connected_duration", time.Since(c.connectedAt).String())
+			wsLogger.Info("Connection closed cleanly", fields...)
 		}
 		metrics.WebSocketConnections.Dec()
 	}()
@@ -1311,6 +1374,15 @@ func (c *Client) handleMessage(msg *Message) {
 		return
 	}
 
+	if msg.Type == "" {
+		wsLogger.Warn("Received message with empty type",
+			"connection_id", c.connectionID,
+			"user_id", c.userID,
+			"room_id", c.roomID)
+		c.sendErrorMessage("Message type is required")
+		return
+	}
+
 	if c.GetState() != StateConnected && c.GetState() != StateConnecting {
 		wsLogger.Warn("Received message in invalid state",
 			"connection_id", c.connectionID,
@@ -1320,8 +1392,8 @@ func (c *Client) handleMessage(msg *Message) {
 		return
 	}
 
-	if msg.RoomID == uuid.Nil {
-		wsLogger.Warn("Message missing room_id",
+	if msg.RoomID == uuid.Nil && msg.Type != "ping" && msg.Type != "heartbeat" && msg.Type != "client-ready" {
+		wsLogger.Warn("Message missing room_id for non-ping message",
 			"connection_id", c.connectionID,
 			"user_id", c.userID,
 			"message_type", msg.Type)
@@ -1469,6 +1541,18 @@ func (c *Client) handleMessage(msg *Message) {
 		c.handleNotificationPreferences(msg)
 	case "get-notification-preferences":
 		c.handleGetNotificationPreferences(msg)
+	case "enhanced-typing":
+		c.handleEnhancedTyping(msg)
+	case "presence-event":
+		c.handlePresenceEvent(msg)
+	case "subscribe-room-notifications":
+		c.handleSubscribeRoomNotifications(msg)
+	case "unsubscribe-room-notifications":
+		c.handleUnsubscribeRoomNotifications(msg)
+	case "get-online-users-detailed":
+		c.handleGetOnlineUsersDetailed(msg)
+	case "broadcast-status-update":
+		c.handleBroadcastStatusUpdate(msg)
 	default:
 		wsLogger.Warn("Unknown message type",
 			"connection_id", c.connectionID,
@@ -4271,4 +4355,427 @@ func (c *Client) handleGetNotificationPreferences(msg *Message) {
 		Timestamp: time.Now(),
 	}
 	c.hub.sendToClient(c.userID, responseMsg)
+}
+
+type EnhancedTypingPayload struct {
+	Context        string      `json:"context"`    // "room", "channel", "thread", "dm"
+	ContextID      string      `json:"context_id"` // ID of the context (channel_id, thread_id, dm_id)
+	ChannelID      string      `json:"channel_id,omitempty"`
+	ThreadID       string      `json:"thread_id,omitempty"`
+	DmID           string      `json:"dm_id,omitempty"`
+	IsTyping       bool        `json:"is_typing"`
+	MessageID      string      `json:"message_id,omitempty"` // For reply typing indicators
+	MentionedUsers []uuid.UUID `json:"mentioned_users,omitempty"`
+}
+
+type EnhancedTypingEvent struct {
+	UserID         uuid.UUID   `json:"user_id"`
+	RoomID         uuid.UUID   `json:"room_id"`
+	Context        string      `json:"context"`
+	ContextID      string      `json:"context_id"`
+	IsTyping       bool        `json:"is_typing"`
+	MessageID      string      `json:"message_id,omitempty"`
+	MentionedUsers []uuid.UUID `json:"mentioned_users,omitempty"`
+	Timestamp      time.Time   `json:"timestamp"`
+}
+
+func (c *Client) handleEnhancedTyping(msg *Message) {
+	var payload EnhancedTypingPayload
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing enhanced typing payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			c.sendErrorMessage("Invalid typing payload format")
+			return
+		}
+	}
+
+	contextKey := payload.Context
+	if payload.ContextID != "" {
+		contextKey = payload.Context + ":" + payload.ContextID
+	} else if payload.ChannelID != "" {
+		contextKey = "channel:" + payload.ChannelID
+	} else if payload.ThreadID != "" {
+		contextKey = "thread:" + payload.ThreadID
+	} else if payload.DmID != "" {
+		contextKey = "dm:" + payload.DmID
+	}
+
+	if payload.IsTyping {
+		c.hub.setTypingUser(c.userID, c.roomID, contextKey)
+	} else {
+		c.hub.clearTypingUser(c.userID)
+	}
+
+	typingEvent := EnhancedTypingEvent{
+		UserID:         c.userID,
+		RoomID:         c.roomID,
+		Context:        payload.Context,
+		ContextID:      payload.ContextID,
+		IsTyping:       payload.IsTyping,
+		MessageID:      payload.MessageID,
+		MentionedUsers: payload.MentionedUsers,
+		Timestamp:      time.Now(),
+	}
+
+	payloadBytes, err := json.Marshal(typingEvent)
+	if err != nil {
+		wsLogger.Error("Error marshaling enhanced typing event",
+			"connection_id", c.connectionID,
+			"error", err)
+		return
+	}
+
+	notifyMsg := &Message{
+		Type:      "enhanced-typing",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+
+	if payload.MentionedUsers != nil && len(payload.MentionedUsers) > 0 {
+		for _, mentionedUser := range payload.MentionedUsers {
+			c.hub.sendToClient(mentionedUser, notifyMsg)
+		}
+	} else {
+		c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+	}
+
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+
+	wsLogger.Debug("Enhanced typing event",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"context", contextKey,
+		"is_typing", payload.IsTyping,
+		"message_id", payload.MessageID)
+}
+
+type PresenceEventPayload struct {
+	UserID       uuid.UUID `json:"user_id"`
+	Status       string    `json:"status"` // "online", "idle", "away", "dnd", "offline"
+	Activity     string    `json:"activity,omitempty"`
+	CustomStatus string    `json:"custom_status,omitempty"`
+	Device       string    `json:"device,omitempty"` // "mobile", "desktop", "web"
+	Since        int64     `json:"since"`
+}
+
+type PresenceEvent struct {
+	UserID       uuid.UUID `json:"user_id"`
+	Status       string    `json:"status"`
+	Activity     string    `json:"activity,omitempty"`
+	CustomStatus string    `json:"custom_status,omitempty"`
+	Device       string    `json:"device,omitempty"`
+	Since        time.Time `json:"since"`
+	Timestamp    time.Time `json:"timestamp"`
+}
+
+func (c *Client) handlePresenceEvent(msg *Message) {
+	var payload PresenceEventPayload
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing presence event payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			c.sendErrorMessage("Invalid presence payload format")
+			return
+		}
+	}
+
+	validStatuses := map[string]bool{
+		"online": true, "idle": true, "away": true, "dnd": true, "offline": true,
+	}
+	if !validStatuses[payload.Status] {
+		wsLogger.Warn("Invalid presence status",
+			"connection_id", c.connectionID,
+			"user_id", c.userID,
+			"status", payload.Status)
+		c.sendErrorMessage("Invalid presence status")
+		return
+	}
+
+	c.hub.setUserPresence(c.userID, c.roomID, payload.Status)
+
+	presenceEvent := PresenceEvent{
+		UserID:       c.userID,
+		Status:       payload.Status,
+		Activity:     payload.Activity,
+		CustomStatus: payload.CustomStatus,
+		Device:       payload.Device,
+		Since:        time.Unix(payload.Since, 0),
+		Timestamp:    time.Now(),
+	}
+
+	payloadBytes, err := json.Marshal(presenceEvent)
+	if err != nil {
+		wsLogger.Error("Error marshaling presence event",
+			"connection_id", c.connectionID,
+			"error", err)
+		return
+	}
+
+	notifyMsg := &Message{
+		Type:      "presence-event",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+
+	wsLogger.Info("Presence event",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"status", payload.Status,
+		"activity", payload.Activity)
+}
+
+type RoomNotificationSubscription struct {
+	RoomID         uuid.UUID `json:"room_id"`
+	Types          []string  `json:"types"` // "user_joined", "user_left", "typing", "message", "mention"
+	NotifySelf     bool      `json:"notify_self"`
+	IncludeHistory bool      `json:"include_history"`
+}
+
+var roomNotificationSubscriptions = struct {
+	sync.RWMutex
+	subscriptions map[uuid.UUID]map[uuid.UUID][]string
+}{
+	subscriptions: make(map[uuid.UUID]map[uuid.UUID][]string),
+}
+
+func (c *Client) handleSubscribeRoomNotifications(msg *Message) {
+	var payload RoomNotificationSubscription
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing room notification subscription payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			c.sendErrorMessage("Invalid subscription payload format")
+			return
+		}
+	}
+
+	roomID := payload.RoomID
+	if roomID == uuid.Nil {
+		roomID = c.roomID
+	}
+
+	validTypes := map[string]bool{
+		"user_joined": true, "user_left": true, "typing": true,
+		"message": true, "mention": true, "reaction": true,
+		"voice_activity": true, "screen_share": true,
+	}
+
+	filteredTypes := make([]string, 0)
+	for _, t := range payload.Types {
+		if validTypes[t] {
+			filteredTypes = append(filteredTypes, t)
+		}
+	}
+
+	roomNotificationSubscriptions.Lock()
+	if roomNotificationSubscriptions.subscriptions[roomID] == nil {
+		roomNotificationSubscriptions.subscriptions[roomID] = make(map[uuid.UUID][]string)
+	}
+	roomNotificationSubscriptions.subscriptions[roomID][c.userID] = filteredTypes
+	roomNotificationSubscriptions.Unlock()
+
+	confirmMsg := &Message{
+		Type:      "room-notification-subscribed",
+		RoomID:    roomID,
+		UserID:    c.userID,
+		Payload:   msg.Payload,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, confirmMsg)
+
+	wsLogger.Info("User subscribed to room notifications",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"room_id", roomID,
+		"types", filteredTypes)
+}
+
+func (c *Client) handleUnsubscribeRoomNotifications(msg *Message) {
+	var payload struct {
+		RoomID uuid.UUID `json:"room_id"`
+	}
+	if len(msg.Payload) > 0 {
+		_ = json.Unmarshal(msg.Payload, &payload)
+	}
+
+	roomID := payload.RoomID
+	if roomID == uuid.Nil {
+		roomID = c.roomID
+	}
+
+	roomNotificationSubscriptions.Lock()
+	if roomNotificationSubscriptions.subscriptions[roomID] != nil {
+		delete(roomNotificationSubscriptions.subscriptions[roomID], c.userID)
+		if len(roomNotificationSubscriptions.subscriptions[roomID]) == 0 {
+			delete(roomNotificationSubscriptions.subscriptions, roomID)
+		}
+	}
+	roomNotificationSubscriptions.Unlock()
+
+	confirmMsg := &Message{
+		Type:      "room-notification-unsubscribed",
+		RoomID:    roomID,
+		UserID:    c.userID,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, confirmMsg)
+
+	wsLogger.Info("User unsubscribed from room notifications",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"room_id", roomID)
+}
+
+func (c *Client) handleGetOnlineUsersDetailed(msg *Message) {
+	var payload struct {
+		IncludePresence bool `json:"include_presence"`
+		IncludeActivity bool `json:"include_activity"`
+	}
+	if len(msg.Payload) > 0 {
+		_ = json.Unmarshal(msg.Payload, &payload)
+	}
+
+	clients := c.hub.GetRoomClients(c.roomID)
+
+	onlineUsers := make([]OnlineUser, 0, len(clients))
+	for _, client := range clients {
+		if client.userID == c.userID && c.roomID != uuid.Nil {
+			continue
+		}
+
+		presenceStatus, _ := c.hub.GetUserPresence(client.userID)
+		activity, hasActivity := c.hub.GetUserActivity(client.userID)
+
+		onlineUser := OnlineUser{
+			UserID:         client.userID,
+			ConnectionID:   client.connectionID,
+			State:          client.GetState().String(),
+			ConnectedAt:    client.connectedAt,
+			LastSeen:       client.GetLastSeen(),
+			PresenceStatus: presenceStatus,
+		}
+
+		if hasActivity {
+			onlineUser.ActiveChannelID = activity.RoomID.String()
+		}
+
+		onlineUsers = append(onlineUsers, onlineUser)
+	}
+
+	payloadBytes, err := json.Marshal(onlineUsers)
+	if err != nil {
+		wsLogger.Error("Error marshaling detailed online users",
+			"room_id", c.roomID,
+			"error", err)
+		return
+	}
+
+	responseMsg := &Message{
+		Type:      "online-users-detailed",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, responseMsg)
+
+	wsLogger.Debug("Sent detailed online users",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"room_id", c.roomID,
+		"count", len(onlineUsers))
+}
+
+type UserStatusUpdate struct {
+	UserID       uuid.UUID `json:"user_id"`
+	RoomID       uuid.UUID `json:"room_id"`
+	Status       string    `json:"status"` // "online", "idle", "away", "dnd"
+	CustomStatus string    `json:"custom_status,omitempty"`
+	Device       string    `json:"device,omitempty"`
+	Timestamp    time.Time `json:"timestamp"`
+}
+
+func (h *Hub) broadcastUserStatusUpdate(userID, roomID uuid.UUID, status, customStatus, device string) {
+	statusUpdate := UserStatusUpdate{
+		UserID:       userID,
+		RoomID:       roomID,
+		Status:       status,
+		CustomStatus: customStatus,
+		Device:       device,
+		Timestamp:    time.Now(),
+	}
+
+	payloadBytes, err := json.Marshal(statusUpdate)
+	if err != nil {
+		wsLogger.Error("Error marshaling user status update",
+			"user_id", userID,
+			"error", err)
+		return
+	}
+
+	msg := &Message{
+		Type:      "user-status-update",
+		RoomID:    roomID,
+		UserID:    userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	h.broadcastToRoom(roomID, msg, userID)
+}
+
+func (c *Client) handleBroadcastStatusUpdate(msg *Message) {
+	var payload struct {
+		Status       string `json:"status"`
+		CustomStatus string `json:"custom_status,omitempty"`
+		Device       string `json:"device,omitempty"`
+	}
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing broadcast status update payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			c.sendErrorMessage("Invalid payload format")
+			return
+		}
+	}
+
+	validStatuses := map[string]bool{
+		"online": true, "idle": true, "away": true, "dnd": true, "offline": true,
+	}
+	if !validStatuses[payload.Status] {
+		wsLogger.Warn("Invalid status in broadcast",
+			"connection_id", c.connectionID,
+			"user_id", c.userID,
+			"status", payload.Status)
+		c.sendErrorMessage("Invalid status")
+		return
+	}
+
+	c.hub.setUserPresence(c.userID, c.roomID, payload.Status)
+	c.hub.broadcastUserStatusUpdate(c.userID, c.roomID, payload.Status, payload.CustomStatus, payload.Device)
+
+	wsLogger.Info("Broadcast status update",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"room_id", c.roomID,
+		"status", payload.Status)
 }

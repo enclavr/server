@@ -2830,3 +2830,387 @@ func TestRoomNotification_Banned(t *testing.T) {
 		t.Errorf("expected duration permanent, got %s", decoded.Duration)
 	}
 }
+
+func TestEnhancedTypingPayload_Marshal(t *testing.T) {
+	payload := EnhancedTypingPayload{
+		Context:        "thread",
+		ContextID:      "thread-123",
+		ChannelID:      "channel-456",
+		ThreadID:       "thread-123",
+		IsTyping:       true,
+		MessageID:      "msg-789",
+		MentionedUsers: []uuid.UUID{uuid.New(), uuid.New()},
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	var decoded EnhancedTypingPayload
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if decoded.Context != "thread" {
+		t.Errorf("expected context thread, got %s", decoded.Context)
+	}
+	if decoded.IsTyping != true {
+		t.Errorf("expected isTyping true, got %v", decoded.IsTyping)
+	}
+	if len(decoded.MentionedUsers) != 2 {
+		t.Errorf("expected 2 mentioned users, got %d", len(decoded.MentionedUsers))
+	}
+}
+
+func TestEnhancedTypingEvent_Marshal(t *testing.T) {
+	event := EnhancedTypingEvent{
+		UserID:         uuid.New(),
+		RoomID:         uuid.New(),
+		Context:        "channel",
+		ContextID:      "ch-123",
+		IsTyping:       true,
+		MessageID:      "msg-456",
+		MentionedUsers: []uuid.UUID{uuid.New()},
+		Timestamp:      time.Now(),
+	}
+
+	data, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	var decoded EnhancedTypingEvent
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if decoded.Context != "channel" {
+		t.Errorf("expected context channel, got %s", decoded.Context)
+	}
+	if decoded.IsTyping != true {
+		t.Errorf("expected isTyping true, got %v", decoded.IsTyping)
+	}
+}
+
+func TestClient_HandleEnhancedTyping(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID1 := uuid.New()
+	userID2 := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client1 := &Client{
+		hub:    hub,
+		userID: userID1,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	client2 := &Client{
+		hub:    hub,
+		userID: userID2,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.rooms[roomID].clients[client1] = true
+	hub.rooms[roomID].clients[client2] = true
+	hub.userConnections[userID1] = client1
+	hub.userConnections[userID2] = client2
+	hub.activeClients.Add(2)
+	hub.mutex.Unlock()
+
+	payload, _ := json.Marshal(EnhancedTypingPayload{
+		Context:   "thread",
+		ContextID: "thread-123",
+		IsTyping:  true,
+		MessageID: "msg-456",
+	})
+	msg := &Message{
+		Type:      "enhanced-typing",
+		UserID:    userID1,
+		RoomID:    roomID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+	}
+
+	client1.handleMessage(msg)
+
+	select {
+	case received := <-client2.send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "enhanced-typing" {
+			t.Errorf("expected enhanced-typing, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for enhanced typing message")
+	}
+}
+
+func TestPresenceEventPayload_Marshal(t *testing.T) {
+	payload := PresenceEventPayload{
+		UserID:       uuid.New(),
+		Status:       "dnd",
+		Activity:     "Playing Game",
+		CustomStatus: "BRB",
+		Device:       "desktop",
+		Since:        time.Now().Unix(),
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	var decoded PresenceEventPayload
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if decoded.Status != "dnd" {
+		t.Errorf("expected status dnd, got %s", decoded.Status)
+	}
+	if decoded.Activity != "Playing Game" {
+		t.Errorf("expected activity Playing Game, got %s", decoded.Activity)
+	}
+}
+
+func TestClient_HandlePresenceEvent(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID1 := uuid.New()
+	userID2 := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client1 := &Client{
+		hub:    hub,
+		userID: userID1,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+	client2 := &Client{
+		hub:    hub,
+		userID: userID2,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.rooms[roomID].clients[client1] = true
+	hub.rooms[roomID].clients[client2] = true
+	hub.userConnections[userID1] = client1
+	hub.userConnections[userID2] = client2
+	hub.activeClients.Add(2)
+	hub.mutex.Unlock()
+
+	payload, _ := json.Marshal(PresenceEventPayload{
+		UserID:       userID1,
+		Status:       "away",
+		Activity:     "Idle",
+		CustomStatus: "",
+		Device:       "web",
+		Since:        time.Now().Unix(),
+	})
+	msg := &Message{
+		Type:      "presence-event",
+		UserID:    userID1,
+		RoomID:    roomID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+	}
+
+	client1.handleMessage(msg)
+
+	select {
+	case received := <-client2.send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "presence-event" {
+			t.Errorf("expected presence-event, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for presence event")
+	}
+}
+
+func TestClient_HandlePresenceEvent_InvalidStatus(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	userID := uuid.New()
+	roomID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client := &Client{
+		hub:    hub,
+		userID: userID,
+		roomID: roomID,
+		send:   make(chan []byte, 10),
+	}
+
+	hub.rooms[roomID].clients[client] = true
+	hub.userConnections[userID] = client
+	hub.activeClients.Add(1)
+	hub.mutex.Unlock()
+
+	payload, _ := json.Marshal(PresenceEventPayload{
+		UserID: userID,
+		Status: "invalid_status",
+	})
+	msg := &Message{
+		Type:      "presence-event",
+		UserID:    userID,
+		RoomID:    roomID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+	}
+
+	client.handleMessage(msg)
+
+	select {
+	case received := <-client.send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "error" {
+			t.Errorf("expected error message, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for error message")
+	}
+}
+
+func TestClient_HandleGetOnlineUsersDetailed(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	roomID := uuid.New()
+	userID := uuid.New()
+
+	hub.mutex.Lock()
+	hub.rooms[roomID] = &room{
+		clients: make(map[*Client]bool),
+	}
+
+	client := &Client{
+		hub:          hub,
+		userID:       userID,
+		roomID:       roomID,
+		send:         make(chan []byte, 10),
+		connectionID: uuid.New(),
+	}
+
+	hub.rooms[roomID].clients[client] = true
+	hub.userConnections[userID] = client
+	hub.activeClients.Add(1)
+	hub.mutex.Unlock()
+
+	msg := &Message{
+		Type:      "get-online-users-detailed",
+		UserID:    userID,
+		RoomID:    roomID,
+		Timestamp: time.Now(),
+	}
+
+	client.handleMessage(msg)
+
+	select {
+	case received := <-client.send:
+		var m Message
+		if err := json.Unmarshal(received, &m); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if m.Type != "online-users-detailed" {
+			t.Errorf("expected online-users-detailed, got %s", m.Type)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for online users detailed")
+	}
+}
+
+func TestReconnectBackoff_Next(t *testing.T) {
+	rb := NewReconnectBackoff()
+
+	delay1, ok := rb.Next()
+	if !ok {
+		t.Error("expected first attempt to succeed")
+	}
+	if delay1 < MinReconnectDelay {
+		t.Errorf("expected delay >= %v, got %v", MinReconnectDelay, delay1)
+	}
+
+	delay2, ok := rb.Next()
+	if !ok {
+		t.Error("expected second attempt to succeed")
+	}
+	if delay2 <= delay1 {
+		t.Errorf("expected delay to increase, got %v <= %v", delay2, delay1)
+	}
+
+	rb.Reset()
+	delay3, ok := rb.Next()
+	if !ok {
+		t.Error("expected attempt after reset to succeed")
+	}
+	if delay3 != MinReconnectDelay {
+		t.Errorf("expected delay to reset to %v, got %v", MinReconnectDelay, delay3)
+	}
+}
+
+func TestReconnectBackoff_MaxAttempts(t *testing.T) {
+	rb := NewReconnectBackoff()
+
+	for i := 0; i < MaxReconnectAttempts; i++ {
+		_, ok := rb.Next()
+		if !ok && i < MaxReconnectAttempts-1 {
+			t.Errorf("expected attempt %d to succeed", i+1)
+		}
+	}
+
+	_, ok := rb.Next()
+	if ok {
+		t.Error("expected last attempt to fail")
+	}
+}
+
+func TestTraceContext_New(t *testing.T) {
+	tc := NewTraceContext()
+
+	if tc.TraceID == uuid.Nil {
+		t.Error("expected non-nil TraceID")
+	}
+	if tc.SpanID == uuid.Nil {
+		t.Error("expected non-nil SpanID")
+	}
+}
+
+func TestHub_BroadcastToRoom_NilMessage(t *testing.T) {
+	hub := NewHub()
+	defer hub.Shutdown()
+
+	roomID := uuid.New()
+	msg := (*Message)(nil)
+
+	hub.BroadcastToRoom(roomID, msg, uuid.Nil)
+}
