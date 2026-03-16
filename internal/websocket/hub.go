@@ -40,6 +40,20 @@ func (l StructuredLogger) Error(msg string, fields ...interface{}) {
 	log.Printf("[ERROR] "+msg, fields...)
 }
 
+func getCloseCode(err error) int {
+	if ce, ok := err.(*websocket.CloseError); ok {
+		return ce.Code
+	}
+	return -1
+}
+
+func isTemporaryNetworkError(err error) bool {
+	if ce, ok := err.(*websocket.CloseError); ok {
+		return ce.Code == websocket.CloseAbnormalClosure
+	}
+	return false
+}
+
 var wsLogger Logger = StructuredLogger{}
 
 func SetLogger(logger Logger) {
@@ -502,13 +516,15 @@ func (h *Hub) BroadcastToRoomBatch(roomID uuid.UUID, msg *Message, excludeUserID
 }
 
 func (h *Hub) gracefulShutdown() {
-	wsLogger.Info("WebSocket hub shutting down...")
+	wsLogger.Info("WebSocket hub shutting down...",
+		"active_clients", h.activeClients.Load(),
+		"rooms", len(h.rooms))
 	h.batchTicker.Stop()
 
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
 
-	for _, r := range h.rooms {
+	for roomID, r := range h.rooms {
 		r.mutex.Lock()
 		clientCount := len(r.clients)
 		for client := range r.clients {
@@ -517,13 +533,18 @@ func (h *Hub) gracefulShutdown() {
 		r.clients = make(map[*Client]bool)
 		r.mutex.Unlock()
 		h.activeClients.Add(-int64(clientCount))
+		wsLogger.Debug("Room disconnected during shutdown",
+			"room_id", roomID,
+			"clients", clientCount)
 	}
 
 	h.rooms = make(map[uuid.UUID]*room)
 	h.userConnections = make(map[uuid.UUID]*Client)
 	h.roomMutexes = make(map[uuid.UUID]*sync.RWMutex)
 
-	wsLogger.Info("WebSocket hub shutdown complete")
+	wsLogger.Info("WebSocket hub shutdown complete",
+		"total_messages", h.totalMessages.Load(),
+		"uptime", time.Since(h.startedAt))
 }
 
 func (h *Hub) Shutdown() {
@@ -921,23 +942,46 @@ func (c *Client) ReadPump() {
 				c.bytesIn.Add(int64(len(message)))
 			}
 
+			var errType, errDetail string
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseTLSHandshake) {
-				wsLogger.Warn("WebSocket unexpected close error",
+				errType = "unexpected_close"
+				errDetail = "connection lost or terminated abnormally"
+				wsLogger.Error("WebSocket unexpected close error",
 					"connection_id", c.connectionID,
 					"user_id", c.userID,
-					"error", err)
+					"room_id", c.roomID,
+					"error_type", errType,
+					"close_code", getCloseCode(err),
+					"error", err.Error())
 				c.RecordError(err)
 			} else if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				errType = "graceful_close"
+				errDetail = "client initiated close"
 				wsLogger.Info("WebSocket closed normally",
 					"connection_id", c.connectionID,
 					"user_id", c.userID,
-					"error", err)
-			} else {
-				wsLogger.Warn("WebSocket read error",
+					"room_id", c.roomID,
+					"close_code", getCloseCode(err))
+			} else if isTemporaryNetworkError(err) {
+				errType = "temporary_network"
+				errDetail = "temporary network issue"
+				wsLogger.Warn("WebSocket temporary network error (will retry)",
 					"connection_id", c.connectionID,
 					"user_id", c.userID,
-					"error", err)
+					"error", err.Error())
+				c.RecordError(err)
+			} else {
+				errType = "read_error"
+				errDetail = "failed to read message"
+				wsLogger.Error("WebSocket read error",
+					"connection_id", c.connectionID,
+					"user_id", c.userID,
+					"error_type", errType,
+					"error", err.Error())
+				c.RecordError(err)
 			}
+
+			c.sendDisconnectNotification(errType, errDetail)
 			break
 		}
 
@@ -1044,6 +1088,27 @@ func (c *Client) sendErrorMessage(errMsg string) {
 		Timestamp: time.Now(),
 	}
 	c.hub.sendToClient(c.userID, msg)
+}
+
+func (c *Client) sendDisconnectNotification(errType, errDetail string) {
+	disconnectPayload := map[string]interface{}{
+		"type":        errType,
+		"detail":      errDetail,
+		"reconnect":   true,
+		"retry_after": 5000,
+	}
+	payload, _ := json.Marshal(disconnectPayload)
+	msg := &Message{
+		Type:      "disconnect-notification",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+	}
+	select {
+	case c.send <- msg.encode():
+	default:
+	}
 }
 
 func (c *Client) WritePump() {
@@ -1553,6 +1618,18 @@ func (c *Client) handleMessage(msg *Message) {
 		c.handleGetOnlineUsersDetailed(msg)
 	case "broadcast-status-update":
 		c.handleBroadcastStatusUpdate(msg)
+	case "message-ack":
+		c.handleMessageAck(msg)
+	case "message-delivery-status":
+		c.handleMessageDeliveryStatus(msg)
+	case "user-focus":
+		c.handleUserFocus(msg)
+	case "user-focus-query":
+		c.handleUserFocusQuery(msg)
+	case "media-state-sync":
+		c.handleMediaStateSync(msg)
+	case "media-state-request":
+		c.handleMediaStateRequest(msg)
 	default:
 		wsLogger.Warn("Unknown message type",
 			"connection_id", c.connectionID,
@@ -4778,4 +4855,279 @@ func (c *Client) handleBroadcastStatusUpdate(msg *Message) {
 		"user_id", c.userID,
 		"room_id", c.roomID,
 		"status", payload.Status)
+}
+
+type MessageAckPayload struct {
+	MessageID   string `json:"message_id"`
+	Delivered   bool   `json:"delivered"`
+	ReceivedAt  int64  `json:"received_at"`
+	SequenceNum int64  `json:"sequence_num,omitempty"`
+}
+
+func (c *Client) handleMessageAck(msg *Message) {
+	var payload MessageAckPayload
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing message ack payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			return
+		}
+	}
+
+	wsLogger.Debug("Message ack received",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"message_id", payload.MessageID,
+		"delivered", payload.Delivered,
+		"sequence", payload.SequenceNum)
+
+	ackResponse := map[string]interface{}{
+		"message_id":   payload.MessageID,
+		"server_time":  time.Now().UnixMilli(),
+		"ack":          true,
+		"sequence_num": payload.SequenceNum,
+	}
+	payloadBytes, _ := json.Marshal(ackResponse)
+	responseMsg := &Message{
+		Type:      "message-ack-confirmed",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, responseMsg)
+}
+
+type MessageDeliveryStatusPayload struct {
+	MessageIDs []string `json:"message_ids"`
+	Status     string   `json:"status"` // "delivered", "read", "failed"
+}
+
+func (c *Client) handleMessageDeliveryStatus(msg *Message) {
+	var payload MessageDeliveryStatusPayload
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing message delivery status payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			return
+		}
+	}
+
+	validStatuses := map[string]bool{
+		"delivered": true, "read": true, "failed": true,
+	}
+	if !validStatuses[payload.Status] {
+		wsLogger.Warn("Invalid delivery status",
+			"connection_id", c.connectionID,
+			"status", payload.Status)
+		return
+	}
+
+	wsLogger.Debug("Message delivery status update",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"message_count", len(payload.MessageIDs),
+		"status", payload.Status)
+
+	notifyMsg := &Message{
+		Type:      "message-delivery-status",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   msg.Payload,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+}
+
+type UserFocusPayload struct {
+	FocusContext string `json:"focus_context"` // "room", "channel", "thread", "dm", "settings", "profile"
+	ContextID    string `json:"context_id"`
+	PanelID      string `json:"panel_id"` // "chat", "voice", "members", "files"
+	IsFocused    bool   `json:"is_focused"`
+}
+
+var userFocusState = struct {
+	sync.RWMutex
+	focus map[uuid.UUID]UserFocusPayload
+}{
+	focus: make(map[uuid.UUID]UserFocusPayload),
+}
+
+func (c *Client) handleUserFocus(msg *Message) {
+	var payload UserFocusPayload
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing user focus payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			return
+		}
+	}
+
+	validContexts := map[string]bool{
+		"room": true, "channel": true, "thread": true,
+		"dm": true, "settings": true, "profile": true,
+	}
+	if !validContexts[payload.FocusContext] {
+		wsLogger.Warn("Invalid focus context",
+			"connection_id", c.connectionID,
+			"context", payload.FocusContext)
+		return
+	}
+
+	userFocusState.Lock()
+	if payload.IsFocused {
+		userFocusState.focus[c.userID] = payload
+	} else {
+		delete(userFocusState.focus, c.userID)
+	}
+	userFocusState.Unlock()
+
+	focusPayload := UserFocusPayload{
+		FocusContext: payload.FocusContext,
+		ContextID:    payload.ContextID,
+		PanelID:      payload.PanelID,
+		IsFocused:    payload.IsFocused,
+	}
+	payloadBytes, _ := json.Marshal(focusPayload)
+
+	notifyMsg := &Message{
+		Type:      "user-focus",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	wsLogger.Debug("User focus changed",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"context", payload.FocusContext,
+		"panel", payload.PanelID,
+		"focused", payload.IsFocused)
+}
+
+func (c *Client) handleUserFocusQuery(msg *Message) {
+	var payload struct {
+		UserIDs []uuid.UUID `json:"user_ids"`
+	}
+	if len(msg.Payload) > 0 {
+		_ = json.Unmarshal(msg.Payload, &payload)
+	}
+
+	userFocusState.RLock()
+	focusData := make(map[uuid.UUID]UserFocusPayload)
+	for _, uid := range payload.UserIDs {
+		if focus, exists := userFocusState.focus[uid]; exists {
+			focusData[uid] = focus
+		}
+	}
+	userFocusState.RUnlock()
+
+	payloadBytes, _ := json.Marshal(focusData)
+	responseMsg := &Message{
+		Type:      "user-focus-data",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, responseMsg)
+}
+
+type MediaStatePayload struct {
+	Muted         bool `json:"muted"`
+	Deafened      bool `json:"deafened"`
+	ScreenSharing bool `json:"screen_sharing"`
+	VideoEnabled  bool `json:"video_enabled"`
+	VoiceActive   bool `json:"voice_active"`
+}
+
+var mediaStateStore = struct {
+	sync.RWMutex
+	states map[uuid.UUID]MediaStatePayload
+}{
+	states: make(map[uuid.UUID]MediaStatePayload),
+}
+
+func (c *Client) handleMediaStateSync(msg *Message) {
+	var payload MediaStatePayload
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing media state sync payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			return
+		}
+	}
+
+	mediaStateStore.Lock()
+	mediaStateStore.states[c.userID] = payload
+	mediaStateStore.Unlock()
+
+	payloadBytes, _ := json.Marshal(payload)
+	notifyMsg := &Message{
+		Type:      "media-state-update",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+
+	wsLogger.Debug("Media state synced",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"muted", payload.Muted,
+		"deafened", payload.Deafened,
+		"screen_sharing", payload.ScreenSharing)
+}
+
+func (c *Client) handleMediaStateRequest(msg *Message) {
+	var payload struct {
+		UserIDs []uuid.UUID `json:"user_ids"`
+	}
+	if len(msg.Payload) > 0 {
+		_ = json.Unmarshal(msg.Payload, &payload)
+	}
+
+	mediaStateStore.RLock()
+	states := make(map[uuid.UUID]MediaStatePayload)
+	for _, uid := range payload.UserIDs {
+		if state, exists := mediaStateStore.states[uid]; exists {
+			states[uid] = state
+		}
+	}
+	mediaStateStore.RUnlock()
+
+	payloadBytes, _ := json.Marshal(states)
+	responseMsg := &Message{
+		Type:      "media-state-data",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.sendToClient(c.userID, responseMsg)
+
+	wsLogger.Debug("Media state request handled",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"requested_users", len(payload.UserIDs),
+		"returned_states", len(states))
 }
