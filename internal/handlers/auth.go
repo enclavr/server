@@ -381,15 +381,20 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if claims.TokenFamily != "" {
-		h.db.Where("user_id = ? AND token_family = ?", user.ID, claims.TokenFamily).Delete(&models.RefreshToken{})
-		h.db.Where("user_id = ?", user.ID).Delete(&models.Session{})
-		http.Error(w, "Token reuse detected, all sessions revoked", http.StatusUnauthorized)
+	var existingToken models.RefreshToken
+	if err := h.db.Where("user_id = ? AND token = ?", user.ID, req.RefreshToken).First(&existingToken).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			h.db.Where("user_id = ?", user.ID).Delete(&models.Session{})
+			http.Error(w, "Token reuse detected, all sessions revoked", http.StatusUnauthorized)
+			return
+		}
+		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
 
-	if claims.TokenFamily == "" {
-		h.db.Where("user_id = ? AND token = ?", user.ID, req.RefreshToken).Delete(&models.RefreshToken{})
+	h.db.Where("user_id = ? AND token = ?", user.ID, req.RefreshToken).Delete(&models.RefreshToken{})
+	if existingToken.TokenFamily != "" {
+		h.db.Where("user_id = ? AND token_family = ?", user.ID, existingToken.TokenFamily).Delete(&models.RefreshToken{})
 	}
 
 	h.sendAuthResponseWithRotation(w, &user, r)
