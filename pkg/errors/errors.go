@@ -235,3 +235,64 @@ func Timeout() *Error {
 func RateLimitExceeded(limit string) *Error {
 	return New(ErrCodeRateLimit, fmt.Sprintf("Rate limit exceeded: %s", limit))
 }
+
+const (
+	ErrCodeCircuitOpen     Code = "CIRCUIT_OPEN"
+	ErrCodeCircuitHalfOpen Code = "CIRCUIT_HALF_OPEN"
+	ErrCodeCircuitFailed   Code = "CIRCUIT_FAILED"
+	ErrCodeRetryExhausted  Code = "RETRY_EXHAUSTED"
+	ErrCodeServiceDown     Code = "SERVICE_DOWN"
+)
+
+func CircuitOpen(service string) *Error {
+	return New(ErrCodeCircuitOpen, fmt.Sprintf("Circuit breaker open for service: %s", service))
+}
+
+func CircuitHalfOpen(service string) *Error {
+	return New(ErrCodeCircuitHalfOpen, fmt.Sprintf("Circuit breaker half-open for service: %s", service))
+}
+
+func CircuitFailed(service string, err error) *Error {
+	if err == nil {
+		return New(ErrCodeCircuitFailed, fmt.Sprintf("Circuit breaker failed for service: %s", service))
+	}
+	return Wrap(err, ErrCodeCircuitFailed, fmt.Sprintf("Circuit breaker failed for service: %s", service))
+}
+
+func RetryExhausted(err error) *Error {
+	if err == nil {
+		return New(ErrCodeRetryExhausted, "All retry attempts exhausted")
+	}
+	return Wrap(err, ErrCodeRetryExhausted, "All retry attempts exhausted")
+}
+
+func ServiceDown(service string) *Error {
+	return New(ErrCodeServiceDown, fmt.Sprintf("Service unavailable: %s", service))
+}
+
+type ErrorWithContext struct {
+	*Error
+	Context map[string]interface{}
+}
+
+func (e *ErrorWithContext) WithContext(key string, value interface{}) *ErrorWithContext {
+	if e.Context == nil {
+		e.Context = make(map[string]interface{})
+	}
+	e.Context[key] = value
+	return e
+}
+
+func NewErrorWithContext(code Code, message string) *ErrorWithContext {
+	return &ErrorWithContext{
+		Error:   New(code, message),
+		Context: make(map[string]interface{}),
+	}
+}
+
+func WrapWithContext(err error, code Code, message string) *ErrorWithContext {
+	return &ErrorWithContext{
+		Error:   Wrap(err, code, message),
+		Context: make(map[string]interface{}),
+	}
+}

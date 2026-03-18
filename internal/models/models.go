@@ -1094,13 +1094,61 @@ func (rt *RoomTemplate) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
-type PrivacyLevel string
+type NotificationType string
 
 const (
-	PrivacyLevelEveryone PrivacyLevel = "everyone"
-	PrivacyLevelFriends  PrivacyLevel = "friends"
-	PrivacyLevelNobody   PrivacyLevel = "nobody"
+	NotificationTypeMention       NotificationType = "mention"
+	NotificationTypeReply         NotificationType = "reply"
+	NotificationTypeReaction      NotificationType = "reaction"
+	NotificationTypeDirectMessage NotificationType = "direct_message"
+	NotificationTypeRoomInvite    NotificationType = "room_invite"
+	NotificationTypeRoomMention   NotificationType = "room_mention"
+	NotificationTypeFriendRequest NotificationType = "friend_request"
+	NotificationTypeFriendAccept  NotificationType = "friend_accept"
+	NotificationTypePollVote      NotificationType = "poll_vote"
+	NotificationTypePollEnd       NotificationType = "poll_end"
+	NotificationTypeThreadReply   NotificationType = "thread_reply"
+	NotificationTypeSystem        NotificationType = "system"
 )
+
+type NotificationStatus string
+
+const (
+	NotificationStatusUnread   NotificationStatus = "unread"
+	NotificationStatusRead     NotificationStatus = "read"
+	NotificationStatusArchived NotificationStatus = "archived"
+)
+
+type Notification struct {
+	ID        uuid.UUID        `gorm:"type:uuid;primary_key" json:"id"`
+	UserID    uuid.UUID        `gorm:"type:uuid;not null;index" json:"user_id"`
+	Type      NotificationType `gorm:"type:varchar(30);not null;index" json:"type"`
+	Title     string           `gorm:"size:200;not null" json:"title"`
+	Body      string           `gorm:"type:text" json:"body"`
+	Link      string           `gorm:"size:500" json:"link"`
+	ActorID   *uuid.UUID       `gorm:"type:uuid" json:"actor_id"`
+	ActorName string           `gorm:"size:100" json:"actor_name"`
+	RoomID    *uuid.UUID       `gorm:"type:uuid;index" json:"room_id"`
+	MessageID *uuid.UUID       `gorm:"type:uuid" json:"message_id"`
+	IsRead    bool             `gorm:"default:false;index" json:"is_read"`
+	Archived  bool             `gorm:"default:false;index" json:"archived"`
+	Data      string           `gorm:"type:jsonb" json:"data"`
+	CreatedAt time.Time        `json:"created_at"`
+	ReadAt    *time.Time       `json:"read_at"`
+
+	User User `gorm:"foreignKey:UserID" json:"-"`
+	Room Room `gorm:"foreignKey:RoomID" json:"-"`
+}
+
+func (n *Notification) BeforeCreate(tx *gorm.DB) error {
+	if n.ID == uuid.Nil {
+		n.ID = uuid.New()
+	}
+	if n.CreatedAt.IsZero() {
+		n.CreatedAt = time.Now()
+	}
+	return nil
+}
 
 type UserPrivacySettings struct {
 	ID                    uuid.UUID `gorm:"type:uuid;primary_key" json:"id"`

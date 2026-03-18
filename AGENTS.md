@@ -309,6 +309,95 @@ gh run rerun --failed                          # Rerun failed jobs
 
 This project has access to MCP (Model Context Protocol) tools that you MUST use when applicable.
 
+### Chrome DevTools MCP Tools
+
+Use these tools for browser automation, web testing, and UI interaction.
+
+```bash
+# List all open pages
+chrome-devtools_list_pages
+
+# Navigate to a URL
+chrome-devtools_navigate_page --type "url" --url "http://localhost:8080"
+
+# Take a snapshot of the current page (text-based accessibility tree)
+chrome-devtools_take_snapshot
+
+# Click an element by UID
+chrome-devtools_click --uid "1_5"
+
+# Fill a form input
+chrome-devtools_fill --uid "1_4" --value "username"
+
+# Press a key
+chrome-devtools_press_key --key "Enter"
+
+# Type text into an input
+chrome-devtools_type_text --text "search query"
+
+# Fill multiple form elements
+chrome-devtools_fill_form --elements [{"uid": "1_4", "value": "user"}, {"uid": "1_6", "value": "pass"}]
+
+# Hover over an element
+chrome-devtools_hover --uid "1_7"
+
+# Drag one element onto another
+chrome-devtools_drag --from_uid "element1" --to_uid "element2"
+
+# Upload a file
+chrome-devtools_upload_file --uid "file_input" --filePath "/path/to/file.txt"
+
+# Handle dialogs (alert, confirm, prompt)
+chrome-devtools_handle_dialog --action "accept" --promptText "response"
+
+# Evaluate JavaScript
+chrome-devtools_evaluate_script --function "() => document.title"
+
+# Wait for text to appear
+chrome-devtools_wait_for --text ["Success", "Loaded"] --timeout 5000
+
+# Take a screenshot
+chrome-devtools_take_screenshot --filePath "screenshot.png"
+
+# Resize viewport
+chrome-devtools_resize_page --width 1920 --height 1080
+
+# Emulate device features
+chrome-devtools_emulate --viewport "390x844" --userAgent "Mozilla/..."
+
+# Network request inspection
+chrome-devtools_list_network_requests
+chrome-devtools_get_network_request --reqid 1
+
+# Console messages
+chrome-devtools_list_console_messages
+chrome-devtools_get_console_message --msgid 1
+
+# Performance tracing
+chrome-devtools_performance_start_trace --filePath "trace.json"
+chrome-devtools_performance_stop_trace --filePath "trace.json"
+chrome-devtools_performance_analyze_insight --insightName "LCP" --insightSetId "abc"
+
+# Lighthouse audit
+chrome-devtools_lighthouse_audit --device "mobile" --mode "navigation"
+
+# Memory snapshot
+chrome-devtools_take_memory_snapshot --filePath "heap.json"
+
+# Close a page
+chrome-devtools_close_page --pageId 1
+```
+
+**When to use Chrome DevTools MCP tools:**
+- ✅ Use for E2E testing and verifying UI renders correctly
+- ✅ Use for testing login flows, forms, and user interactions
+- ✅ Use for verifying pages load without errors
+- ✅ Use for debugging CSS/layout issues
+- ✅ Use for taking visual snapshots of pages
+- ✅ Use for checking console errors
+- ✅ Use for performance analysis
+- 🚫 Don't use for API testing (use actual HTTP requests instead)
+
 ### Neon Database MCP Tools
 
 Use these tools for PostgreSQL database operations. NEVER use direct SQL clients or psql.
