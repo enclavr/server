@@ -22,15 +22,20 @@ func NewAuditHandler(db *database.Database) *AuditHandler {
 }
 
 type AuditLogResponse struct {
-	ID         uuid.UUID          `json:"id"`
-	UserID     uuid.UUID          `json:"user_id"`
-	Username   string             `json:"username"`
-	Action     models.AuditAction `json:"action"`
-	TargetType string             `json:"target_type"`
-	TargetID   uuid.UUID          `json:"target_id"`
-	Details    string             `json:"details"`
-	IPAddress  string             `json:"ip_address"`
-	CreatedAt  time.Time          `json:"created_at"`
+	ID           uuid.UUID          `json:"id"`
+	UserID       uuid.UUID          `json:"user_id"`
+	Username     string             `json:"username"`
+	Action       models.AuditAction `json:"action"`
+	TargetType   string             `json:"target_type"`
+	TargetID     uuid.UUID          `json:"target_id"`
+	Details      string             `json:"details"`
+	OldValue     string             `json:"old_value"`
+	NewValue     string             `json:"new_value"`
+	IPAddress    string             `json:"ip_address"`
+	UserAgent    string             `json:"user_agent"`
+	Success      bool               `json:"success"`
+	ErrorMessage string             `json:"error_message"`
+	CreatedAt    time.Time          `json:"created_at"`
 }
 
 type AuditLogListResponse struct {
@@ -79,7 +84,7 @@ func (h *AuditHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 	offset := (page - 1) * pageSize
 
 	var logs []models.AuditLog
-	query := h.db.Model(&models.AuditLog{}).Order("created_at DESC").Offset(offset).Limit(pageSize)
+	query := h.db.Preload("User").Order("created_at DESC").Offset(offset).Limit(pageSize)
 
 	if actionFilter != "" {
 		query = query.Where("action = ?", actionFilter)
@@ -99,31 +104,26 @@ func (h *AuditHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 
 	logResponses := make([]AuditLogResponse, len(logs))
 
-	userIDs := make([]uuid.UUID, len(logs))
 	for i, log := range logs {
-		userIDs[i] = log.UserID
-	}
-
-	userIDToUsername := make(map[uuid.UUID]string)
-	if len(userIDs) > 0 {
-		var users []models.User
-		h.db.Where("id IN ?", userIDs).Find(&users)
-		for _, u := range users {
-			userIDToUsername[u.ID] = u.Username
+		username := ""
+		if log.User.ID != uuid.Nil {
+			username = log.User.Username
 		}
-	}
-
-	for i, log := range logs {
 		logResponses[i] = AuditLogResponse{
-			ID:         log.ID,
-			UserID:     log.UserID,
-			Username:   userIDToUsername[log.UserID],
-			Action:     log.Action,
-			TargetType: log.TargetType,
-			TargetID:   log.TargetID,
-			Details:    log.Details,
-			IPAddress:  log.IPAddress,
-			CreatedAt:  log.CreatedAt,
+			ID:           log.ID,
+			UserID:       log.UserID,
+			Username:     username,
+			Action:       log.Action,
+			TargetType:   log.TargetType,
+			TargetID:     log.TargetID,
+			Details:      log.Details,
+			OldValue:     log.OldValue,
+			NewValue:     log.NewValue,
+			IPAddress:    log.IPAddress,
+			UserAgent:    log.UserAgent,
+			Success:      log.Success,
+			ErrorMessage: log.ErrorMessage,
+			CreatedAt:    log.CreatedAt,
 		}
 	}
 
@@ -148,13 +148,22 @@ func (h *AuditHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuditHandler) LogAction(userID uuid.UUID, action models.AuditAction, targetType string, targetID uuid.UUID, details string, ipAddress string) {
+	h.LogActionWithDetails(userID, action, targetType, targetID, details, "", "", ipAddress, "", true, "")
+}
+
+func (h *AuditHandler) LogActionWithDetails(userID uuid.UUID, action models.AuditAction, targetType string, targetID uuid.UUID, details string, oldValue string, newValue string, ipAddress string, userAgent string, success bool, errorMessage string) {
 	log := models.AuditLog{
-		UserID:     userID,
-		Action:     action,
-		TargetType: targetType,
-		TargetID:   targetID,
-		Details:    details,
-		IPAddress:  ipAddress,
+		UserID:       userID,
+		Action:       action,
+		TargetType:   targetType,
+		TargetID:     targetID,
+		Details:      details,
+		OldValue:     oldValue,
+		NewValue:     newValue,
+		IPAddress:    ipAddress,
+		UserAgent:    userAgent,
+		Success:      success,
+		ErrorMessage: errorMessage,
 	}
 
 	if err := h.db.Create(&log).Error; err != nil {

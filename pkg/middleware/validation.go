@@ -202,12 +202,12 @@ func ValidateRequestBody(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		contentType := r.Header.Get("Content-Type")
 		if contentType == "" || !strings.Contains(contentType, "application/json") {
-			WriteAPIError(w, errors.InvalidParam("Content-Type", "must be application/json"))
+			WriteAPIError(w, r, errors.InvalidParam("Content-Type", "must be application/json"))
 			return
 		}
 
 		if r.ContentLength > 10*1024*1024 {
-			WriteAPIError(w, errors.New(errors.ErrCodeTooLarge, "Request body too large (max 10MB)"))
+			WriteAPIError(w, r, errors.New(errors.ErrCodeTooLarge, "Request body too large (max 10MB)"))
 			return
 		}
 
@@ -291,7 +291,7 @@ func (v *QueryValidator) ValidateQuery(r *http.Request) []string {
 func (v *QueryValidator) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if validationErrors := v.ValidateQuery(r); len(validationErrors) > 0 {
-			WriteError(w, http.StatusBadRequest, "Query parameter validation failed: "+strings.Join(validationErrors, ", "))
+			WriteError(w, r, http.StatusBadRequest, "Query parameter validation failed: "+strings.Join(validationErrors, ", "))
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -302,7 +302,7 @@ func ValidateRequestSize(maxBytes int64) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.ContentLength > maxBytes {
-				WriteError(w, http.StatusRequestEntityTooLarge, "Request body too large")
+				WriteError(w, r, http.StatusRequestEntityTooLarge, "Request body too large")
 				return
 			}
 

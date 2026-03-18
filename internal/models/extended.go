@@ -8,23 +8,27 @@ import (
 )
 
 type Attachment struct {
-	ID           uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
-	MessageID    uuid.UUID      `gorm:"type:uuid;not null;index" json:"message_id"`
-	FileID       uuid.UUID      `gorm:"type:uuid;not null" json:"file_id"`
-	UserID       uuid.UUID      `gorm:"type:uuid;not null" json:"user_id"`
-	FileName     string         `gorm:"size:255;not null" json:"file_name"`
-	FileSize     int64          `gorm:"not null" json:"file_size"`
-	ContentType  string         `gorm:"size:100;not null" json:"content_type"`
-	ThumbnailURL string         `gorm:"size:500" json:"thumbnail_url"`
-	Width        int            `json:"width"`
-	Height       int            `json:"height"`
-	Duration     int            `json:"duration"`
-	AltText      string         `gorm:"size:500" json:"alt_text"`
-	IsVoiceMemo  bool           `gorm:"default:false" json:"is_voice_memo"`
-	WaveformData string         `gorm:"type:text" json:"waveform_data"`
-	Metadata     string         `gorm:"type:jsonb" json:"metadata"`
-	CreatedAt    time.Time      `json:"created_at"`
-	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
+	ID            uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	MessageID     uuid.UUID      `gorm:"type:uuid;not null;index" json:"message_id"`
+	FileID        uuid.UUID      `gorm:"type:uuid;not null" json:"file_id"`
+	UserID        uuid.UUID      `gorm:"type:uuid;not null;index" json:"user_id"`
+	FileName      string         `gorm:"size:255;not null" json:"file_name"`
+	FileSize      int64          `gorm:"not null" json:"file_size"`
+	ContentType   string         `gorm:"size:100;not null" json:"content_type"`
+	ThumbnailURL  string         `gorm:"size:500" json:"thumbnail_url"`
+	Width         int            `json:"width"`
+	Height        int            `json:"height"`
+	Duration      int            `json:"duration"`
+	AltText       string         `gorm:"size:500" json:"alt_text"`
+	IsVoiceMemo   bool           `gorm:"default:false" json:"is_voice_memo"`
+	WaveformData  string         `gorm:"type:text" json:"waveform_data"`
+	Metadata      string         `gorm:"type:jsonb" json:"metadata"`
+	IsShared      bool           `gorm:"default:false" json:"is_shared"`
+	ShareCount    int            `gorm:"default:0" json:"share_count"`
+	DownloadCount int            `gorm:"default:0" json:"download_count"`
+	ViewCount     int            `gorm:"default:0" json:"view_count"`
+	CreatedAt     time.Time      `json:"created_at"`
+	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
 
 	Message Message `gorm:"foreignKey:MessageID" json:"-"`
 	File    File    `gorm:"foreignKey:FileID" json:"-"`
@@ -152,6 +156,35 @@ func (mam *MessageAttachmentMetadata) BeforeCreate(tx *gorm.DB) error {
 	}
 	if mam.CreatedAt.IsZero() {
 		mam.CreatedAt = time.Now()
+	}
+	return nil
+}
+
+type AttachmentShare struct {
+	ID            uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	AttachmentID  uuid.UUID      `gorm:"type:uuid;not null;index" json:"attachment_id"`
+	SharedBy      uuid.UUID      `gorm:"type:uuid;not null" json:"shared_by"`
+	ShareURL      string         `gorm:"size:500;uniqueIndex" json:"share_url"`
+	Password      string         `gorm:"size:255" json:"-"`
+	ExpiresAt     *time.Time     `json:"expires_at"`
+	MaxDownloads  int            `gorm:"default:0" json:"max_downloads"`
+	DownloadCount int            `gorm:"default:0" json:"download_count"`
+	ViewCount     int            `gorm:"default:0" json:"view_count"`
+	IsActive      bool           `gorm:"default:true" json:"is_active"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
+
+	Attachment Attachment `gorm:"foreignKey:AttachmentID" json:"-"`
+	User       User       `gorm:"foreignKey:SharedBy" json:"-"`
+}
+
+func (as *AttachmentShare) BeforeCreate(tx *gorm.DB) error {
+	if as.ID == uuid.Nil {
+		as.ID = uuid.New()
+	}
+	if as.CreatedAt.IsZero() {
+		as.CreatedAt = time.Now()
 	}
 	return nil
 }

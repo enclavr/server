@@ -108,6 +108,11 @@ func (es *EmailService) loadDefaultTemplates() {
 			HTMLBody: twoFactorHTML,
 			TextBody: twoFactorText,
 		},
+		"new_device_login": {
+			Subject:  "New Device Login Detected",
+			HTMLBody: newDeviceLoginHTML,
+			TextBody: newDeviceLoginText,
+		},
 	}
 
 	for name, tmpl := range templates {
@@ -367,6 +372,16 @@ func (es *EmailService) SendTwoFactorCodeEmail(ctx context.Context, to EmailReci
 	})
 }
 
+func (es *EmailService) SendNewDeviceLoginEmail(ctx context.Context, to EmailRecipient, device, ip, location, loginTime string) error {
+	return es.SendTemplate(ctx, to, "new_device_login", EmailData{
+		"Name":     to.Name,
+		"Device":   device,
+		"IP":       ip,
+		"Location": location,
+		"Time":     loginTime,
+	})
+}
+
 func (es *EmailService) IsEnabled() bool {
 	return es.enabled
 }
@@ -396,6 +411,8 @@ func (es *EmailService) ParseTemplate(name string) (*templateInfo, error) {
 		subject = "Your Password Has Been Changed"
 	case "two_factor_code":
 		subject = "Your Two-Factor Authentication Code"
+	case "new_device_login":
+		subject = "New Device Login Detected"
 	}
 
 	return &templateInfo{t, subject}, nil
@@ -601,6 +618,55 @@ Your authentication code is: {{.Code}}
 This code will expire in 5 minutes.
 
 If you didn't request this code, please ignore this email.`
+
+var newDeviceLoginHTML = `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>New Device Login</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <h2>New Device Login</h2>
+    
+    <p>Hi {{.Name}},</p>
+    
+    <p>We detected a new login to your Enclavr account.</p>
+    
+    <div style="background-color: #f5f5f5; padding: 15px; border-radius: 6px; margin: 20px 0;">
+        <p style="margin: 5px 0;"><strong>Device:</strong> {{.Device}}</p>
+        <p style="margin: 5px 0;"><strong>IP Address:</strong> {{.IP}}</p>
+        <p style="margin: 5px 0;"><strong>Location:</strong> {{.Location}}</p>
+        <p style="margin: 5px 0;"><strong>Time:</strong> {{.Time}}</p>
+    </div>
+    
+    <p>If this was you, you can ignore this email.</p>
+    
+    <p>If you didn't log in, please:</p>
+    <ul>
+        <li>Change your password immediately</li>
+        <li>Enable two-factor authentication</li>
+        <li>Review your account settings</li>
+    </ul>
+</body>
+</html>`
+
+var newDeviceLoginText = `New Device Login
+
+Hi {{.Name}},
+
+We detected a new login to your Enclavr account.
+
+Device: {{.Device}}
+IP Address: {{.IP}}
+Location: {{.Location}}
+Time: {{.Time}}
+
+If this was you, you can ignore this email.
+
+If you didn't log in, please:
+- Change your password immediately
+- Enable two-factor authentication
+- Review your account settings`
 
 func nowFormat(format string) string {
 	return time.Now().Format(format)

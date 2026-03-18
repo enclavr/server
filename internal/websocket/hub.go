@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -83,6 +84,7 @@ const (
 	PongTimeout          = 60 * time.Second
 	MaxReconnectDelay    = 30 * time.Second
 	MinReconnectDelay    = 1 * time.Second
+	MaxReconnectStates   = 100
 )
 
 var messageBufferPool = sync.Pool{
@@ -220,6 +222,26 @@ type Hub struct {
 
 	roomStats      map[uuid.UUID]*RoomStats
 	roomStatsMutex sync.RWMutex
+
+	reconnectStates map[uuid.UUID]*ReconnectState
+	reconnectMutex  sync.RWMutex
+	reconnectTicker *time.Ticker
+
+	blockedUsers map[uuid.UUID]map[uuid.UUID]bool
+	blockMutex   sync.RWMutex
+
+	readReceipts     map[uuid.UUID]map[uuid.UUID]time.Time
+	readReceiptMutex sync.RWMutex
+}
+
+type ReconnectState struct {
+	UserID        uuid.UUID
+	OldConnection uuid.UUID
+	NewConnection uuid.UUID
+	RoomID        uuid.UUID
+	Timestamp     time.Time
+	Attempts      int
+	Completed     bool
 }
 
 type room struct {
@@ -328,11 +350,16 @@ func NewHub() *Hub {
 		userActivities:       make(map[uuid.UUID]*RoomActivity),
 		roomStats:            make(map[uuid.UUID]*RoomStats),
 		idleCheckTicker:      time.NewTicker(30 * time.Second),
+		reconnectStates:      make(map[uuid.UUID]*ReconnectState),
+		reconnectTicker:      time.NewTicker(10 * time.Second),
+		blockedUsers:         make(map[uuid.UUID]map[uuid.UUID]bool),
+		readReceipts:         make(map[uuid.UUID]map[uuid.UUID]time.Time),
 	}
 	go hub.processBatch()
 	go hub.cleanupTypingUsers()
 	go hub.cleanupIdleUsers()
 	go hub.updateRoomStats()
+	go hub.cleanupReconnectStates()
 	return hub
 }
 
@@ -1297,6 +1324,56 @@ func (h *Hub) cleanupTypingUsers() {
 	}
 }
 
+func (h *Hub) ValidateAndSanitizeMessage(msgType string, payload json.RawMessage) (json.RawMessage, error) {
+	if msgType == "" {
+		return nil, errors.New("message type is required")
+	}
+
+	validTypes := map[string]bool{
+		"typing": true, "stop-typing": true, "typing-start": true, "typing_stop": true,
+		"message-updated": true, "thread-reply": true, "thread-message": true,
+		"message-deleted": true, "thread-message-updated": true, "thread-message-deleted": true,
+		"message-read": true, "typing-indicator": true, "typing-status": true,
+		"enhanced-typing": true, "user-focus": true, "media-state-sync": true,
+		"user-activity": true, "presence-event": true, "broadcast-status-update": true,
+		"message-ack": true, "message-delivery-status": true,
+	}
+
+	if !validTypes[msgType] {
+		return payload, nil
+	}
+
+	if len(payload) == 0 {
+		return payload, nil
+	}
+
+	var contentMap map[string]interface{}
+	if err := json.Unmarshal(payload, &contentMap); err != nil {
+		return nil, errors.New("invalid payload format")
+	}
+
+	if content, ok := contentMap["content"].(string); ok && content != "" {
+		if err := validator.ValidateMessageContent(content); err != nil {
+			return nil, err
+		}
+		contentMap["content"] = validator.SanitizeMessageContent(content)
+	}
+
+	if content, ok := contentMap["message"].(string); ok && content != "" {
+		if err := validator.ValidateMessageContent(content); err != nil {
+			return nil, err
+		}
+		contentMap["message"] = validator.SanitizeMessageContent(content)
+	}
+
+	sanitized, err := json.Marshal(contentMap)
+	if err != nil {
+		return nil, errors.New("failed to serialize sanitized payload")
+	}
+
+	return sanitized, nil
+}
+
 func (h *Hub) cleanupIdleUsers() {
 	defer h.idleCheckTicker.Stop()
 
@@ -1355,6 +1432,193 @@ func (h *Hub) updateRoomStats() {
 			}
 		}
 	}
+}
+
+func (h *Hub) cleanupReconnectStates() {
+	defer h.reconnectTicker.Stop()
+
+	for {
+		select {
+		case <-h.shutdown:
+			return
+		case <-h.reconnectTicker.C:
+			h.reconnectMutex.Lock()
+			now := time.Now()
+			for userID, state := range h.reconnectStates {
+				if state.Completed && now.Sub(state.Timestamp) > 5*time.Minute {
+					delete(h.reconnectStates, userID)
+				}
+				if !state.Completed && now.Sub(state.Timestamp) > 2*time.Minute {
+					delete(h.reconnectStates, userID)
+				}
+			}
+			if len(h.reconnectStates) > MaxReconnectStates {
+				h.reconnectStates = make(map[uuid.UUID]*ReconnectState)
+			}
+			h.reconnectMutex.Unlock()
+		}
+	}
+}
+
+func (h *Hub) AddReconnectState(userID, oldConnID, roomID uuid.UUID) *ReconnectState {
+	h.reconnectMutex.Lock()
+	defer h.reconnectMutex.Unlock()
+
+	state := &ReconnectState{
+		UserID:        userID,
+		OldConnection: oldConnID,
+		NewConnection: uuid.Nil,
+		RoomID:        roomID,
+		Timestamp:     time.Now(),
+		Attempts:      1,
+		Completed:     false,
+	}
+	h.reconnectStates[userID] = state
+	return state
+}
+
+func (h *Hub) CompleteReconnect(userID, newConnID uuid.UUID) {
+	h.reconnectMutex.Lock()
+	defer h.reconnectMutex.Unlock()
+
+	if state, exists := h.reconnectStates[userID]; exists {
+		state.NewConnection = newConnID
+		state.Completed = true
+		state.Timestamp = time.Now()
+	}
+}
+
+func (h *Hub) GetReconnectState(userID uuid.UUID) (*ReconnectState, bool) {
+	h.reconnectMutex.RLock()
+	defer h.reconnectMutex.RUnlock()
+
+	state, exists := h.reconnectStates[userID]
+	return state, exists
+}
+
+func (h *Hub) BlockUser(blockerID, blockedID uuid.UUID) {
+	h.blockMutex.Lock()
+	defer h.blockMutex.Unlock()
+
+	if h.blockedUsers[blockerID] == nil {
+		h.blockedUsers[blockerID] = make(map[uuid.UUID]bool)
+	}
+	h.blockedUsers[blockerID][blockedID] = true
+
+	wsLogger.Info("User blocked another user",
+		"blocker_id", blockerID,
+		"blocked_id", blockedID)
+}
+
+func (h *Hub) UnblockUser(blockerID, blockedID uuid.UUID) {
+	h.blockMutex.Lock()
+	defer h.blockMutex.Unlock()
+
+	if h.blockedUsers[blockerID] != nil {
+		delete(h.blockedUsers[blockerID], blockedID)
+	}
+
+	wsLogger.Info("User unblocked another user",
+		"blocker_id", blockerID,
+		"blocked_id", blockedID)
+}
+
+func (h *Hub) IsUserBlocked(blockerID, userID uuid.UUID) bool {
+	h.blockMutex.RLock()
+	defer h.blockMutex.RUnlock()
+
+	if h.blockedUsers[blockerID] != nil {
+		return h.blockedUsers[blockerID][userID]
+	}
+	return false
+}
+
+func (h *Hub) GetBlockedUsers(blockerID uuid.UUID) []uuid.UUID {
+	h.blockMutex.RLock()
+	defer h.blockMutex.RUnlock()
+
+	var blocked []uuid.UUID
+	if h.blockedUsers[blockerID] != nil {
+		for userID := range h.blockedUsers[blockerID] {
+			blocked = append(blocked, userID)
+		}
+	}
+	return blocked
+}
+
+func (h *Hub) MarkMessageRead(userID, roomID, messageID uuid.UUID) {
+	h.readReceiptMutex.Lock()
+	defer h.readReceiptMutex.Unlock()
+
+	if h.readReceipts[userID] == nil {
+		h.readReceipts[userID] = make(map[uuid.UUID]time.Time)
+	}
+	h.readReceipts[userID][messageID] = time.Now()
+
+	if len(h.readReceipts) > 10000 {
+		for uid := range h.readReceipts {
+			delete(h.readReceipts, uid)
+			break
+		}
+	}
+}
+
+func (h *Hub) GetLastReadMessage(userID, roomID uuid.UUID) (uuid.UUID, time.Time, bool) {
+	h.readReceiptMutex.RLock()
+	defer h.readReceiptMutex.RUnlock()
+
+	if h.readReceipts[userID] == nil {
+		return uuid.Nil, time.Time{}, false
+	}
+
+	var lastMsgID uuid.UUID
+	var lastReadTime time.Time
+
+	for msgID, readAt := range h.readReceipts[userID] {
+		if readAt.After(lastReadTime) {
+			lastMsgID = msgID
+			lastReadTime = readAt
+		}
+	}
+
+	if lastMsgID != uuid.Nil {
+		return lastMsgID, lastReadTime, true
+	}
+
+	return uuid.Nil, time.Time{}, false
+}
+
+func (h *Hub) GetReadReceipts(messageID uuid.UUID) []uuid.UUID {
+	h.readReceiptMutex.RLock()
+	defer h.readReceiptMutex.RUnlock()
+
+	var users []uuid.UUID
+	for userID, messages := range h.readReceipts {
+		if _, read := messages[messageID]; read {
+			users = append(users, userID)
+		}
+	}
+	return users
+}
+
+func (h *Hub) BroadcastMessageRead(userID, roomID, messageID uuid.UUID) {
+	h.MarkMessageRead(userID, roomID, messageID)
+
+	readReceiptPayload := map[string]interface{}{
+		"message_id": messageID.String(),
+		"user_id":    userID.String(),
+		"read_at":    time.Now().UnixMilli(),
+	}
+	payloadBytes, _ := json.Marshal(readReceiptPayload)
+
+	notifyMsg := &Message{
+		Type:      "message-read",
+		RoomID:    roomID,
+		UserID:    userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	h.broadcastToRoom(roomID, notifyMsg, userID)
 }
 
 func (h *Hub) updateRoomStat(roomID uuid.UUID) {
@@ -2995,24 +3259,15 @@ func (c *Client) handleMessageRead(msg *Message) {
 		}
 	}
 
-	notifyMsg := &Message{
-		Type:      "message-read",
-		RoomID:    c.roomID,
-		UserID:    c.userID,
-		Payload:   msg.Payload,
-		Timestamp: time.Now(),
+	messageID, err := uuid.Parse(payload.MessageID)
+	if err != nil {
+		wsLogger.Warn("Invalid message ID in message-read",
+			"connection_id", c.connectionID,
+			"message_id", payload.MessageID)
+		return
 	}
-	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
 
-	notificationStore.Add(c.userID, RoomNotification{
-		ID:        uuid.New().String(),
-		Type:      "message",
-		RoomID:    c.roomID,
-		UserID:    c.userID,
-		Message:   "Message read",
-		Timestamp: time.Now(),
-		Read:      false,
-	})
+	c.hub.BroadcastMessageRead(c.userID, c.roomID, messageID)
 
 	wsLogger.Info("User read message",
 		"connection_id", c.connectionID,
@@ -3151,6 +3406,7 @@ func (c *Client) handleThreadMessage(msg *Message) {
 func (c *Client) handleUserBlocked(msg *Message) {
 	var payload struct {
 		BlockedUserID string `json:"blocked_user_id"`
+		Reason        string `json:"reason"`
 	}
 	if len(msg.Payload) > 0 {
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
@@ -3176,15 +3432,36 @@ func (c *Client) handleUserBlocked(msg *Message) {
 		return
 	}
 
+	c.hub.BlockUser(c.userID, blockedUserID)
+
+	blockEventPayload := map[string]interface{}{
+		"blocked_user_id": blockedUserID.String(),
+		"reason":          payload.Reason,
+	}
+	payloadBytes, _ := json.Marshal(blockEventPayload)
+
 	notifyMsg := &Message{
 		Type:         "user-blocked",
 		RoomID:       c.roomID,
 		UserID:       c.userID,
 		TargetUserID: blockedUserID,
-		Payload:      msg.Payload,
+		Payload:      payloadBytes,
 		Timestamp:    time.Now(),
 	}
 	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	blockedClient := c.hub.GetUserClient(blockedUserID)
+	if blockedClient != nil {
+		blockNotification := &Message{
+			Type:         "you-were-blocked",
+			RoomID:       c.roomID,
+			UserID:       c.userID,
+			TargetUserID: blockedUserID,
+			Payload:      payloadBytes,
+			Timestamp:    time.Now(),
+		}
+		c.hub.sendToClient(blockedUserID, blockNotification)
+	}
 
 	wsLogger.Info("User blocked another user",
 		"connection_id", c.connectionID,
@@ -3213,12 +3490,19 @@ func (c *Client) handleUserUnblocked(msg *Message) {
 		return
 	}
 
+	c.hub.UnblockUser(c.userID, unblockedUserID)
+
+	unblockPayload := map[string]interface{}{
+		"unblocked_user_id": unblockedUserID.String(),
+	}
+	payloadBytes, _ := json.Marshal(unblockPayload)
+
 	notifyMsg := &Message{
 		Type:         "user-unblocked",
 		RoomID:       c.roomID,
 		UserID:       c.userID,
 		TargetUserID: unblockedUserID,
-		Payload:      msg.Payload,
+		Payload:      payloadBytes,
 		Timestamp:    time.Now(),
 	}
 	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)

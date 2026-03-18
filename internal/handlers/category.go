@@ -8,6 +8,7 @@ import (
 
 	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/internal/models"
+	"github.com/enclavr/server/pkg/middleware"
 	"github.com/google/uuid"
 )
 
@@ -20,19 +21,34 @@ func NewCategoryHandler(db *database.Database) *CategoryHandler {
 }
 
 type CreateCategoryRequest struct {
-	Name      string `json:"name"`
-	SortOrder int    `json:"sort_order"`
+	Name        string `json:"name"`
+	SortOrder   int    `json:"sort_order"`
+	Description string `json:"description"`
+	Icon        string `json:"icon"`
+	Color       string `json:"color"`
+	IsPrivate   bool   `json:"is_private"`
 }
 
 type CategoryResponse struct {
-	ID        uuid.UUID `json:"id"`
-	Name      string    `json:"name"`
-	SortOrder int       `json:"sort_order"`
-	CreatedAt string    `json:"created_at"`
-	RoomCount int       `json:"room_count"`
+	ID          uuid.UUID `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Icon        string    `json:"icon"`
+	Color       string    `json:"color"`
+	SortOrder   int       `json:"sort_order"`
+	IsPrivate   bool      `json:"is_private"`
+	CreatedBy   uuid.UUID `json:"created_by"`
+	CreatedAt   string    `json:"created_at"`
+	RoomCount   int       `json:"room_count"`
 }
 
 func (h *CategoryHandler) CreateCategory(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	var req CreateCategoryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -45,8 +61,13 @@ func (h *CategoryHandler) CreateCategory(w http.ResponseWriter, r *http.Request)
 	}
 
 	category := models.Category{
-		Name:      req.Name,
-		SortOrder: req.SortOrder,
+		Name:        req.Name,
+		SortOrder:   req.SortOrder,
+		Description: req.Description,
+		Icon:        req.Icon,
+		Color:       req.Color,
+		IsPrivate:   req.IsPrivate,
+		CreatedBy:   userID,
 	}
 
 	if err := h.db.Create(&category).Error; err != nil {
@@ -96,9 +117,13 @@ func (h *CategoryHandler) GetCategories(w http.ResponseWriter, r *http.Request) 
 
 func (h *CategoryHandler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID        uuid.UUID `json:"id"`
-		Name      string    `json:"name"`
-		SortOrder int       `json:"sort_order"`
+		ID          uuid.UUID `json:"id"`
+		Name        string    `json:"name"`
+		SortOrder   int       `json:"sort_order"`
+		Description string    `json:"description"`
+		Icon        string    `json:"icon"`
+		Color       string    `json:"color"`
+		IsPrivate   *bool     `json:"is_private"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -116,6 +141,12 @@ func (h *CategoryHandler) UpdateCategory(w http.ResponseWriter, r *http.Request)
 		updates["name"] = req.Name
 	}
 	updates["sort_order"] = req.SortOrder
+	updates["description"] = req.Description
+	updates["icon"] = req.Icon
+	updates["color"] = req.Color
+	if req.IsPrivate != nil {
+		updates["is_private"] = *req.IsPrivate
+	}
 	updates["updated_at"] = time.Now()
 
 	if err := h.db.Model(&category).Updates(updates).Error; err != nil {
@@ -154,11 +185,16 @@ func (h *CategoryHandler) DeleteCategory(w http.ResponseWriter, r *http.Request)
 
 func (h *CategoryHandler) categoryToResponse(category *models.Category, roomCount int) CategoryResponse {
 	return CategoryResponse{
-		ID:        category.ID,
-		Name:      category.Name,
-		SortOrder: category.SortOrder,
-		CreatedAt: category.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		RoomCount: roomCount,
+		ID:          category.ID,
+		Name:        category.Name,
+		Description: category.Description,
+		Icon:        category.Icon,
+		Color:       category.Color,
+		SortOrder:   category.SortOrder,
+		IsPrivate:   category.IsPrivate,
+		CreatedBy:   category.CreatedBy,
+		CreatedAt:   category.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		RoomCount:   roomCount,
 	}
 }
 

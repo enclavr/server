@@ -100,6 +100,8 @@ func (d *Database) Migrate() error {
 		&models.RolePermission{},
 		&models.UserRole{},
 		&models.UserNotification{},
+		&models.MessageAttachmentMetadata{},
+		&models.AttachmentShare{},
 	)
 	if err != nil {
 		return err
@@ -197,6 +199,16 @@ func (d *Database) Migrate() error {
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_poll_votes_option_user ON poll_votes(option_id, user_id)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_scheduled_messages_room_scheduled ON scheduled_messages(room_id, scheduled_at ASC) WHERE is_sent = false AND is_cancelled = false")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_message_reminders_user_triggered ON message_reminders(user_id, remind_at ASC) WHERE is_triggered = false")
+
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_presence_status ON presences(status, last_seen DESC)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_categories_sort_order ON categories(sort_order)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user_provider ON oauth_accounts(user_id, provider)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_user_rooms_by_role ON user_rooms(room_id, role)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_messages_search ON messages USING gin(to_tsvector('english', content))")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_password_resets_token ON password_resets(token) WHERE used = false")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_email_verifications_token ON email_verifications(token) WHERE used = false")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_attachment_share_url ON attachment_shares(share_url)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_attachment_share_attachment ON attachment_shares(attachment_id)")
 
 	log.Println("Database migration completed")
 	return nil

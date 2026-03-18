@@ -25,13 +25,15 @@ type OAuthHandler struct {
 	cfg         *config.AuthConfig
 	googleCfg   oauth2.Config
 	githubCfg   oauth2.Config
+	discordCfg  oauth2.Config
 }
 
 type OAuthProvider string
 
 const (
-	ProviderGoogle OAuthProvider = "google"
-	ProviderGitHub OAuthProvider = "github"
+	ProviderGoogle  OAuthProvider = "google"
+	ProviderGitHub  OAuthProvider = "github"
+	ProviderDiscord OAuthProvider = "discord"
 )
 
 func NewOAuthHandler(db *database.Database, authService *auth.AuthService, cfg *config.AuthConfig) *OAuthHandler {
@@ -61,6 +63,19 @@ func NewOAuthHandler(db *database.Database, authService *auth.AuthService, cfg *
 		}
 	}
 
+	if cfg.DiscordClientID != "" && cfg.DiscordClientSecret != "" {
+		h.discordCfg = oauth2.Config{
+			ClientID:     cfg.DiscordClientID,
+			ClientSecret: cfg.DiscordClientSecret,
+			RedirectURL:  "/api/auth/oauth/discord/callback",
+			Endpoint: oauth2.Endpoint{
+				AuthURL:  "https://discord.com/api/oauth2/authorize",
+				TokenURL: "https://discord.com/api/oauth2/token",
+			},
+			Scopes: []string{"identify", "email"},
+		}
+	}
+
 	return h
 }
 
@@ -70,8 +85,9 @@ func (h *OAuthHandler) IsEnabled() bool {
 
 func (h *OAuthHandler) GetProviders(w http.ResponseWriter, r *http.Request) {
 	providers := map[string]bool{
-		"google": h.googleCfg.ClientID != "",
-		"github": h.githubCfg.ClientID != "",
+		"google":  h.googleCfg.ClientID != "",
+		"github":  h.githubCfg.ClientID != "",
+		"discord": h.discordCfg.ClientID != "",
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -86,6 +102,8 @@ func (h *OAuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		provider = ProviderGoogle
 	case "github":
 		provider = ProviderGitHub
+	case "discord":
+		provider = ProviderDiscord
 	default:
 		http.Error(w, "Invalid provider", http.StatusBadRequest)
 		return
@@ -105,6 +123,12 @@ func (h *OAuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		oauthCfg = h.githubCfg
+	case ProviderDiscord:
+		if h.discordCfg.ClientID == "" {
+			http.Error(w, "Discord OAuth not configured", http.StatusNotFound)
+			return
+		}
+		oauthCfg = h.discordCfg
 	}
 
 	state, err := auth.GenerateState()
@@ -175,6 +199,8 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		oauthCfg = h.googleCfg
 	case ProviderGitHub:
 		oauthCfg = h.githubCfg
+	case ProviderDiscord:
+		oauthCfg = h.discordCfg
 	default:
 		http.Error(w, "Invalid provider", http.StatusBadRequest)
 		return
@@ -194,6 +220,8 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		user, err = h.handleGoogleUser(r.Context(), token)
 	case ProviderGitHub:
 		user, err = h.handleGitHubUser(r.Context(), token)
+	case ProviderDiscord:
+		user, err = h.handleDiscordUser(r.Context(), token)
 	}
 
 	if err != nil {
@@ -264,6 +292,50 @@ func (h *OAuthHandler) handleGitHubUser(ctx context.Context, token *oauth2.Token
 	}
 
 	return h.findOrCreateOAuthUser(email, userInfo.Name, userInfo.AvatarURL, "github", fmt.Sprintf("%d", userInfo.ID))
+}
+
+func (h *OAuthHandler) handleDiscordUser(ctx context.Context, token *oauth2.Token) (*models.User, error) {
+	userInfo, err := h.getDiscordUserInfo(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+
+	avatarURL := ""
+	if userInfo.Avatar != "" {
+		avatarURL = fmt.Sprintf("https://cdn.discordapp.com/avatars/%s/%s.png", userInfo.ID, userInfo.Avatar)
+	}
+
+	name := userInfo.GlobalName
+	if name == "" {
+		name = userInfo.Username
+	}
+
+	return h.findOrCreateOAuthUser(userInfo.Email, name, avatarURL, "discord", userInfo.ID)
+}
+
+func (h *OAuthHandler) getDiscordUserInfo(ctx context.Context, token *oauth2.Token) (*discordUserInfo, error) {
+	client := oauth2.NewClient(ctx, oauth2.StaticTokenSource(token))
+	resp, err := client.Get("https://discord.com/api/users/@me")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var userInfo discordUserInfo
+	if err := json.NewDecoder(resp.Body).Decode(&userInfo); err != nil {
+		return nil, err
+	}
+
+	return &userInfo, nil
+}
+
+type discordUserInfo struct {
+	ID         string `json:"id"`
+	Username   string `json:"username"`
+	GlobalName string `json:"global_name"`
+	Avatar     string `json:"avatar"`
+	Email      string `json:"email"`
+	Verified   bool   `json:"verified"`
 }
 
 func (h *OAuthHandler) getGitHubUserInfo(ctx context.Context, token *oauth2.Token) (*githubUserInfo, error) {

@@ -424,6 +424,9 @@ func (h *AuthHandler) sendAuthResponseWithRotation(w http.ResponseWriter, user *
 		return
 	}
 
+	var existingSessionCount int64
+	h.db.Model(&models.Session{}).Where("user_id = ? AND user_agent = ? AND expires_at > ?", user.ID, r.UserAgent(), time.Now()).Count(&existingSessionCount)
+
 	session := models.Session{
 		ID:        sessionID,
 		UserID:    user.ID,
@@ -445,6 +448,19 @@ func (h *AuthHandler) sendAuthResponseWithRotation(w http.ResponseWriter, user *
 	}
 	h.db.Create(&dbRefreshToken)
 
+	if existingSessionCount == 0 && h.emailService != nil && h.emailService.IsEnabled() {
+		go func() {
+			_ = h.emailService.SendNewDeviceLoginEmail(
+				context.Background(),
+				services.EmailRecipient{To: user.Email, Name: user.DisplayName},
+				extractDeviceName(r.UserAgent()),
+				r.RemoteAddr,
+				"Unknown",
+				time.Now().Format("January 2, 2006 at 3:04 PM"),
+			)
+		}()
+	}
+
 	response := AuthResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
@@ -465,6 +481,39 @@ func (h *AuthHandler) sendAuthResponseWithRotation(w http.ResponseWriter, user *
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("Error encoding response: %v", err)
 	}
+}
+
+func extractDeviceName(userAgent string) string {
+	if userAgent == "" {
+		return "Unknown Device"
+	}
+	switch {
+	case contains(userAgent, "Chrome"):
+		return "Chrome Browser"
+	case contains(userAgent, "Firefox"):
+		return "Firefox Browser"
+	case contains(userAgent, "Safari"):
+		return "Safari Browser"
+	case contains(userAgent, "Edge"):
+		return "Edge Browser"
+	case contains(userAgent, "Mobile"):
+		return "Mobile Device"
+	default:
+		return "Unknown Device"
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsAt(s, substr))
+}
+
+func containsAt(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *AuthHandler) GetMe(w http.ResponseWriter, r *http.Request) {
@@ -714,19 +763,43 @@ func (h *AuthHandler) CompletePasswordReset(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	hashedPassword, err := h.authService.HashPassword(req.NewPassword)
-	if err != nil {
-		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
-		return
-	}
-
 	var user models.User
 	if err := h.db.First(&user, claims.UserID).Error; err != nil {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
 	}
 
+	var passwordHistory []models.PasswordHistory
+	h.db.Where("user_id = ?", user.ID).Order("created_at DESC").Limit(5).Find(&passwordHistory)
+	historyHashes := make([]string, len(passwordHistory))
+	for i, ph := range passwordHistory {
+		historyHashes[i] = ph.PasswordHash
+	}
+
+	if err := h.authService.CheckPasswordHistory(req.NewPassword, historyHashes); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	oldPasswordHash := user.PasswordHash
+
+	hashedPassword, err := h.authService.HashPassword(req.NewPassword)
+	if err != nil {
+		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+		return
+	}
+
+	if oldPasswordHash != "" {
+		historyEntry := models.PasswordHistory{
+			ID:           uuid.New(),
+			UserID:       user.ID,
+			PasswordHash: oldPasswordHash,
+		}
+		h.db.Create(&historyEntry)
+	}
+
 	h.db.Model(&user).Update("password_hash", hashedPassword)
+	h.db.Model(&user).Update("password_changed_at", time.Now())
 	h.db.Model(&resetToken).Update("used", true)
 	h.db.Where("user_id = ?", user.ID).Delete(&models.TwoFactorRecovery{})
 
@@ -869,13 +942,45 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var passwordHistory []models.PasswordHistory
+	h.db.Where("user_id = ?", user.ID).Order("created_at DESC").Limit(5).Find(&passwordHistory)
+	historyHashes := make([]string, len(passwordHistory))
+	for i, ph := range passwordHistory {
+		historyHashes[i] = ph.PasswordHash
+	}
+
+	if err := h.authService.CheckPasswordHistory(req.NewPassword, historyHashes); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	oldPasswordHash := user.PasswordHash
+
 	hashedPassword, err := h.authService.HashPassword(req.NewPassword)
 	if err != nil {
 		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
 		return
 	}
 
+	if oldPasswordHash != "" {
+		historyEntry := models.PasswordHistory{
+			ID:           uuid.New(),
+			UserID:       user.ID,
+			PasswordHash: oldPasswordHash,
+		}
+		h.db.Create(&historyEntry)
+
+		var count int64
+		h.db.Model(&models.PasswordHistory{}).Where("user_id = ?", user.ID).Count(&count)
+		if count > 5 {
+			h.db.Model(&models.PasswordHistory{}).
+				Where("user_id = ? AND id NOT IN (SELECT id FROM password_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 5)", user.ID, user.ID).
+				Delete(&models.PasswordHistory{})
+		}
+	}
+
 	h.db.Model(&user).Update("password_hash", hashedPassword)
+	h.db.Model(&user).Update("password_changed_at", time.Now())
 
 	h.db.Where("user_id = ?", user.ID).Delete(&models.RefreshToken{})
 
@@ -890,6 +995,80 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": "Password changed successfully, all sessions have been invalidated",
+	})
+}
+
+func (h *AuthHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Password == "" {
+		http.Error(w, "Password is required to delete account", http.StatusBadRequest)
+		return
+	}
+
+	var user models.User
+	if err := h.db.First(&user, userID).Error; err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	if user.OIDCSubject == "" {
+		if !h.authService.CheckPassword(req.Password, user.PasswordHash) {
+			http.Error(w, "Invalid password", http.StatusUnauthorized)
+			return
+		}
+	}
+
+	tx := h.db.Begin()
+
+	if err := tx.Where("user_id = ?", userID).Delete(&models.Session{}).Error; err != nil {
+		tx.Rollback()
+		http.Error(w, "Failed to delete sessions", http.StatusInternalServerError)
+		return
+	}
+
+	if err := tx.Where("user_id = ?", userID).Delete(&models.RefreshToken{}).Error; err != nil {
+		tx.Rollback()
+		http.Error(w, "Failed to delete refresh tokens", http.StatusInternalServerError)
+		return
+	}
+
+	if err := tx.Where("user_id = ?", userID).Delete(&models.PasswordHistory{}).Error; err != nil {
+		tx.Rollback()
+		http.Error(w, "Failed to delete password history", http.StatusInternalServerError)
+		return
+	}
+
+	if err := tx.Where("user_id = ?", userID).Delete(&models.TwoFactorRecovery{}).Error; err != nil {
+		tx.Rollback()
+		http.Error(w, "Failed to delete 2FA recovery", http.StatusInternalServerError)
+		return
+	}
+
+	if err := tx.Delete(&user).Error; err != nil {
+		tx.Rollback()
+		http.Error(w, "Failed to delete account", http.StatusInternalServerError)
+		return
+	}
+
+	tx.Commit()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Account deleted successfully",
 	})
 }
 

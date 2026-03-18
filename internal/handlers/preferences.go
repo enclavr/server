@@ -21,17 +21,27 @@ func NewPreferencesHandler(db *database.Database) *PreferencesHandler {
 }
 
 type UpdatePreferencesRequest struct {
-	Theme            *string `json:"theme"`
-	Language         *string `json:"language"`
-	Timezone         *string `json:"timezone"`
-	MessagePreview   *bool   `json:"message_preview"`
-	CompactMode      *bool   `json:"compact_mode"`
-	ShowOnlineStatus *bool   `json:"show_online_status"`
-	AnimatedEmoji    *bool   `json:"animated_emoji"`
-	AutoPlayGifs     *bool   `json:"auto_play_gifs"`
-	ReducedMotion    *bool   `json:"reduced_motion"`
-	HighContrastMode *bool   `json:"high_contrast_mode"`
-	TextSize         *string `json:"text_size"`
+	Theme               *string `json:"theme"`
+	Language            *string `json:"language"`
+	Timezone            *string `json:"timezone"`
+	MessagePreview      *bool   `json:"message_preview"`
+	CompactMode         *bool   `json:"compact_mode"`
+	ShowOnlineStatus    *bool   `json:"show_online_status"`
+	AnimatedEmoji       *bool   `json:"animated_emoji"`
+	AutoPlayGifs        *bool   `json:"auto_play_gifs"`
+	ReducedMotion       *bool   `json:"reduced_motion"`
+	HighContrastMode    *bool   `json:"high_contrast_mode"`
+	TextSize            *string `json:"text_size"`
+	NotificationSound   *string `json:"notification_sound"`
+	DesktopNotification *bool   `json:"desktop_notification"`
+	MobileNotification  *bool   `json:"mobile_notification"`
+	MentionNotification *bool   `json:"mention_notification"`
+	DmNotification      *bool   `json:"dm_notification"`
+	ShowTypingIndicator *bool   `json:"show_typing_indicator"`
+	ShowReadReceipts    *bool   `json:"show_read_receipts"`
+	AutoScrollMessages  *bool   `json:"auto_scroll_messages"`
+	Use24HourFormat     *bool   `json:"use_24_hour_format"`
+	DisplayMode         *string `json:"display_mode"`
 }
 
 func (h *PreferencesHandler) GetPreferences(w http.ResponseWriter, r *http.Request) {
@@ -45,18 +55,28 @@ func (h *PreferencesHandler) GetPreferences(w http.ResponseWriter, r *http.Reque
 	if err := h.db.Where("user_id = ?", userID).First(&preferences).Error; err != nil {
 		if err.Error() == "record not found" {
 			preferences = models.UserPreferences{
-				UserID:           userID,
-				Theme:            "dark",
-				Language:         "en",
-				Timezone:         "UTC",
-				MessagePreview:   true,
-				CompactMode:      false,
-				ShowOnlineStatus: true,
-				AnimatedEmoji:    true,
-				AutoPlayGifs:     true,
-				ReducedMotion:    false,
-				HighContrastMode: false,
-				TextSize:         "medium",
+				UserID:              userID,
+				Theme:               "dark",
+				Language:            "en",
+				Timezone:            "UTC",
+				MessagePreview:      true,
+				CompactMode:         false,
+				ShowOnlineStatus:    true,
+				AnimatedEmoji:       true,
+				AutoPlayGifs:        true,
+				ReducedMotion:       false,
+				HighContrastMode:    false,
+				TextSize:            "medium",
+				NotificationSound:   "default",
+				DesktopNotification: true,
+				MobileNotification:  true,
+				MentionNotification: true,
+				DmNotification:      true,
+				ShowTypingIndicator: true,
+				ShowReadReceipts:    true,
+				AutoScrollMessages:  true,
+				Use24HourFormat:     false,
+				DisplayMode:         "card",
 			}
 			if err := h.db.Create(&preferences).Error; err != nil {
 				http.Error(w, "Failed to create preferences", http.StatusInternalServerError)

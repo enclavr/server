@@ -62,12 +62,17 @@ func (r *Room) BeforeCreate(tx *gorm.DB) error {
 }
 
 type Category struct {
-	ID        uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
-	Name      string         `gorm:"uniqueIndex;not null;size:100" json:"name"`
-	SortOrder int            `gorm:"default:0" json:"sort_order"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	ID          uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	Name        string         `gorm:"uniqueIndex;not null;size:100" json:"name"`
+	Description string         `gorm:"size:500" json:"description"`
+	Icon        string         `gorm:"size:100" json:"icon"`
+	Color       string         `gorm:"size:20" json:"color"`
+	SortOrder   int            `gorm:"default:0" json:"sort_order"`
+	IsPrivate   bool           `gorm:"default:false" json:"is_private"`
+	CreatedBy   uuid.UUID      `gorm:"type:uuid;not null" json:"created_by"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 
 	Rooms []Room `gorm:"foreignKey:CategoryID" json:"-"`
 }
@@ -667,33 +672,54 @@ func (ca *ChannelActivity) BeforeCreate(tx *gorm.DB) error {
 type AuditAction string
 
 const (
-	AuditActionMessageDelete  AuditAction = "message_delete"
-	AuditActionMessageEdit    AuditAction = "message_edit"
-	AuditActionUserKick       AuditAction = "user_kick"
-	AuditActionUserBan        AuditAction = "user_ban"
-	AuditActionUserUnban      AuditAction = "user_unban"
-	AuditActionRoleChange     AuditAction = "role_change"
-	AuditActionRoomCreate     AuditAction = "room_create"
-	AuditActionRoomDelete     AuditAction = "room_delete"
-	AuditActionRoomUpdate     AuditAction = "room_update"
-	AuditActionCategoryCreate AuditAction = "category_create"
-	AuditActionCategoryDelete AuditAction = "category_delete"
-	AuditActionInviteCreate   AuditAction = "invite_create"
-	AuditActionInviteRevoke   AuditAction = "invite_revoke"
-	AuditActionSettingsChange AuditAction = "settings_change"
-	AuditActionWebhookCreate  AuditAction = "webhook_create"
-	AuditActionWebhookDelete  AuditAction = "webhook_delete"
+	AuditActionMessageDelete      AuditAction = "message_delete"
+	AuditActionMessageEdit        AuditAction = "message_edit"
+	AuditActionUserKick           AuditAction = "user_kick"
+	AuditActionUserBan            AuditAction = "user_ban"
+	AuditActionUserUnban          AuditAction = "user_unban"
+	AuditActionRoleChange         AuditAction = "role_change"
+	AuditActionRoomCreate         AuditAction = "room_create"
+	AuditActionRoomDelete         AuditAction = "room_delete"
+	AuditActionRoomUpdate         AuditAction = "room_update"
+	AuditActionCategoryCreate     AuditAction = "category_create"
+	AuditActionCategoryDelete     AuditAction = "category_delete"
+	AuditActionCategoryUpdate     AuditAction = "category_update"
+	AuditActionInviteCreate       AuditAction = "invite_create"
+	AuditActionInviteRevoke       AuditAction = "invite_revoke"
+	AuditActionSettingsChange     AuditAction = "settings_change"
+	AuditActionWebhookCreate      AuditAction = "webhook_create"
+	AuditActionWebhookDelete      AuditAction = "webhook_delete"
+	AuditActionUserLogin          AuditAction = "user_login"
+	AuditActionUserLogout         AuditAction = "user_logout"
+	AuditActionUserRegister       AuditAction = "user_register"
+	AuditActionUserPasswordChange AuditAction = "user_password_change"
+	AuditActionUserEmailChange    AuditAction = "user_email_change"
+	AuditActionFileUpload         AuditAction = "file_upload"
+	AuditActionFileDelete         AuditAction = "file_delete"
+	AuditActionVoiceJoin          AuditAction = "voice_join"
+	AuditActionVoiceLeave         AuditAction = "voice_leave"
+	AuditActionPollCreate         AuditAction = "poll_create"
+	AuditActionPollVote           AuditAction = "poll_vote"
+	AuditActionPollEnd            AuditAction = "poll_end"
+	AuditActionThreadCreate       AuditAction = "thread_create"
+	AuditActionReactionAdd        AuditAction = "reaction_add"
+	AuditActionReactionRemove     AuditAction = "reaction_remove"
 )
 
 type AuditLog struct {
-	ID         uuid.UUID   `gorm:"type:uuid;primary_key" json:"id"`
-	UserID     uuid.UUID   `gorm:"type:uuid;not null;index" json:"user_id"`
-	Action     AuditAction `gorm:"type:varchar(50);not null;index" json:"action"`
-	TargetType string      `gorm:"size:50;not null" json:"target_type"`
-	TargetID   uuid.UUID   `gorm:"type:uuid;not null" json:"target_id"`
-	Details    string      `gorm:"type:text" json:"details"`
-	IPAddress  string      `gorm:"size:45" json:"ip_address"`
-	CreatedAt  time.Time   `json:"created_at"`
+	ID           uuid.UUID   `gorm:"type:uuid;primary_key" json:"id"`
+	UserID       uuid.UUID   `gorm:"type:uuid;not null;index" json:"user_id"`
+	Action       AuditAction `gorm:"type:varchar(50);not null;index" json:"action"`
+	TargetType   string      `gorm:"size:50;not null" json:"target_type"`
+	TargetID     uuid.UUID   `gorm:"type:uuid;not null" json:"target_id"`
+	Details      string      `gorm:"type:text" json:"details"`
+	OldValue     string      `gorm:"type:jsonb" json:"old_value"`
+	NewValue     string      `gorm:"type:jsonb" json:"new_value"`
+	IPAddress    string      `gorm:"size:45" json:"ip_address"`
+	UserAgent    string      `gorm:"size:500" json:"user_agent"`
+	Success      bool        `gorm:"default:true" json:"success"`
+	ErrorMessage string      `gorm:"size:500" json:"error_message"`
+	CreatedAt    time.Time   `json:"created_at"`
 
 	User User `gorm:"foreignKey:UserID" json:"-"`
 }
@@ -806,21 +832,31 @@ func (b *Bookmark) BeforeCreate(tx *gorm.DB) error {
 }
 
 type UserPreferences struct {
-	ID               uuid.UUID `gorm:"type:uuid;primary_key" json:"id"`
-	UserID           uuid.UUID `gorm:"type:uuid;not null;uniqueIndex" json:"user_id"`
-	Theme            string    `gorm:"size:20;default:'dark'" json:"theme"`
-	Language         string    `gorm:"size:10;default:'en'" json:"language"`
-	Timezone         string    `gorm:"size:50;default:'UTC'" json:"timezone"`
-	MessagePreview   bool      `gorm:"default:true" json:"message_preview"`
-	CompactMode      bool      `gorm:"default:false" json:"compact_mode"`
-	ShowOnlineStatus bool      `gorm:"default:true" json:"show_online_status"`
-	AnimatedEmoji    bool      `gorm:"default:true" json:"animated_emoji"`
-	AutoPlayGifs     bool      `gorm:"default:true" json:"auto_play_gifs"`
-	ReducedMotion    bool      `gorm:"default:false" json:"reduced_motion"`
-	HighContrastMode bool      `gorm:"default:false" json:"high_contrast_mode"`
-	TextSize         string    `gorm:"size:10;default:'medium'" json:"text_size"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ID                  uuid.UUID `gorm:"type:uuid;primary_key" json:"id"`
+	UserID              uuid.UUID `gorm:"type:uuid;not null;uniqueIndex" json:"user_id"`
+	Theme               string    `gorm:"size:20;default:'dark'" json:"theme"`
+	Language            string    `gorm:"size:10;default:'en'" json:"language"`
+	Timezone            string    `gorm:"size:50;default:'UTC'" json:"timezone"`
+	MessagePreview      bool      `gorm:"default:true" json:"message_preview"`
+	CompactMode         bool      `gorm:"default:false" json:"compact_mode"`
+	ShowOnlineStatus    bool      `gorm:"default:true" json:"show_online_status"`
+	AnimatedEmoji       bool      `gorm:"default:true" json:"animated_emoji"`
+	AutoPlayGifs        bool      `gorm:"default:true" json:"auto_play_gifs"`
+	ReducedMotion       bool      `gorm:"default:false" json:"reduced_motion"`
+	HighContrastMode    bool      `gorm:"default:false" json:"high_contrast_mode"`
+	TextSize            string    `gorm:"size:10;default:'medium'" json:"text_size"`
+	NotificationSound   string    `gorm:"size:50;default:'default'" json:"notification_sound"`
+	DesktopNotification bool      `gorm:"default:true" json:"desktop_notification"`
+	MobileNotification  bool      `gorm:"default:true" json:"mobile_notification"`
+	MentionNotification bool      `gorm:"default:true" json:"mention_notification"`
+	DmNotification      bool      `gorm:"default:true" json:"dm_notification"`
+	ShowTypingIndicator bool      `gorm:"default:true" json:"show_typing_indicator"`
+	ShowReadReceipts    bool      `gorm:"default:true" json:"show_read_receipts"`
+	AutoScrollMessages  bool      `gorm:"default:true" json:"auto_scroll_messages"`
+	Use24HourFormat     bool      `gorm:"default:false" json:"use_24_hour_format"`
+	DisplayMode         string    `gorm:"size:20;default:'card'" json:"display_mode"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 
 	User User `gorm:"foreignKey:UserID" json:"-"`
 }

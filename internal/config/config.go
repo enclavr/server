@@ -46,18 +46,20 @@ type DatabaseConfig struct {
 }
 
 type AuthConfig struct {
-	JWTSecret          string
-	JWTExpiration      time.Duration
-	RefreshExpiration  time.Duration
-	OIDCEnabled        bool
-	OIDCIssuerURL      string
-	OIDCClientID       string
-	OIDCClientSecret   string
-	OAuthEnabled       bool
-	GoogleClientID     string
-	GoogleClientSecret string
-	GitHubClientID     string
-	GitHubClientSecret string
+	JWTSecret           string
+	JWTExpiration       time.Duration
+	RefreshExpiration   time.Duration
+	OIDCEnabled         bool
+	OIDCIssuerURL       string
+	OIDCClientID        string
+	OIDCClientSecret    string
+	OAuthEnabled        bool
+	GoogleClientID      string
+	GoogleClientSecret  string
+	GitHubClientID      string
+	GitHubClientSecret  string
+	DiscordClientID     string
+	DiscordClientSecret string
 }
 
 type EmailConfig struct {
@@ -124,18 +126,20 @@ func Load() *Config {
 			SSLMode:  getEnv("DB_SSLMODE", "disable"),
 		},
 		Auth: AuthConfig{
-			JWTSecret:          getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
-			JWTExpiration:      getDurationEnv("JWT_EXPIRATION", 24*time.Hour),
-			RefreshExpiration:  getDurationEnv("REFRESH_EXPIRATION", 7*24*time.Hour),
-			OIDCEnabled:        getEnvBool("OIDC_ENABLED", false),
-			OIDCIssuerURL:      getEnv("OIDC_ISSUER_URL", ""),
-			OIDCClientID:       getEnv("OIDC_CLIENT_ID", ""),
-			OIDCClientSecret:   getEnv("OIDC_CLIENT_SECRET", ""),
-			OAuthEnabled:       getEnvBool("OAUTH_ENABLED", false),
-			GoogleClientID:     getEnv("GOOGLE_CLIENT_ID", ""),
-			GoogleClientSecret: getEnv("GOOGLE_CLIENT_SECRET", ""),
-			GitHubClientID:     getEnv("GITHUB_CLIENT_ID", ""),
-			GitHubClientSecret: getEnv("GITHUB_CLIENT_SECRET", ""),
+			JWTSecret:           getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
+			JWTExpiration:       getDurationEnv("JWT_EXPIRATION", 24*time.Hour),
+			RefreshExpiration:   getDurationEnv("REFRESH_EXPIRATION", 7*24*time.Hour),
+			OIDCEnabled:         getEnvBool("OIDC_ENABLED", false),
+			OIDCIssuerURL:       getEnv("OIDC_ISSUER_URL", ""),
+			OIDCClientID:        getEnv("OIDC_CLIENT_ID", ""),
+			OIDCClientSecret:    getEnv("OIDC_CLIENT_SECRET", ""),
+			OAuthEnabled:        getEnvBool("OAUTH_ENABLED", false),
+			GoogleClientID:      getEnv("GOOGLE_CLIENT_ID", ""),
+			GoogleClientSecret:  getEnv("GOOGLE_CLIENT_SECRET", ""),
+			GitHubClientID:      getEnv("GITHUB_CLIENT_ID", ""),
+			GitHubClientSecret:  getEnv("GITHUB_CLIENT_SECRET", ""),
+			DiscordClientID:     getEnv("DISCORD_CLIENT_ID", ""),
+			DiscordClientSecret: getEnv("DISCORD_CLIENT_SECRET", ""),
 		},
 		Email: EmailConfig{
 			SMTPHost:     getEnv("SMTP_HOST", ""),

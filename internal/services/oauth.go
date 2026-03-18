@@ -21,8 +21,9 @@ import (
 type OAuthProvider string
 
 const (
-	ProviderGoogle OAuthProvider = "google"
-	ProviderGitHub OAuthProvider = "github"
+	ProviderGoogle  OAuthProvider = "google"
+	ProviderGitHub  OAuthProvider = "github"
+	ProviderDiscord OAuthProvider = "discord"
 )
 
 type OAuthUserInfo struct {
@@ -33,10 +34,16 @@ type OAuthUserInfo struct {
 	AvatarURL string
 }
 
+var discordEndpoint = oauth2.Endpoint{
+	AuthURL:  "https://discord.com/api/oauth2/authorize",
+	TokenURL: "https://discord.com/api/oauth2/token",
+}
+
 type OAuthService struct {
-	googleConfig *oauth2.Config
-	githubConfig *oauth2.Config
-	enabled      bool
+	googleConfig  *oauth2.Config
+	githubConfig  *oauth2.Config
+	discordConfig *oauth2.Config
+	enabled       bool
 }
 
 func NewOAuthService(cfg *config.AuthConfig) *OAuthService {
@@ -62,6 +69,15 @@ func NewOAuthService(cfg *config.AuthConfig) *OAuthService {
 				Endpoint:     github.Endpoint,
 			}
 		}
+
+		if cfg.DiscordClientID != "" && cfg.DiscordClientSecret != "" {
+			s.discordConfig = &oauth2.Config{
+				ClientID:     cfg.DiscordClientID,
+				ClientSecret: cfg.DiscordClientSecret,
+				Scopes:       []string{"identify", "email"},
+				Endpoint:     discordEndpoint,
+			}
+		}
 	}
 
 	return s
@@ -80,6 +96,8 @@ func (s *OAuthService) IsProviderEnabled(provider OAuthProvider) bool {
 		return s.googleConfig != nil
 	case ProviderGitHub:
 		return s.githubConfig != nil
+	case ProviderDiscord:
+		return s.discordConfig != nil
 	}
 	return false
 }
@@ -91,6 +109,8 @@ func (s *OAuthService) GetAuthURL(provider OAuthProvider, state string, redirect
 		config = s.googleConfig
 	case ProviderGitHub:
 		config = s.githubConfig
+	case ProviderDiscord:
+		config = s.discordConfig
 	default:
 		return "", fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -109,6 +129,8 @@ func (s *OAuthService) ExchangeCode(ctx context.Context, provider OAuthProvider,
 		config = s.googleConfig
 	case ProviderGitHub:
 		config = s.githubConfig
+	case ProviderDiscord:
+		config = s.discordConfig
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -131,6 +153,8 @@ func (s *OAuthService) GetUserInfo(ctx context.Context, provider OAuthProvider, 
 		return s.getGoogleUserInfo(ctx, token)
 	case ProviderGitHub:
 		return s.getGitHubUserInfo(ctx, token)
+	case ProviderDiscord:
+		return s.getDiscordUserInfo(ctx, token)
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -255,6 +279,55 @@ func (s *OAuthService) getGitHubPrimaryEmail(ctx context.Context, token *oauth2.
 	}
 
 	return "", nil
+}
+
+func (s *OAuthService) getDiscordUserInfo(ctx context.Context, token *oauth2.Token) (*OAuthUserInfo, error) {
+	client := s.discordConfig.Client(ctx, token)
+
+	resp, err := client.Get("https://discord.com/api/users/@me")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user info: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("discord userinfo returned status %d", resp.StatusCode)
+	}
+
+	var data struct {
+		ID         string `json:"id"`
+		Username   string `json:"username"`
+		GlobalName string `json:"global_name"`
+		Avatar     string `json:"avatar"`
+		Email      string `json:"email"`
+		Verified   bool   `json:"verified"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, fmt.Errorf("failed to decode user info: %w", err)
+	}
+
+	if data.Email == "" || !data.Verified {
+		return nil, fmt.Errorf("email not verified")
+	}
+
+	avatarURL := ""
+	if data.Avatar != "" {
+		avatarURL = fmt.Sprintf("https://cdn.discordapp.com/avatars/%s/%s.png", data.ID, data.Avatar)
+	}
+
+	name := data.GlobalName
+	if name == "" {
+		name = data.Username
+	}
+
+	return &OAuthUserInfo{
+		Provider:  ProviderDiscord,
+		Subject:   data.ID,
+		Email:     data.Email,
+		Name:      name,
+		AvatarURL: avatarURL,
+	}, nil
 }
 
 func (s *OAuthService) FindOrCreateUser(db *gorm.DB, userInfo *OAuthUserInfo) (*models.User, error) {

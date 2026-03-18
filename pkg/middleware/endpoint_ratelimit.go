@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"regexp"
 	"sync"
@@ -169,10 +170,11 @@ func (erl *EndpointRateLimiter) Handler(next http.Handler) http.Handler {
 			limiter.requests = valid
 			limiter.mu.Unlock()
 
+			resetUnix := now.Add(window).Unix()
 			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("X-RateLimit-Limit", string(rune(limit)))
+			w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", limit))
 			w.Header().Set("X-RateLimit-Remaining", "0")
-			w.Header().Set("X-RateLimit-Reset", string(rune(now.Add(window).Unix())))
+			w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", resetUnix))
 			http.Error(w, `{"error":"Too Many Requests","code":"rate_limit_exceeded","message":"Rate limit exceeded for this endpoint"}`, http.StatusTooManyRequests)
 			return
 		}
@@ -182,9 +184,10 @@ func (erl *EndpointRateLimiter) Handler(next http.Handler) http.Handler {
 		limiter.mu.Unlock()
 
 		remaining := limit - len(valid)
-		w.Header().Set("X-RateLimit-Limit", string(rune(limit)))
-		w.Header().Set("X-RateLimit-Remaining", string(rune(remaining)))
-		w.Header().Set("X-RateLimit-Reset", string(rune(now.Add(window).Unix())))
+		resetUnix := now.Add(window).Unix()
+		w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", limit))
+		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
+		w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", resetUnix))
 
 		next.ServeHTTP(w, r)
 	})
@@ -243,10 +246,15 @@ func (b *EndpointRateLimiterBuilder) Build() *EndpointRateLimiter {
 }
 
 var DefaultEndpointRateLimiter = NewEndpointRateLimiterBuilder().
-	AddEndpoint("/api/auth/login", 5, time.Minute).
-	AddEndpoint("/api/auth/register", 3, time.Minute).
-	AddEndpoint("/api/auth/reset-password", 3, time.Minute).
-	AddEndpoint("/api/messages", 60, time.Minute).
-	AddEndpoint("/api/rooms", 30, time.Minute).
-	AddEndpoint("/api/webhooks", 20, time.Minute).
+	AddEndpoint("/api/v1/auth/login", 5, time.Minute).
+	AddEndpoint("/api/v1/auth/register", 3, time.Minute).
+	AddEndpoint("/api/v1/auth/reset-password", 3, time.Minute).
+	AddEndpoint("/api/v1/auth/oauth/callback", 10, time.Minute).
+	AddEndpoint("/api/v1/auth/2fa/setup", 3, time.Hour).
+	AddEndpoint("/api/v1/auth/2fa/disable", 3, time.Hour).
+	AddEndpoint("/api/v1/auth/account/delete", 3, time.Hour).
+	AddEndpoint("/api/v1/auth/password/change", 5, time.Hour).
+	AddEndpoint("/api/v1/messages", 60, time.Minute).
+	AddEndpoint("/api/v1/rooms", 30, time.Minute).
+	AddEndpoint("/api/v1/webhooks", 20, time.Minute).
 	Build()
