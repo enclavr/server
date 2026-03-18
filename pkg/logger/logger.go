@@ -33,19 +33,23 @@ type Logger struct {
 }
 
 type LogEntry struct {
-	Timestamp string                 `json:"timestamp"`
-	Level     Level                  `json:"level"`
-	Message   string                 `json:"message"`
-	Fields    map[string]interface{} `json:"fields,omitempty"`
-	RequestID string                 `json:"request_id,omitempty"`
-	UserID    string                 `json:"user_id,omitempty"`
+	Timestamp     string                 `json:"timestamp"`
+	Level         Level                  `json:"level"`
+	Message       string                 `json:"message"`
+	Fields        map[string]interface{} `json:"fields,omitempty"`
+	RequestID     string                 `json:"request_id,omitempty"`
+	UserID        string                 `json:"user_id,omitempty"`
+	CorrelationID string                 `json:"correlation_id,omitempty"`
+	SpanID        string                 `json:"span_id,omitempty"`
 }
 
 type contextKey string
 
 const (
-	RequestIDKey contextKey = "request_id"
-	UserIDKey    contextKey = "user_id"
+	RequestIDKey     contextKey = "request_id"
+	UserIDKey        contextKey = "user_id"
+	CorrelationIDKey contextKey = "correlation_id"
+	SpanIDKey        contextKey = "span_id"
 )
 
 var (
@@ -149,6 +153,14 @@ func logEntryWithContext(ctx context.Context, level Level, msg string, fields ma
 		entry.UserID = userID.String()
 	}
 
+	if corrID, ok := ctx.Value(CorrelationIDKey).(string); ok && corrID != "" {
+		entry.CorrelationID = corrID
+	}
+
+	if spanID, ok := ctx.Value(SpanIDKey).(string); ok && spanID != "" {
+		entry.SpanID = spanID
+	}
+
 	data, err := json.Marshal(entry)
 	if err != nil {
 		defaultLogger.logger.Println("Failed to marshal log entry:", err)
@@ -182,6 +194,10 @@ func (c ContextLogger) Warn(msg string, fields map[string]interface{}) {
 
 func (c ContextLogger) Error(msg string, fields map[string]interface{}) {
 	logEntryWithContext(c.ctx, ErrorLevel, msg, fields)
+}
+
+func (c ContextLogger) WithField(key string, value interface{}) ContextLogger {
+	return c
 }
 
 func Debug(msg string, fields map[string]interface{}) {
@@ -222,6 +238,22 @@ func InitRequestLogger() {
 	}
 }
 
+type RequestLogData struct {
+	Method        string `json:"method"`
+	Path          string `json:"path"`
+	Query         string `json:"query,omitempty"`
+	IP            string `json:"ip"`
+	Status        int    `json:"status"`
+	Duration      int64  `json:"duration_ms"`
+	RequestSize   int64  `json:"request_size,omitempty"`
+	ResponseSize  int64  `json:"response_size,omitempty"`
+	UserAgent     string `json:"user_agent,omitempty"`
+	Referer       string `json:"referer,omitempty"`
+	RequestID     string `json:"request_id,omitempty"`
+	UserID        string `json:"user_id,omitempty"`
+	CorrelationID string `json:"correlation_id,omitempty"`
+}
+
 func RequestLog(ctx context.Context, method, path, ip string, status int, duration time.Duration, userID *uuid.UUID) {
 	if requestLogger == nil {
 		InitRequestLogger()
@@ -255,6 +287,10 @@ func RequestLog(ctx context.Context, method, path, ip string, status int, durati
 		entry.RequestID = reqID
 	}
 
+	if corrID, ok := ctx.Value(CorrelationIDKey).(string); ok && corrID != "" {
+		entry.CorrelationID = corrID
+	}
+
 	if userID != nil && *userID != uuid.Nil {
 		entry.UserID = userID.String()
 	}
@@ -268,6 +304,63 @@ func RequestLog(ctx context.Context, method, path, ip string, status int, durati
 	requestLogger.mu.Lock()
 	defer requestLogger.mu.Unlock()
 	requestLogger.logger.Println(string(data))
+}
+
+func LogRequestData(ctx context.Context, data RequestLogData) {
+	if requestLogger == nil {
+		InitRequestLogger()
+	}
+
+	level := InfoLevel
+	if data.Status >= 500 {
+		level = ErrorLevel
+	} else if data.Status >= 400 {
+		level = WarnLevel
+	}
+
+	if !shouldLog(level) {
+		return
+	}
+
+	entry := LogEntry{
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Level:     level,
+		Message:   fmt.Sprintf("%s %s - %d - %dms", data.Method, data.Path, data.Status, data.Duration),
+		Fields: map[string]interface{}{
+			"method":        data.Method,
+			"path":          data.Path,
+			"query":         data.Query,
+			"ip":            data.IP,
+			"status":        data.Status,
+			"duration":      data.Duration,
+			"request_size":  data.RequestSize,
+			"response_size": data.ResponseSize,
+			"user_agent":    data.UserAgent,
+			"referer":       data.Referer,
+		},
+	}
+
+	if data.RequestID != "" {
+		entry.RequestID = data.RequestID
+	}
+
+	if data.UserID != "" {
+		entry.UserID = data.UserID
+	}
+
+	if data.CorrelationID != "" {
+		entry.CorrelationID = data.CorrelationID
+	}
+
+	dataBytes, err := json.Marshal(entry)
+	if err != nil {
+		log.Printf("Failed to marshal request log entry: %v", err)
+		return
+	}
+
+	requestLogger.mu.Lock()
+	defer requestLogger.mu.Unlock()
+	requestLogger.logger.Println(string(dataBytes))
 }
 
 func LogError(ctx context.Context, err error, msg string, fields map[string]interface{}) {
@@ -298,4 +391,48 @@ func LogPanic(ctx context.Context, recovered interface{}, stack []byte) {
 
 	fields["panic"] = errMsg
 	logEntryWithContext(ctx, ErrorLevel, "PANIC RECOVERED", fields)
+}
+
+type PerformanceMetrics struct {
+	Duration  time.Duration
+	Operation string
+	Component string
+	Metadata  map[string]interface{}
+}
+
+func LogPerformance(ctx context.Context, metrics PerformanceMetrics) {
+	fields := map[string]interface{}{
+		"operation":   metrics.Operation,
+		"component":   metrics.Component,
+		"duration_ms": metrics.Duration.Milliseconds(),
+	}
+
+	if metrics.Metadata != nil {
+		for k, v := range metrics.Metadata {
+			fields[k] = v
+		}
+	}
+
+	logEntryWithContext(ctx, InfoLevel, fmt.Sprintf("Performance: %s.%s", metrics.Component, metrics.Operation), fields)
+}
+
+func LogSlowRequest(ctx context.Context, threshold time.Duration, data RequestLogData) {
+	if data.Duration < threshold.Milliseconds() {
+		return
+	}
+
+	fields := map[string]interface{}{
+		"method":        data.Method,
+		"path":          data.Path,
+		"query":         data.Query,
+		"ip":            data.IP,
+		"status":        data.Status,
+		"duration":      data.Duration,
+		"threshold_ms":  threshold.Milliseconds(),
+		"request_size":  data.RequestSize,
+		"response_size": data.ResponseSize,
+		"user_agent":    data.UserAgent,
+	}
+
+	logEntryWithContext(ctx, WarnLevel, "Slow request detected", fields)
 }
