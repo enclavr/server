@@ -312,3 +312,89 @@ func (rm *RoomMetric) BeforeCreate(tx *gorm.DB) error {
 	}
 	return nil
 }
+
+type ConnectionStatus string
+
+const (
+	ConnectionStatusPending  ConnectionStatus = "pending"
+	ConnectionStatusAccepted ConnectionStatus = "accepted"
+	ConnectionStatusRejected ConnectionStatus = "rejected"
+	ConnectionStatusBlocked  ConnectionStatus = "blocked"
+)
+
+type ConnectionDirection string
+
+const (
+	ConnectionDirectionOneway ConnectionDirection = "oneway"
+	ConnectionDirectionMutual ConnectionDirection = "mutual"
+)
+
+type MessageDraft struct {
+	ID        uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	UserID    uuid.UUID      `gorm:"type:uuid;not null;index" json:"user_id"`
+	RoomID    *uuid.UUID     `gorm:"type:uuid;index" json:"room_id"`
+	Content   string         `gorm:"type:text;not null" json:"content"`
+	IsDraft   bool           `gorm:"default:true" json:"is_draft"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	User User `gorm:"foreignKey:UserID" json:"-"`
+	Room Room `gorm:"foreignKey:RoomID" json:"-"`
+}
+
+func (md *MessageDraft) BeforeCreate(tx *gorm.DB) error {
+	if md.ID == uuid.Nil {
+		md.ID = uuid.New()
+	}
+	if md.CreatedAt.IsZero() {
+		md.CreatedAt = time.Now()
+	}
+	return nil
+}
+
+type BlockedUser struct {
+	ID        uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	BlockerID uuid.UUID      `gorm:"type:uuid;not null;index" json:"blocker_id"`
+	BlockedID uuid.UUID      `gorm:"type:uuid;not null;index" json:"blocked_id"`
+	Reason    string         `gorm:"size:500" json:"reason"`
+	CreatedAt time.Time      `json:"created_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	BlockerUser User `gorm:"foreignKey:BlockerID" json:"-"`
+	BlockedUser User `gorm:"foreignKey:BlockedID" json:"-"`
+}
+
+func (bu *BlockedUser) BeforeCreate(tx *gorm.DB) error {
+	if bu.ID == uuid.Nil {
+		bu.ID = uuid.New()
+	}
+	if bu.CreatedAt.IsZero() {
+		bu.CreatedAt = time.Now()
+	}
+	return nil
+}
+
+type UserConnection struct {
+	ID              uuid.UUID           `gorm:"type:uuid;primary_key" json:"id"`
+	UserID          uuid.UUID           `gorm:"type:uuid;not null;index" json:"user_id"`
+	ConnectedUserID uuid.UUID           `gorm:"type:uuid;not null;index" json:"connected_user_id"`
+	Status          ConnectionStatus    `gorm:"size:20;not null;default:'pending'" json:"status"`
+	Direction       ConnectionDirection `gorm:"size:20;not null;default:'oneway'" json:"direction"`
+	CreatedAt       time.Time           `json:"created_at"`
+	UpdatedAt       time.Time           `json:"updated_at"`
+	DeletedAt       gorm.DeletedAt      `gorm:"index" json:"-"`
+
+	User          User `gorm:"foreignKey:UserID" json:"-"`
+	ConnectedUser User `gorm:"foreignKey:ConnectedUserID" json:"-"`
+}
+
+func (uc *UserConnection) BeforeCreate(tx *gorm.DB) error {
+	if uc.ID == uuid.Nil {
+		uc.ID = uuid.New()
+	}
+	if uc.CreatedAt.IsZero() {
+		uc.CreatedAt = time.Now()
+	}
+	return nil
+}
