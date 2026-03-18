@@ -217,3 +217,98 @@ func (rm *RoomMute) BeforeCreate(tx *gorm.DB) error {
 	}
 	return nil
 }
+
+type StickerPack struct {
+	ID          uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	Name        string         `gorm:"size:100;not null" json:"name"`
+	Description string         `gorm:"size:500" json:"description"`
+	CoverURL    string         `gorm:"size:500" json:"cover_url"`
+	IsPremium   bool           `gorm:"default:false" json:"is_premium"`
+	Price       int            `gorm:"default:0" json:"price"`
+	CreatedBy   *uuid.UUID     `gorm:"type:uuid" json:"created_by"`
+	IsGlobal    bool           `gorm:"default:false" json:"is_global"`
+	UseCount    int            `gorm:"default:0" json:"use_count"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+
+	User User `gorm:"foreignKey:CreatedBy" json:"-"`
+}
+
+func (sp *StickerPack) BeforeCreate(tx *gorm.DB) error {
+	if sp.ID == uuid.Nil {
+		sp.ID = uuid.New()
+	}
+	return nil
+}
+
+type RoomRating struct {
+	ID        uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	RoomID    uuid.UUID      `gorm:"type:uuid;not null" json:"room_id"`
+	UserID    uuid.UUID      `gorm:"type:uuid;not null" json:"user_id"`
+	Rating    int            `gorm:"not null" json:"rating"`
+	Comment   string         `gorm:"type:text" json:"comment"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	Room Room `gorm:"foreignKey:RoomID" json:"-"`
+	User User `gorm:"foreignKey:UserID" json:"-"`
+}
+
+func (rr *RoomRating) BeforeCreate(tx *gorm.DB) error {
+	if rr.ID == uuid.Nil {
+		rr.ID = uuid.New()
+	}
+	return nil
+}
+
+type UserActivityLog struct {
+	ID           uuid.UUID  `gorm:"type:uuid;primary_key" json:"id"`
+	UserID       uuid.UUID  `gorm:"type:uuid;not null" json:"user_id"`
+	ActivityType string     `gorm:"size:50;not null" json:"activity_type"`
+	RoomID       *uuid.UUID `gorm:"type:uuid" json:"room_id"`
+	TargetType   string     `gorm:"size:50" json:"target_type"`
+	TargetID     *uuid.UUID `gorm:"type:uuid" json:"target_id"`
+	Metadata     string     `gorm:"type:jsonb" json:"metadata"`
+	IPAddress    string     `gorm:"size:45" json:"ip_address"`
+	UserAgent    string     `gorm:"size:500" json:"user_agent"`
+	SessionID    *uuid.UUID `gorm:"type:uuid" json:"session_id"`
+	CreatedAt    time.Time  `json:"created_at"`
+
+	User User `gorm:"foreignKey:UserID" json:"-"`
+	Room Room `gorm:"foreignKey:RoomID" json:"-"`
+}
+
+func (ual *UserActivityLog) BeforeCreate(tx *gorm.DB) error {
+	if ual.ID == uuid.Nil {
+		ual.ID = uuid.New()
+	}
+	if ual.CreatedAt.IsZero() {
+		ual.CreatedAt = time.Now()
+	}
+	return nil
+}
+
+type RoomMetric struct {
+	ID                uuid.UUID `gorm:"type:uuid;primary_key" json:"id"`
+	RoomID            uuid.UUID `gorm:"type:uuid;not null" json:"room_id"`
+	Date              time.Time `gorm:"type:date;not null" json:"date"`
+	MessageCount      int       `gorm:"default:0" json:"message_count"`
+	UniqueUsers       int       `gorm:"default:0" json:"unique_users"`
+	VoiceMinutes      int       `gorm:"default:0" json:"voice_minutes"`
+	FileUploads       int       `gorm:"default:0" json:"file_uploads"`
+	AvgResponseTimeMs int       `json:"avg_response_time_ms"`
+	PeakUsers         int       `gorm:"default:0" json:"peak_users"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+
+	Room Room `gorm:"foreignKey:RoomID" json:"-"`
+}
+
+func (rm *RoomMetric) BeforeCreate(tx *gorm.DB) error {
+	if rm.ID == uuid.Nil {
+		rm.ID = uuid.New()
+	}
+	return nil
+}
