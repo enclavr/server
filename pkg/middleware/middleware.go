@@ -25,6 +25,7 @@ const (
 	IsAdminKey    ContextKey = "is_admin"
 	RequestIDKey  ContextKey = "request_id"
 	BookmarkIDKey ContextKey = "bookmark_id"
+	ReminderIDKey ContextKey = "reminder_id"
 	SessionIDKey  ContextKey = "session_id"
 )
 

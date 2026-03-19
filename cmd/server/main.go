@@ -170,6 +170,7 @@ func main() {
 	readReceiptHandler := handlers.NewReadReceiptHandler(db, hub)
 	preferencesHandler := handlers.NewPreferencesHandler(db)
 	statusHandler := handlers.NewStatusHandler(db)
+	reminderHandler := handlers.NewReminderHandler(db)
 	_ = services.NewPushService(db, cfg)
 
 	go hub.Run()
@@ -371,6 +372,13 @@ func main() {
 	mux.HandleFunc("/api/block/unblock", middleware.RequireAuth(authService, blockHandler.UnblockUser))
 	mux.HandleFunc("/api/block/list", middleware.RequireAuth(authService, blockHandler.GetBlockedUsers))
 	mux.HandleFunc("/api/block/check", middleware.RequireAuth(authService, blockHandler.IsBlocked))
+
+	mux.HandleFunc("/api/reminders", middleware.RequireAuth(authService, reminderHandler.GetReminders))
+	mux.HandleFunc("/api/reminder/create", middleware.RequireAuth(authService, reminderHandler.CreateReminder))
+	mux.HandleFunc("/api/reminder/", middleware.RequireAuth(authService, reminderHandler.GetReminder))
+	mux.HandleFunc("/api/reminder/update/", middleware.RequireAuth(authService, reminderHandler.UpdateReminder))
+	mux.HandleFunc("/api/reminder/delete/", middleware.RequireAuth(authService, reminderHandler.DeleteReminder))
+	mux.HandleFunc("/api/reminder/pending", middleware.RequireAuth(authService, reminderHandler.GetPendingReminders))
 
 	mux.HandleFunc("/api/message/read", middleware.RequireAuth(authService, readReceiptHandler.MarkMessageRead))
 	mux.HandleFunc("/api/message/read/receipts", middleware.RequireAuth(authService, readReceiptHandler.GetReadReceipts))

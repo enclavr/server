@@ -259,7 +259,7 @@ func (d *RequestDeduplicatorWithBody) Middleware(next http.Handler) http.Handler
 		}
 
 		if err == nil {
-			d.cache.Set(ctx, key, "1", d.window)
+			_ = d.cache.Set(ctx, key, "1", d.window)
 		}
 
 		w.Header().Set("X-Request-Duplicate", "false")

@@ -1043,12 +1043,16 @@ func (sm *ScheduledMessage) BeforeCreate(tx *gorm.DB) error {
 }
 
 type MessageReminder struct {
-	ID          uuid.UUID `gorm:"type:uuid;primary_key" json:"id"`
-	UserID      uuid.UUID `gorm:"type:uuid;not null;index" json:"user_id"`
-	MessageID   uuid.UUID `gorm:"type:uuid;not null;index" json:"message_id"`
-	RemindAt    time.Time `gorm:"not null;index" json:"remind_at"`
-	IsTriggered bool      `gorm:"default:false" json:"is_triggered"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	UserID      uuid.UUID      `gorm:"type:uuid;not null;index" json:"user_id"`
+	MessageID   uuid.UUID      `gorm:"type:uuid;not null;index" json:"message_id"`
+	RemindAt    time.Time      `gorm:"not null;index" json:"remind_at"`
+	Note        string         `gorm:"size:255" json:"note"`
+	IsTriggered bool           `gorm:"default:false" json:"is_triggered"`
+	TriggeredAt *time.Time     `json:"triggered_at"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 
 	User    User    `gorm:"foreignKey:UserID" json:"-"`
 	Message Message `gorm:"foreignKey:MessageID" json:"-"`
@@ -1060,6 +1064,9 @@ func (mr *MessageReminder) BeforeCreate(tx *gorm.DB) error {
 	}
 	if mr.CreatedAt.IsZero() {
 		mr.CreatedAt = time.Now()
+	}
+	if mr.UpdatedAt.IsZero() {
+		mr.UpdatedAt = time.Now()
 	}
 	return nil
 }
