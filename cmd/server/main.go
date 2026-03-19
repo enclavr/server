@@ -169,6 +169,7 @@ func main() {
 	blockHandler := handlers.NewBlockHandler(db)
 	readReceiptHandler := handlers.NewReadReceiptHandler(db, hub)
 	preferencesHandler := handlers.NewPreferencesHandler(db)
+	privacyHandler := handlers.NewPrivacyHandler(db)
 	statusHandler := handlers.NewStatusHandler(db)
 	reminderHandler := handlers.NewReminderHandler(db)
 	_ = services.NewPushService(db, cfg)
@@ -271,6 +272,11 @@ func main() {
 
 	mux.HandleFunc("/api/preferences", middleware.RequireAuth(authService, preferencesHandler.GetPreferences))
 	mux.HandleFunc("/api/preferences/update", middleware.RequireAuth(authService, preferencesHandler.UpdatePreferences))
+
+	mux.HandleFunc("/api/privacy", middleware.RequireAuth(authService, privacyHandler.GetPrivacySettings))
+	mux.HandleFunc("/api/privacy/update", middleware.RequireAuth(authService, privacyHandler.UpdatePrivacySettings))
+	mux.HandleFunc("/api/privacy/export", middleware.RequireAuth(authService, privacyHandler.ExportPrivacySettings))
+	mux.HandleFunc("/api/privacy/reset", middleware.RequireAuth(authService, privacyHandler.ResetPrivacySettings))
 
 	mux.HandleFunc("/api/status", middleware.RequireAuth(authService, statusHandler.GetStatus))
 	mux.HandleFunc("/api/status/update", middleware.RequireAuth(authService, statusHandler.UpdateStatus))
