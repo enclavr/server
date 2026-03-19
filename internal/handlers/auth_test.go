@@ -49,7 +49,9 @@ func setupTestHandler(t *testing.T) *AuthHandler {
 	emailService := services.NewEmailService(nil)
 	oauthService := services.NewOAuthService(authCfg)
 	testDB := &database.Database{DB: db}
-	cfg := &config.Config{}
+	cfg := &config.Config{
+		Auth: *authCfg,
+	}
 	loginTracker := auth.NewLoginAttemptTracker(5, 15*time.Minute, 15*time.Minute)
 	handler := NewAuthHandler(testDB, authService, emailService, oauthService, cfg, false, loginTracker)
 	return handler
