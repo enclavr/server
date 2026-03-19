@@ -1014,34 +1014,6 @@ func (us *UserStatusModel) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
-type ScheduledMessage struct {
-	ID          uuid.UUID `gorm:"type:uuid;primary_key" json:"id"`
-	RoomID      uuid.UUID `gorm:"type:uuid;not null;index" json:"room_id"`
-	UserID      uuid.UUID `gorm:"type:uuid;not null;index" json:"user_id"`
-	Content     string    `gorm:"type:text;not null" json:"content"`
-	ScheduledAt time.Time `gorm:"not null;index" json:"scheduled_at"`
-	IsSent      bool      `gorm:"default:false" json:"is_sent"`
-	IsCancelled bool      `gorm:"default:false" json:"is_cancelled"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-
-	Room Room `gorm:"foreignKey:RoomID" json:"-"`
-	User User `gorm:"foreignKey:UserID" json:"-"`
-}
-
-func (sm *ScheduledMessage) BeforeCreate(tx *gorm.DB) error {
-	if sm.ID == uuid.Nil {
-		sm.ID = uuid.New()
-	}
-	if sm.CreatedAt.IsZero() {
-		sm.CreatedAt = time.Now()
-	}
-	if sm.UpdatedAt.IsZero() {
-		sm.UpdatedAt = time.Now()
-	}
-	return nil
-}
-
 type MessageReminder struct {
 	ID          uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
 	UserID      uuid.UUID      `gorm:"type:uuid;not null;index" json:"user_id"`
@@ -1067,6 +1039,36 @@ func (mr *MessageReminder) BeforeCreate(tx *gorm.DB) error {
 	}
 	if mr.UpdatedAt.IsZero() {
 		mr.UpdatedAt = time.Now()
+	}
+	return nil
+}
+
+type ScheduledMessage struct {
+	ID          uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	UserID      uuid.UUID      `gorm:"type:uuid;not null;index" json:"user_id"`
+	RoomID      uuid.UUID      `gorm:"type:uuid;not null;index" json:"room_id"`
+	Content     string         `gorm:"type:text;not null" json:"content"`
+	SendAt      time.Time      `gorm:"not null;index" json:"send_at"`
+	IsSent      bool           `gorm:"default:false" json:"is_sent"`
+	SentAt      *time.Time     `json:"sent_at,omitempty"`
+	IsCancelled bool           `gorm:"default:false" json:"is_cancelled"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+
+	User User `gorm:"foreignKey:UserID" json:"-"`
+	Room Room `gorm:"foreignKey:RoomID" json:"-"`
+}
+
+func (sm *ScheduledMessage) BeforeCreate(tx *gorm.DB) error {
+	if sm.ID == uuid.Nil {
+		sm.ID = uuid.New()
+	}
+	if sm.CreatedAt.IsZero() {
+		sm.CreatedAt = time.Now()
+	}
+	if sm.UpdatedAt.IsZero() {
+		sm.UpdatedAt = time.Now()
 	}
 	return nil
 }
@@ -1163,11 +1165,11 @@ type UserPrivacySettings struct {
 	AllowDirectMessages   string    `gorm:"size:20;default:'everyone'" json:"allow_direct_messages"`
 	AllowRoomInvites      string    `gorm:"size:20;default:'everyone'" json:"allow_room_invites"`
 	AllowVoiceCalls       string    `gorm:"size:20;default:'everyone'" json:"allow_voice_calls"`
-	ShowOnlineStatus      bool      `gorm:"default:true" json:"show_online_status"`
-	ShowReadReceipts      bool      `gorm:"default:true" json:"show_read_receipts"`
-	ShowTypingIndicator   bool      `gorm:"default:true" json:"show_typing_indicator"`
-	AllowSearchByEmail    bool      `gorm:"default:false" json:"allow_search_by_email"`
-	AllowSearchByUsername bool      `gorm:"default:true" json:"allow_search_by_username"`
+	ShowOnlineStatus      bool      `json:"show_online_status"`
+	ShowReadReceipts      bool      `json:"show_read_receipts"`
+	ShowTypingIndicator   bool      `json:"show_typing_indicator"`
+	AllowSearchByEmail    bool      `json:"allow_search_by_email"`
+	AllowSearchByUsername bool      `json:"allow_search_by_username"`
 	CreatedAt             time.Time `json:"created_at"`
 	UpdatedAt             time.Time `json:"updated_at"`
 

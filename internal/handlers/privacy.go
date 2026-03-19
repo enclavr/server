@@ -159,12 +159,15 @@ func (h *PrivacyHandler) UpdatePrivacySettings(w http.ResponseWriter, r *http.Re
 	settings.UpdatedAt = time.Now()
 
 	if settings.ID == uuid.Nil {
-		if err := h.db.Session(&gorm.Session{SkipHooks: true}).Create(&settings).Error; err != nil {
+		settings.ID = uuid.New()
+		settings.CreatedAt = time.Now()
+		settings.UpdatedAt = time.Now()
+		if err := h.db.Select("id", "user_id", "allow_direct_messages", "allow_room_invites", "allow_voice_calls", "show_online_status", "show_read_receipts", "show_typing_indicator", "allow_search_by_email", "allow_search_by_username", "created_at", "updated_at").Create(&settings).Error; err != nil {
 			http.Error(w, "Failed to create privacy settings", http.StatusInternalServerError)
 			return
 		}
 	} else {
-		if err := h.db.Session(&gorm.Session{SkipHooks: true}).Save(&settings).Error; err != nil {
+		if err := h.db.Save(&settings).Error; err != nil {
 			http.Error(w, "Failed to update privacy settings", http.StatusInternalServerError)
 			return
 		}
