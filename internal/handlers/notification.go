@@ -8,6 +8,7 @@ import (
 	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/internal/models"
 	"github.com/enclavr/server/pkg/middleware"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
@@ -115,28 +116,28 @@ func (h *NotificationHandler) GetUnreadCount(w http.ResponseWriter, r *http.Requ
 	_ = json.NewEncoder(w).Encode(map[string]int64{"unread_count": count})
 }
 
-func (h *NotificationHandler) MarkAsRead(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
+func (h *NotificationHandler) MarkAsRead(c *gin.Context) {
+	userID, ok := c.Request.Context().Value(middleware.UserIDKey).(uuid.UUID)
 	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		http.Error(c.Writer, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	notificationID := r.PathValue("id")
+	notificationID := c.Param("id")
 	if notificationID == "" {
-		http.Error(w, "Notification ID required", http.StatusBadRequest)
+		http.Error(c.Writer, "Notification ID required", http.StatusBadRequest)
 		return
 	}
 
 	id, err := uuid.Parse(notificationID)
 	if err != nil {
-		http.Error(w, "Invalid notification ID", http.StatusBadRequest)
+		http.Error(c.Writer, "Invalid notification ID", http.StatusBadRequest)
 		return
 	}
 
 	var notification models.Notification
 	if err := h.db.First(&notification, "id = ? AND user_id = ?", id, userID).Error; err != nil {
-		http.Error(w, "Notification not found", http.StatusNotFound)
+		http.Error(c.Writer, "Notification not found", http.StatusNotFound)
 		return
 	}
 
@@ -145,12 +146,12 @@ func (h *NotificationHandler) MarkAsRead(w http.ResponseWriter, r *http.Request)
 	notification.ReadAt = &now
 
 	if err := h.db.Save(&notification).Error; err != nil {
-		http.Error(w, "Failed to update notification", http.StatusInternalServerError)
+		http.Error(c.Writer, "Failed to update notification", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(h.toResponse(notification))
+	c.Writer.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(c.Writer).Encode(h.toResponse(notification))
 }
 
 func (h *NotificationHandler) MarkAllAsRead(w http.ResponseWriter, r *http.Request) {
@@ -177,73 +178,73 @@ func (h *NotificationHandler) MarkAllAsRead(w http.ResponseWriter, r *http.Reque
 	_ = json.NewEncoder(w).Encode(map[string]int64{"updated_count": result.RowsAffected})
 }
 
-func (h *NotificationHandler) ArchiveNotification(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
+func (h *NotificationHandler) ArchiveNotification(c *gin.Context) {
+	userID, ok := c.Request.Context().Value(middleware.UserIDKey).(uuid.UUID)
 	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		http.Error(c.Writer, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	notificationID := r.PathValue("id")
+	notificationID := c.Param("id")
 	if notificationID == "" {
-		http.Error(w, "Notification ID required", http.StatusBadRequest)
+		http.Error(c.Writer, "Notification ID required", http.StatusBadRequest)
 		return
 	}
 
 	id, err := uuid.Parse(notificationID)
 	if err != nil {
-		http.Error(w, "Invalid notification ID", http.StatusBadRequest)
+		http.Error(c.Writer, "Invalid notification ID", http.StatusBadRequest)
 		return
 	}
 
 	var notification models.Notification
 	if err := h.db.First(&notification, "id = ? AND user_id = ?", id, userID).Error; err != nil {
-		http.Error(w, "Notification not found", http.StatusNotFound)
+		http.Error(c.Writer, "Notification not found", http.StatusNotFound)
 		return
 	}
 
 	notification.Archived = true
 
 	if err := h.db.Save(&notification).Error; err != nil {
-		http.Error(w, "Failed to archive notification", http.StatusInternalServerError)
+		http.Error(c.Writer, "Failed to archive notification", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(h.toResponse(notification))
+	c.Writer.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(c.Writer).Encode(h.toResponse(notification))
 }
 
-func (h *NotificationHandler) DeleteNotification(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
+func (h *NotificationHandler) DeleteNotification(c *gin.Context) {
+	userID, ok := c.Request.Context().Value(middleware.UserIDKey).(uuid.UUID)
 	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		http.Error(c.Writer, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	notificationID := r.PathValue("id")
+	notificationID := c.Param("id")
 	if notificationID == "" {
-		http.Error(w, "Notification ID required", http.StatusBadRequest)
+		http.Error(c.Writer, "Notification ID required", http.StatusBadRequest)
 		return
 	}
 
 	id, err := uuid.Parse(notificationID)
 	if err != nil {
-		http.Error(w, "Invalid notification ID", http.StatusBadRequest)
+		http.Error(c.Writer, "Invalid notification ID", http.StatusBadRequest)
 		return
 	}
 
 	result := h.db.Delete(&models.Notification{}, "id = ? AND user_id = ?", id, userID)
 	if result.Error != nil {
-		http.Error(w, "Failed to delete notification", http.StatusInternalServerError)
+		http.Error(c.Writer, "Failed to delete notification", http.StatusInternalServerError)
 		return
 	}
 
 	if result.RowsAffected == 0 {
-		http.Error(w, "Notification not found", http.StatusNotFound)
+		http.Error(c.Writer, "Notification not found", http.StatusNotFound)
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	c.Writer.WriteHeader(http.StatusNoContent)
 }
 
 func (h *NotificationHandler) CreateNotification(w http.ResponseWriter, r *http.Request) {
