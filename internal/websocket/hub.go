@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -55,7 +56,55 @@ func isTemporaryNetworkError(err error) bool {
 	return false
 }
 
+func getErrorCategory(err error) (category, detail string) {
+	if err == nil {
+		return "unknown", "no error provided"
+	}
+
+	var ce *websocket.CloseError
+	if errors.As(err, &ce) {
+		switch ce.Code {
+		case websocket.CloseNormalClosure:
+			return "graceful", "client initiated normal closure"
+		case websocket.CloseGoingAway:
+			return "graceful", "client leaving or navigation"
+		case websocket.CloseAbnormalClosure:
+			return "network", "abnormal network closure"
+		case websocket.CloseNoStatusReceived:
+			return "protocol", "no close frame received"
+		case websocket.CloseTLSHandshake:
+			return "tls", "TLS handshake failure"
+		case 4000 - 4999:
+			return "custom", "application-specific close"
+		default:
+			return "unknown", fmt.Sprintf("code %d: %s", ce.Code, ce.Text)
+		}
+	}
+
+	var netErr *net.OpError
+	if errors.As(err, &netErr) {
+		if netErr.Timeout() {
+			return "timeout", "connection timeout"
+		}
+		return "network", "network operation error"
+	}
+
+	if errors.Is(err, context.Canceled) {
+		return "cancelled", "operation cancelled"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout", "deadline exceeded"
+	}
+
+	return "unknown", err.Error()
+}
+
 var wsLogger Logger = StructuredLogger{}
+
+var ErrConnectionClosed = errors.New("connection closed")
+var ErrInvalidMessage = errors.New("invalid message")
+var ErrRateLimitExceeded = errors.New("rate limit exceeded")
+var ErrInvalidState = errors.New("invalid connection state")
 
 func SetLogger(logger Logger) {
 	wsLogger = logger
@@ -969,46 +1018,40 @@ func (c *Client) ReadPump() {
 				c.bytesIn.Add(int64(len(message)))
 			}
 
-			var errType, errDetail string
+			errCategory, errDetail := getErrorCategory(err)
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseTLSHandshake) {
-				errType = "unexpected_close"
-				errDetail = "connection lost or terminated abnormally"
 				wsLogger.Error("WebSocket unexpected close error",
 					"connection_id", c.connectionID,
 					"user_id", c.userID,
 					"room_id", c.roomID,
-					"error_type", errType,
+					"error_category", errCategory,
 					"close_code", getCloseCode(err),
 					"error", err.Error())
 				c.RecordError(err)
 			} else if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				errType = "graceful_close"
-				errDetail = "client initiated close"
 				wsLogger.Info("WebSocket closed normally",
 					"connection_id", c.connectionID,
 					"user_id", c.userID,
 					"room_id", c.roomID,
+					"error_category", errCategory,
 					"close_code", getCloseCode(err))
 			} else if isTemporaryNetworkError(err) {
-				errType = "temporary_network"
-				errDetail = "temporary network issue"
 				wsLogger.Warn("WebSocket temporary network error (will retry)",
 					"connection_id", c.connectionID,
 					"user_id", c.userID,
+					"error_category", errCategory,
 					"error", err.Error())
 				c.RecordError(err)
 			} else {
-				errType = "read_error"
-				errDetail = "failed to read message"
 				wsLogger.Error("WebSocket read error",
 					"connection_id", c.connectionID,
 					"user_id", c.userID,
-					"error_type", errType,
+					"error_category", errCategory,
 					"error", err.Error())
 				c.RecordError(err)
 			}
 
-			c.sendDisconnectNotification(errType, errDetail)
+			c.sendDisconnectNotification(errCategory, errDetail)
 			break
 		}
 
@@ -1337,6 +1380,10 @@ func (h *Hub) ValidateAndSanitizeMessage(msgType string, payload json.RawMessage
 		"enhanced-typing": true, "user-focus": true, "media-state-sync": true,
 		"user-activity": true, "presence-event": true, "broadcast-status-update": true,
 		"message-ack": true, "message-delivery-status": true,
+		"typing-pause": true, "user-focus-in": true, "user-focus-out": true,
+		"reaction-add": true, "reaction-remove": true, "message-pinned": true,
+		"message-unpinned": true, "user-viewing-channel": true, "user-left-channel": true,
+		"room-config-update": true,
 	}
 
 	if !validTypes[msgType] {
@@ -1894,6 +1941,26 @@ func (c *Client) handleMessage(msg *Message) {
 		c.handleMediaStateSync(msg)
 	case "media-state-request":
 		c.handleMediaStateRequest(msg)
+	case "typing-pause":
+		c.handleTypingPause(msg)
+	case "user-focus-in":
+		c.handleUserFocusWindow(msg)
+	case "user-focus-out":
+		c.handleUserFocusWindow(msg)
+	case "reaction-add":
+		c.handleReactionAdd(msg)
+	case "reaction-remove":
+		c.handleReactionRemove(msg)
+	case "message-pinned":
+		c.handleMessagePin(msg)
+	case "message-unpinned":
+		c.handleMessagePin(msg)
+	case "user-viewing-channel":
+		c.handleUserViewingChannel(msg)
+	case "user-left-channel":
+		c.handleUserViewingChannel(msg)
+	case "room-config-update":
+		c.handleRoomConfigUpdate(msg)
 	default:
 		wsLogger.Warn("Unknown message type",
 			"connection_id", c.connectionID,
@@ -5414,4 +5481,319 @@ func (c *Client) handleMediaStateRequest(msg *Message) {
 		"user_id", c.userID,
 		"requested_users", len(payload.UserIDs),
 		"returned_states", len(states))
+}
+
+type TypingPausePayload struct {
+	Context     string `json:"context"`
+	ChannelID   string `json:"channel_id"`
+	ThreadID    string `json:"thread_id"`
+	ContextType string `json:"context_type"`
+	Paused      bool   `json:"paused"`
+}
+
+func (c *Client) handleTypingPause(msg *Message) {
+	var payload TypingPausePayload
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing typing-pause payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			c.sendErrorMessage("Invalid typing pause payload format")
+			return
+		}
+	}
+
+	wsLogger.Debug("User typing paused",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"context", payload.Context,
+		"paused", payload.Paused)
+
+	payloadBytes, _ := json.Marshal(payload)
+	notifyMsg := &Message{
+		Type:      "typing-pause",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+}
+
+type UserFocusWindowPayload struct {
+	Context string `json:"context"` // "room", "channel", "thread", "dm"
+	Focused bool   `json:"focused"`
+}
+
+func (c *Client) handleUserFocusWindow(msg *Message) {
+	var payload UserFocusWindowPayload
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing user-focus-window payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			c.sendErrorMessage("Invalid focus window payload format")
+			return
+		}
+	}
+
+	validContexts := map[string]bool{
+		"room": true, "channel": true, "thread": true, "dm": true,
+	}
+	if !validContexts[payload.Context] {
+		wsLogger.Warn("Invalid focus context",
+			"connection_id", c.connectionID,
+			"user_id", c.userID,
+			"context", payload.Context)
+		return
+	}
+
+	msgType := "user-focus-out"
+	if payload.Focused {
+		msgType = "user-focus-in"
+	}
+
+	payloadBytes, _ := json.Marshal(payload)
+	notifyMsg := &Message{
+		Type:      msgType,
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	wsLogger.Debug("User focus window changed",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"context", payload.Context,
+		"focused", payload.Focused)
+}
+
+type ReactionPayload struct {
+	MessageID string `json:"message_id"`
+	Emoji     string `json:"emoji"`
+	Action    string `json:"action"` // "add" or "remove"
+}
+
+func (c *Client) handleReactionAdd(msg *Message) {
+	var payload ReactionPayload
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing reaction payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			c.sendErrorMessage("Invalid reaction payload format")
+			return
+		}
+	}
+
+	if payload.MessageID == "" || payload.Emoji == "" {
+		wsLogger.Warn("Invalid reaction payload - missing required fields",
+			"connection_id", c.connectionID,
+			"user_id", c.userID,
+			"message_id", payload.MessageID,
+			"emoji", payload.Emoji)
+		return
+	}
+
+	payloadBytes, _ := json.Marshal(payload)
+	notifyMsg := &Message{
+		Type:      "reaction-add",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	wsLogger.Debug("User added reaction",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"message_id", payload.MessageID,
+		"emoji", payload.Emoji)
+}
+
+func (c *Client) handleReactionRemove(msg *Message) {
+	var payload ReactionPayload
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing reaction remove payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			return
+		}
+	}
+
+	if payload.MessageID == "" {
+		wsLogger.Warn("Invalid reaction remove payload - missing message_id",
+			"connection_id", c.connectionID,
+			"user_id", c.userID)
+		return
+	}
+
+	payloadBytes, _ := json.Marshal(payload)
+	notifyMsg := &Message{
+		Type:      "reaction-remove",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	wsLogger.Debug("User removed reaction",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"message_id", payload.MessageID,
+		"emoji", payload.Emoji)
+}
+
+type MessagePinPayload struct {
+	MessageID string `json:"message_id"`
+	Action    string `json:"action"` // "pin" or "unpin"
+	ChannelID string `json:"channel_id,omitempty"`
+}
+
+func (c *Client) handleMessagePin(msg *Message) {
+	var payload MessagePinPayload
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing message pin payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			c.sendErrorMessage("Invalid pin payload format")
+			return
+		}
+	}
+
+	if payload.MessageID == "" {
+		wsLogger.Warn("Invalid message pin payload - missing message_id",
+			"connection_id", c.connectionID,
+			"user_id", c.userID)
+		return
+	}
+
+	msgType := "message-pinned"
+	if payload.Action == "unpin" {
+		msgType = "message-unpinned"
+	}
+
+	payloadBytes, _ := json.Marshal(payload)
+	notifyMsg := &Message{
+		Type:      msgType,
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+
+	wsLogger.Info("Message pinned/unpinned",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"message_id", payload.MessageID,
+		"action", payload.Action)
+}
+
+type UserViewingChannelPayload struct {
+	ChannelID string `json:"channel_id"`
+	Viewing   bool   `json:"viewing"`
+}
+
+func (c *Client) handleUserViewingChannel(msg *Message) {
+	var payload UserViewingChannelPayload
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing user-viewing-channel payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			return
+		}
+	}
+
+	msgType := "user-viewing-channel"
+	if !payload.Viewing {
+		msgType = "user-left-channel"
+	}
+
+	payloadBytes, _ := json.Marshal(payload)
+	notifyMsg := &Message{
+		Type:      msgType,
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	wsLogger.Debug("User viewing channel changed",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"channel_id", payload.ChannelID,
+		"viewing", payload.Viewing)
+}
+
+type RoomConfigPayload struct {
+	Key   string      `json:"key"`
+	Value interface{} `json:"value"`
+}
+
+func (c *Client) handleRoomConfigUpdate(msg *Message) {
+	var payload RoomConfigPayload
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			wsLogger.Warn("Error parsing room-config payload",
+				"connection_id", c.connectionID,
+				"user_id", c.userID,
+				"error", err)
+			c.sendErrorMessage("Invalid room config payload format")
+			return
+		}
+	}
+
+	validKeys := map[string]bool{
+		"name": true, "description": true, "icon": true,
+		"notifications": true, "slowmode": true,
+	}
+	if !validKeys[payload.Key] {
+		wsLogger.Warn("Invalid room config key",
+			"connection_id", c.connectionID,
+			"user_id", c.userID,
+			"key", payload.Key)
+		return
+	}
+
+	notifyMsg := &Message{
+		Type:      "room-config-updated",
+		RoomID:    c.roomID,
+		UserID:    c.userID,
+		Payload:   msg.Payload,
+		Timestamp: time.Now(),
+	}
+	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
+
+	if c.hub.enableRedis {
+		c.hub.publishToRedis(notifyMsg)
+	}
+
+	wsLogger.Info("Room config updated",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"room_id", c.roomID,
+		"key", payload.Key)
 }
