@@ -398,3 +398,68 @@ func (uc *UserConnection) BeforeCreate(tx *gorm.DB) error {
 	}
 	return nil
 }
+
+type RoomFeatured struct {
+	ID         uuid.UUID  `gorm:"type:uuid;primary_key" json:"id"`
+	RoomID     uuid.UUID  `gorm:"type:uuid;not null;uniqueIndex" json:"room_id"`
+	FeaturedBy uuid.UUID  `gorm:"type:uuid;not null" json:"featured_by"`
+	Reason     string     `gorm:"size:500" json:"reason"`
+	Position   int        `gorm:"default:0" json:"position"`
+	StartsAt   *time.Time `json:"starts_at"`
+	ExpiresAt  *time.Time `json:"expires_at"`
+	CreatedAt  time.Time  `json:"created_at"`
+
+	Room Room `gorm:"foreignKey:RoomID" json:"-"`
+	User User `gorm:"foreignKey:FeaturedBy" json:"-"`
+}
+
+func (rf *RoomFeatured) BeforeCreate(tx *gorm.DB) error {
+	if rf.ID == uuid.Nil {
+		rf.ID = uuid.New()
+	}
+	if rf.CreatedAt.IsZero() {
+		rf.CreatedAt = time.Now()
+	}
+	return nil
+}
+
+type SessionActivity struct {
+	ID                uuid.UUID  `gorm:"type:uuid;primary_key" json:"id"`
+	SessionID         uuid.UUID  `gorm:"type:uuid;not null;index" json:"session_id"`
+	UserID            uuid.UUID  `gorm:"type:uuid;not null;index" json:"user_id"`
+	RoomID            *uuid.UUID `gorm:"type:uuid;index" json:"room_id"`
+	ActivityType      string     `gorm:"size:30;not null" json:"activity_type"`
+	Duration          int        `gorm:"default:0" json:"duration"`
+	Metadata          string     `gorm:"type:jsonb" json:"metadata"`
+	IPAddress         string     `gorm:"size:45" json:"ip_address"`
+	Country           string     `gorm:"size:2" json:"country"`
+	City              string     `gorm:"size:100" json:"city"`
+	DeviceType        string     `gorm:"size:20" json:"device_type"`
+	Browser           string     `gorm:"size:50" json:"browser"`
+	OS                string     `gorm:"size:30" json:"os"`
+	NetworkType       string     `gorm:"size:20" json:"network_type"`
+	PageViews         int        `gorm:"default:0" json:"page_views"`
+	MessagesSent      int        `gorm:"default:0" json:"messages_sent"`
+	CommandsRun       int        `gorm:"default:0" json:"commands_run"`
+	ErrorsEncountered int        `gorm:"default:0" json:"errors_encountered"`
+	StartedAt         time.Time  `json:"started_at"`
+	EndedAt           *time.Time `json:"ended_at"`
+	CreatedAt         time.Time  `json:"created_at"`
+
+	User    User    `gorm:"foreignKey:UserID" json:"-"`
+	Room    Room    `gorm:"foreignKey:RoomID" json:"-"`
+	Session Session `gorm:"foreignKey:SessionID" json:"-"`
+}
+
+func (sa *SessionActivity) BeforeCreate(tx *gorm.DB) error {
+	if sa.ID == uuid.Nil {
+		sa.ID = uuid.New()
+	}
+	if sa.CreatedAt.IsZero() {
+		sa.CreatedAt = time.Now()
+	}
+	if sa.StartedAt.IsZero() {
+		sa.StartedAt = time.Now()
+	}
+	return nil
+}
