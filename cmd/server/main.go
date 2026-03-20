@@ -211,6 +211,7 @@ func main() {
 	mux.HandleFunc("/api/auth/oauth/login", oauthHandler.Login)
 	mux.HandleFunc("/api/auth/oauth/google/callback", oauthHandler.Callback)
 	mux.HandleFunc("/api/auth/oauth/github/callback", oauthHandler.Callback)
+	mux.HandleFunc("/api/auth/oauth/discord/callback", oauthHandler.Callback)
 
 	mux.HandleFunc("/api/auth/password/forgot", passwordResetHandler.ForgotPassword)
 	mux.HandleFunc("/api/auth/password/reset", passwordResetHandler.ResetPassword)
