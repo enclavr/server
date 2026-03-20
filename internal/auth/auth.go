@@ -137,6 +137,11 @@ func (s *AuthService) IsPasswordExpired(passwordChangedAt *time.Time) bool {
 }
 
 func (s *AuthService) GenerateToken(user *models.User, sessionID ...uuid.UUID) (string, error) {
+	notBefore := jwt.NewNumericDate(time.Now())
+	if user.PasswordChangedAt != nil {
+		notBefore = jwt.NewNumericDate(*user.PasswordChangedAt)
+	}
+
 	claims := Claims{
 		UserID:   user.ID,
 		Username: user.Username,
@@ -144,6 +149,7 @@ func (s *AuthService) GenerateToken(user *models.User, sessionID ...uuid.UUID) (
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(s.cfg.JWTExpiration)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			NotBefore: notBefore,
 			Issuer:    "enclavr",
 		},
 	}
@@ -381,6 +387,69 @@ func (s *AuthService) RemoveUsedRecoveryCode(hashedCodes, usedCode string) (stri
 
 func ConstantTimeCompare(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+type PasswordResetAttempt struct {
+	Count        int
+	FirstAttempt time.Time
+}
+
+type PasswordResetRateLimiter struct {
+	attempts       map[string]*PasswordResetAttempt
+	mu             sync.RWMutex
+	maxAttempts    int
+	windowDuration time.Duration
+}
+
+func NewPasswordResetRateLimiter(maxAttempts int, windowDuration time.Duration) *PasswordResetRateLimiter {
+	rl := &PasswordResetRateLimiter{
+		attempts:       make(map[string]*PasswordResetAttempt),
+		maxAttempts:    maxAttempts,
+		windowDuration: windowDuration,
+	}
+	go rl.cleanup()
+	return rl
+}
+
+func (rl *PasswordResetRateLimiter) cleanup() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		rl.mu.Lock()
+		now := time.Now()
+		for key, attempt := range rl.attempts {
+			if now.Sub(attempt.FirstAttempt) > rl.windowDuration*2 {
+				delete(rl.attempts, key)
+			}
+		}
+		rl.mu.Unlock()
+	}
+}
+
+func (rl *PasswordResetRateLimiter) RecordRequest(email string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	attempt, exists := rl.attempts[email]
+	if !exists {
+		rl.attempts[email] = &PasswordResetAttempt{
+			Count:        1,
+			FirstAttempt: now,
+		}
+		return true
+	}
+
+	if now.Sub(attempt.FirstAttempt) > rl.windowDuration {
+		rl.attempts[email] = &PasswordResetAttempt{
+			Count:        1,
+			FirstAttempt: now,
+		}
+		return true
+	}
+
+	attempt.Count++
+	return attempt.Count <= rl.maxAttempts
 }
 
 type LoginAttempt struct {

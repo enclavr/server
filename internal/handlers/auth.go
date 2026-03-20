@@ -19,24 +19,26 @@ import (
 )
 
 type AuthHandler struct {
-	db           *database.Database
-	authService  *auth.AuthService
-	emailService *services.EmailService
-	oauthService *services.OAuthService
-	cfg          *config.Config
-	firstIsAdmin bool
-	loginTracker *auth.LoginAttemptTracker
+	db                   *database.Database
+	authService          *auth.AuthService
+	emailService         *services.EmailService
+	oauthService         *services.OAuthService
+	cfg                  *config.Config
+	firstIsAdmin         bool
+	loginTracker         *auth.LoginAttemptTracker
+	passwordResetLimiter *auth.PasswordResetRateLimiter
 }
 
 func NewAuthHandler(db *database.Database, authService *auth.AuthService, emailService *services.EmailService, oauthService *services.OAuthService, cfg *config.Config, firstIsAdmin bool, loginTracker *auth.LoginAttemptTracker) *AuthHandler {
 	return &AuthHandler{
-		db:           db,
-		authService:  authService,
-		emailService: emailService,
-		oauthService: oauthService,
-		cfg:          cfg,
-		firstIsAdmin: firstIsAdmin,
-		loginTracker: loginTracker,
+		db:                   db,
+		authService:          authService,
+		emailService:         emailService,
+		oauthService:         oauthService,
+		cfg:                  cfg,
+		firstIsAdmin:         firstIsAdmin,
+		loginTracker:         loginTracker,
+		passwordResetLimiter: auth.NewPasswordResetRateLimiter(3, 1*time.Hour),
 	}
 }
 
@@ -72,6 +74,7 @@ type UserResponse struct {
 	IsAdmin          bool      `json:"is_admin"`
 	EmailVerified    bool      `json:"email_verified"`
 	TwoFactorEnabled bool      `json:"two_factor_enabled"`
+	PasswordExpired  bool      `json:"password_expired"`
 }
 
 type OAuthBeginRequest struct {
@@ -246,13 +249,19 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if user.PasswordHash != "" && h.authService.IsPasswordExpired(user.PasswordChangedAt) {
+		h.sendAuthResponseWithPasswordExpiry(w, &user, r)
+		return
+	}
+
 	h.sendAuthResponse(w, &user, r)
 }
 
 func (h *AuthHandler) LoginWith2FA(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		UserID string `json:"user_id"`
-		Code   string `json:"code"`
+		UserID     string `json:"user_id"`
+		Code       string `json:"code"`
+		IsRecovery bool   `json:"is_recovery"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -268,6 +277,30 @@ func (h *AuthHandler) LoginWith2FA(w http.ResponseWriter, r *http.Request) {
 	var user models.User
 	if err := h.db.First(&user, userID).Error; err != nil {
 		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	if req.IsRecovery {
+		var recovery models.TwoFactorRecovery
+		if err := h.db.Where("user_id = ?", userID).First(&recovery).Error; err != nil {
+			http.Error(w, "Invalid recovery code", http.StatusUnauthorized)
+			return
+		}
+
+		if !h.authService.ValidateRecoveryCode(recovery.Codes, req.Code) {
+			http.Error(w, "Invalid recovery code", http.StatusUnauthorized)
+			return
+		}
+
+		newCodes, err := h.authService.RemoveUsedRecoveryCode(recovery.Codes, req.Code)
+		if err != nil {
+			http.Error(w, "Failed to update recovery codes", http.StatusInternalServerError)
+			return
+		}
+
+		h.db.Model(&recovery).Update("codes", newCodes)
+
+		h.sendAuthResponse(w, &user, r)
 		return
 	}
 
@@ -474,6 +507,70 @@ func (h *AuthHandler) sendAuthResponseWithRotation(w http.ResponseWriter, user *
 			IsAdmin:          user.IsAdmin,
 			EmailVerified:    user.OIDCIssuer != "",
 			TwoFactorEnabled: user.TwoFactorEnabled,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("Error encoding response: %v", err)
+	}
+}
+
+func (h *AuthHandler) sendAuthResponseWithPasswordExpiry(w http.ResponseWriter, user *models.User, r *http.Request) {
+	sessionID := uuid.New()
+	accessToken, err := h.authService.GenerateToken(user, sessionID)
+	if err != nil {
+		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+		return
+	}
+
+	tokenFamily, err := auth.GenerateTokenFamily()
+	if err != nil {
+		http.Error(w, "Failed to generate token family", http.StatusInternalServerError)
+		return
+	}
+
+	refreshToken, err := h.authService.GenerateRefreshTokenWithFamily(user, tokenFamily)
+	if err != nil {
+		http.Error(w, "Failed to generate refresh token", http.StatusInternalServerError)
+		return
+	}
+
+	session := models.Session{
+		ID:        sessionID,
+		UserID:    user.ID,
+		Token:     accessToken,
+		ExpiresAt: time.Now().Add(h.cfg.Auth.JWTExpiration),
+		CreatedAt: time.Now(),
+		IPAddress: r.RemoteAddr,
+		UserAgent: r.UserAgent(),
+	}
+	h.db.Create(&session)
+
+	dbRefreshToken := models.RefreshToken{
+		ID:          uuid.New(),
+		UserID:      user.ID,
+		Token:       refreshToken,
+		TokenFamily: tokenFamily,
+		ExpiresAt:   time.Now().Add(h.cfg.Auth.RefreshExpiration),
+		CreatedAt:   time.Now(),
+	}
+	h.db.Create(&dbRefreshToken)
+
+	response := AuthResponse{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		ExpiresIn:    int64(24 * time.Hour.Seconds()),
+		User: UserResponse{
+			ID:               user.ID,
+			Username:         user.Username,
+			Email:            user.Email,
+			DisplayName:      user.DisplayName,
+			AvatarURL:        user.AvatarURL,
+			IsAdmin:          user.IsAdmin,
+			EmailVerified:    user.OIDCIssuer != "",
+			TwoFactorEnabled: user.TwoFactorEnabled,
+			PasswordExpired:  true,
 		},
 	}
 
@@ -690,6 +787,14 @@ func (h *AuthHandler) RequestPasswordReset(w http.ResponseWriter, r *http.Reques
 	var req PasswordResetRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if h.passwordResetLimiter != nil && !h.passwordResetLimiter.RecordRequest(req.Email) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": "Too many reset requests, please try again later",
+		})
 		return
 	}
 
@@ -1069,6 +1174,158 @@ func (h *AuthHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": "Account deleted successfully",
+	})
+}
+
+type SessionInfo struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+	IPAddress string    `json:"ip_address"`
+	UserAgent string    `json:"user_agent"`
+	Current   bool      `json:"current"`
+}
+
+func (h *AuthHandler) GetSessions(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	sessionID, _ := r.Context().Value(middleware.SessionIDKey).(uuid.UUID)
+
+	var sessions []models.Session
+	h.db.Where("user_id = ? AND expires_at > ?", userID, time.Now()).Order("created_at DESC").Find(&sessions)
+
+	sessionList := make([]SessionInfo, len(sessions))
+	for i, s := range sessions {
+		sessionList[i] = SessionInfo{
+			ID:        s.ID,
+			CreatedAt: s.CreatedAt,
+			ExpiresAt: s.ExpiresAt,
+			IPAddress: s.IPAddress,
+			UserAgent: s.UserAgent,
+			Current:   s.ID == sessionID,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"sessions": sessionList,
+		"count":    len(sessionList),
+	})
+}
+
+func (h *AuthHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	sessionID, _ := r.Context().Value(middleware.SessionIDKey).(uuid.UUID)
+
+	sessionIDStr := r.URL.Query().Get("id")
+	if sessionIDStr == "" {
+		http.Error(w, "Session ID required", http.StatusBadRequest)
+		return
+	}
+
+	revokeSessionID, err := uuid.Parse(sessionIDStr)
+	if err != nil {
+		http.Error(w, "Invalid session ID", http.StatusBadRequest)
+		return
+	}
+
+	if revokeSessionID == sessionID {
+		http.Error(w, "Cannot revoke current session", http.StatusBadRequest)
+		return
+	}
+
+	result := h.db.Where("id = ? AND user_id = ?", revokeSessionID, userID).Delete(&models.Session{})
+	if result.Error != nil {
+		http.Error(w, "Failed to revoke session", http.StatusInternalServerError)
+		return
+	}
+
+	if result.RowsAffected == 0 {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Session revoked successfully",
+	})
+}
+
+func (h *AuthHandler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	sessionID, _ := r.Context().Value(middleware.SessionIDKey).(uuid.UUID)
+
+	h.db.Where("user_id = ? AND id != ?", userID, sessionID).Delete(&models.Session{})
+	h.db.Where("user_id = ? AND id != ?", userID, sessionID).Delete(&models.RefreshToken{})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "All other sessions revoked successfully",
+	})
+}
+
+func (h *AuthHandler) GetActiveSessionsCount(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var count int64
+	h.db.Model(&models.Session{}).Where("user_id = ? AND expires_at > ?", userID, time.Now()).Count(&count)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"active_sessions": count,
+	})
+}
+
+func (h *AuthHandler) RotateToken(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var user models.User
+	if err := h.db.First(&user, userID).Error; err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	accessToken, err := h.authService.GenerateToken(&user)
+	if err != nil {
+		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+		return
+	}
+
+	refreshToken, err := h.authService.GenerateRefreshToken(&user)
+	if err != nil {
+		http.Error(w, "Failed to generate refresh token", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"access_token":  accessToken,
+		"refresh_token": refreshToken,
+		"expires_in":    int64(24 * time.Hour.Seconds()),
 	})
 }
 
