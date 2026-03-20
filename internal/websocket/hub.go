@@ -123,17 +123,18 @@ func NewTraceContext() TraceContext {
 }
 
 const (
-	MaxErrorThreshold    = 10
-	IdleTimeout          = 5 * time.Minute
-	MaxMessageSize       = 512 * 1024
-	ReconnectRetryDelay  = 5 * time.Second
-	MaxReconnectAttempts = 3
-	MaxMessageQueueSize  = 256
-	PingInterval         = 30 * time.Second
-	PongTimeout          = 60 * time.Second
-	MaxReconnectDelay    = 30 * time.Second
-	MinReconnectDelay    = 1 * time.Second
-	MaxReconnectStates   = 100
+	MaxErrorThreshold      = 10
+	IdleTimeout            = 5 * time.Minute
+	MaxMessageSize         = 512 * 1024
+	ReconnectRetryDelay    = 5 * time.Second
+	MaxReconnectAttempts   = 3
+	MaxMessageQueueSize    = 256
+	PingInterval           = 30 * time.Second
+	PongTimeout            = 60 * time.Second
+	MaxReconnectDelay      = 30 * time.Second
+	MinReconnectDelay      = 1 * time.Second
+	MaxReconnectStates     = 100
+	TypingThrottleDuration = 2 * time.Second
 )
 
 var messageBufferPool = sync.Pool{
@@ -249,15 +250,17 @@ type Hub struct {
 	userConnections map[uuid.UUID]*Client
 	roomMutexes     map[uuid.UUID]*sync.RWMutex
 
-	shutdown      chan struct{}
-	activeClients atomic.Int64
-	totalMessages atomic.Int64
-	startedAt     time.Time
-	batchQueue    chan *batchItem
-	batchTicker   *time.Ticker
-	typingUsers   map[uuid.UUID]*TypingState
-	typingMutex   sync.RWMutex
-	typingTimeout time.Duration
+	shutdown         chan struct{}
+	activeClients    atomic.Int64
+	totalMessages    atomic.Int64
+	startedAt        time.Time
+	batchQueue       chan *batchItem
+	batchTicker      *time.Ticker
+	typingUsers      map[uuid.UUID]*TypingState
+	typingMutex      sync.RWMutex
+	typingTimeout    time.Duration
+	typingThrottle   map[uuid.UUID]time.Time
+	typingThrottleMu sync.Mutex
 
 	pubSub      *PubSubService
 	enableRedis bool
@@ -395,6 +398,7 @@ func NewHub() *Hub {
 		enableRedis:          false,
 		typingUsers:          make(map[uuid.UUID]*TypingState),
 		typingTimeout:        5 * time.Second,
+		typingThrottle:       make(map[uuid.UUID]time.Time),
 		notificationSettings: make(map[string]*RoomNotificationSettings),
 		userActivities:       make(map[uuid.UUID]*RoomActivity),
 		roomStats:            make(map[uuid.UUID]*RoomStats),
@@ -1986,6 +1990,19 @@ func (h *Hub) clearTypingUser(userID uuid.UUID) {
 	delete(h.typingUsers, userID)
 }
 
+func (h *Hub) isTypingThrottled(userID uuid.UUID) bool {
+	h.typingThrottleMu.Lock()
+	defer h.typingThrottleMu.Unlock()
+
+	if lastTime, exists := h.typingThrottle[userID]; exists {
+		if time.Since(lastTime) < TypingThrottleDuration {
+			return true
+		}
+	}
+	h.typingThrottle[userID] = time.Now()
+	return false
+}
+
 func (h *Hub) GetTypingUsers(roomID uuid.UUID) []uuid.UUID {
 	h.typingMutex.RLock()
 	defer h.typingMutex.RUnlock()
@@ -2774,6 +2791,14 @@ func (c *Client) handleUserActivity(msg *Message) {
 }
 
 func (c *Client) handleTypingStart(msg *Message) {
+	if c.hub.isTypingThrottled(c.userID) {
+		wsLogger.Debug("Typing start event throttled",
+			"connection_id", c.connectionID,
+			"user_id", c.userID,
+			"room_id", c.roomID)
+		return
+	}
+
 	var payload TypingIndicator
 	if len(msg.Payload) > 0 {
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
@@ -2864,7 +2889,8 @@ func (c *Client) handleTypingStop(msg *Message) {
 	}
 	wsLogger.Debug("User stopped typing",
 		"connection_id", c.connectionID,
-		"user_id", c.userID)
+		"user_id", c.userID,
+		"room_id", c.roomID)
 }
 
 func (c *Client) handleSubscribeRoomEvents(msg *Message) {
@@ -3062,6 +3088,14 @@ func (c *Client) handleUserBack(msg *Message) {
 }
 
 func (c *Client) handleTyping(msg *Message) {
+	if c.hub.isTypingThrottled(c.userID) {
+		wsLogger.Debug("Typing event throttled",
+			"connection_id", c.connectionID,
+			"user_id", c.userID,
+			"room_id", c.roomID)
+		return
+	}
+
 	var payload TypingPayload
 	if len(msg.Payload) > 0 {
 		_ = json.Unmarshal(msg.Payload, &payload)
@@ -3078,6 +3112,11 @@ func (c *Client) handleTyping(msg *Message) {
 	if c.hub.enableRedis {
 		c.hub.publishToRedis(notifyMsg)
 	}
+	wsLogger.Debug("User typing broadcasted",
+		"connection_id", c.connectionID,
+		"user_id", c.userID,
+		"room_id", c.roomID,
+		"context", payload.Context)
 }
 
 func (c *Client) handleStopTyping(msg *Message) {

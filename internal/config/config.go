@@ -49,6 +49,7 @@ type AuthConfig struct {
 	JWTSecret           string
 	JWTExpiration       time.Duration
 	RefreshExpiration   time.Duration
+	EncryptionKey       string
 	OIDCEnabled         bool
 	OIDCIssuerURL       string
 	OIDCClientID        string
@@ -129,6 +130,7 @@ func Load() *Config {
 			JWTSecret:           getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
 			JWTExpiration:       getDurationEnv("JWT_EXPIRATION", 24*time.Hour),
 			RefreshExpiration:   getDurationEnv("REFRESH_EXPIRATION", 7*24*time.Hour),
+			EncryptionKey:       getEnv("ENCRYPTION_KEY", ""),
 			OIDCEnabled:         getEnvBool("OIDC_ENABLED", false),
 			OIDCIssuerURL:       getEnv("OIDC_ISSUER_URL", ""),
 			OIDCClientID:        getEnv("OIDC_CLIENT_ID", ""),

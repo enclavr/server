@@ -95,7 +95,20 @@ func main() {
 		log.Fatalf("Failed to migrate database: %v", err)
 	}
 
-	authService := auth.NewAuthService(&cfg.Auth)
+	var authService *auth.AuthService
+	if cfg.Auth.EncryptionKey != "" {
+		encryptor, err := auth.NewEncryptor(cfg.Auth.EncryptionKey)
+		if err != nil {
+			log.Printf("Warning: Failed to create encryptor, 2FA secrets will not be encrypted: %v", err)
+			authService = auth.NewAuthService(&cfg.Auth)
+		} else {
+			authService = auth.NewAuthServiceWithEncryption(&cfg.Auth, encryptor)
+			log.Println("Encryption enabled for sensitive data (2FA secrets)")
+		}
+	} else {
+		authService = auth.NewAuthService(&cfg.Auth)
+		log.Println("Warning: ENCRYPTION_KEY not set, 2FA secrets will not be encrypted. Set ENCRYPTION_KEY environment variable for production.")
+	}
 	bootstrapAdminUser(db, authService, &cfg.Admin)
 
 	var hub *websocket.Hub
@@ -225,6 +238,7 @@ func main() {
 	mux.HandleFunc("/api/room", middleware.RequireAuth(authService, roomHandler.GetRoom))
 	mux.HandleFunc("/api/room/join", middleware.RequireAuth(authService, roomHandler.JoinRoom))
 	mux.HandleFunc("/api/room/leave", middleware.RequireAuth(authService, roomHandler.LeaveRoom))
+	mux.HandleFunc("/api/rooms/search", middleware.RequireAuth(authService, roomHandler.SearchRooms))
 
 	mux.HandleFunc("/api/voice/ws", voiceHandler.HandleWebSocket)
 	mux.HandleFunc("/api/voice/ice", voiceHandler.GetICEConfig)

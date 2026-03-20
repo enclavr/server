@@ -234,3 +234,96 @@ func (h *RoomHandler) sendRoomResponse(w http.ResponseWriter, room *models.Room,
 		log.Printf("Error encoding response: %v", err)
 	}
 }
+
+type SearchRoomsRequest struct {
+	Query      string     `json:"query"`
+	CategoryID *uuid.UUID `json:"category_id"`
+	Limit      int        `json:"limit"`
+	Offset     int        `json:"offset"`
+}
+
+type SearchRoomsResponse struct {
+	Rooms  []RoomResponse `json:"rooms"`
+	Total  int64          `json:"total"`
+	Limit  int            `json:"limit"`
+	Offset int            `json:"offset"`
+}
+
+func (h *RoomHandler) SearchRooms(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req SearchRoomsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Limit <= 0 || req.Limit > 50 {
+		req.Limit = 20
+	}
+	if req.Offset < 0 {
+		req.Offset = 0
+	}
+
+	query := h.db.Where("is_private = ?", false)
+
+	if req.Query != "" {
+		searchPattern := "%" + req.Query + "%"
+		query = query.Where("name ILIKE ? OR description ILIKE ?", searchPattern, searchPattern)
+	}
+
+	if req.CategoryID != nil {
+		query = query.Where("category_id = ?", req.CategoryID)
+	}
+
+	var total int64
+	if err := query.Model(&models.Room{}).Count(&total).Error; err != nil {
+		http.Error(w, "Failed to count rooms", http.StatusInternalServerError)
+		return
+	}
+
+	var rooms []models.Room
+	if err := query.
+		Order("created_at DESC").
+		Offset(req.Offset).
+		Limit(req.Limit).
+		Find(&rooms).Error; err != nil {
+		http.Error(w, "Failed to search rooms", http.StatusInternalServerError)
+		return
+	}
+
+	roomResponses := make([]RoomResponse, 0, len(rooms))
+	for _, room := range rooms {
+		var userCount int64
+		h.db.Model(&models.UserRoom{}).Where("room_id = ?", room.ID).Count(&userCount)
+
+		isMember := false
+		h.db.Model(&models.UserRoom{}).Where("user_id = ? AND room_id = ?", userID, room.ID).First(&models.UserRoom{})
+		if !errors.Is(h.db.Error, gorm.ErrRecordNotFound) {
+			isMember = true
+		}
+
+		response := h.roomToResponse(&room, int(userCount))
+		if isMember {
+			roomResponses = append([]RoomResponse{response}, roomResponses...)
+		} else {
+			roomResponses = append(roomResponses, response)
+		}
+	}
+
+	response := SearchRoomsResponse{
+		Rooms:  roomResponses,
+		Total:  total,
+		Limit:  req.Limit,
+		Offset: req.Offset,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("Error encoding response: %v", err)
+	}
+}
