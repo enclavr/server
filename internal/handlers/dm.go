@@ -93,7 +93,7 @@ func (h *DirectMessageHandler) GetConversations(w http.ResponseWriter, r *http.R
 	var conversations []conversation
 
 	subQuery := h.db.Table("direct_messages").
-		Select("CASE WHEN sender_id = ? THEN receiver_id ELSE sender_id AS user_id", userID).
+		Select("CASE WHEN sender_id = ? THEN receiver_id ELSE sender_id END AS user_id", userID).
 		Where("sender_id = ? OR receiver_id = ?", userID, userID).
 		Group("user_id").
 		Order("MAX(created_at) DESC")
