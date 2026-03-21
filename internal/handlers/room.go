@@ -327,3 +327,54 @@ func (h *RoomHandler) SearchRooms(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error encoding response: %v", err)
 	}
 }
+
+type UserRoomResponse struct {
+	RoomID      uuid.UUID `json:"room_id"`
+	RoomName    string    `json:"room_name"`
+	Description string    `json:"description"`
+	Role        string    `json:"role"`
+	IsPrivate   bool      `json:"is_private"`
+	JoinedAt    string    `json:"joined_at"`
+	MemberCount int       `json:"member_count"`
+}
+
+func (h *RoomHandler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var userRooms []models.UserRoom
+	if err := h.db.Where("user_id = ?", userID).Find(&userRooms).Error; err != nil {
+		http.Error(w, "Failed to fetch user rooms", http.StatusInternalServerError)
+		return
+	}
+
+	rooms := make([]UserRoomResponse, 0, len(userRooms))
+	for _, ur := range userRooms {
+		var room models.Room
+		if err := h.db.First(&room, ur.RoomID).Error; err != nil {
+			continue
+		}
+
+		var memberCount int64
+		h.db.Model(&models.UserRoom{}).Where("room_id = ?", ur.RoomID).Count(&memberCount)
+
+		roomResp := UserRoomResponse{
+			RoomID:      ur.RoomID,
+			RoomName:    room.Name,
+			Description: room.Description,
+			Role:        ur.Role,
+			IsPrivate:   room.IsPrivate,
+			JoinedAt:    ur.JoinedAt.Format("2006-01-02T15:04:05Z07:00"),
+			MemberCount: int(memberCount),
+		}
+		rooms = append(rooms, roomResp)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(rooms); err != nil {
+		log.Printf("Error encoding response: %v", err)
+	}
+}

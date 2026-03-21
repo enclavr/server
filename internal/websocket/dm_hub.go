@@ -41,13 +41,10 @@ type DMConversation struct {
 }
 
 type DMClient struct {
-	hub            *DMHub
 	userID         uuid.UUID
 	conversationID string
 	send           chan []byte
-	connectedAt    time.Time
 	lastSeen       atomic.Int64
-	sequence       atomic.Int64
 }
 
 type DMMessage struct {
@@ -204,25 +201,6 @@ func (h *DMHub) getNextSequence(convID string) int64 {
 	return nextSeq
 }
 
-func (h *DMHub) sendToUser(userID uuid.UUID, msg *DMMessage) {
-	h.connectionMutex.RLock()
-	client, ok := h.userConnections[userID]
-	h.connectionMutex.RUnlock()
-
-	if !ok {
-		return
-	}
-
-	msg.Sequence = h.getNextSequence(client.conversationID)
-	msg.Timestamp = time.Now()
-
-	select {
-	case client.send <- msg.encode():
-	default:
-		h.unregister <- client
-	}
-}
-
 func (h *DMHub) HandleMessage(client *DMClient, data []byte) {
 	var msg DMMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
@@ -320,7 +298,7 @@ func (h *DMHub) handleMarkRead(client *DMClient, msg *DMMessage) {
 		MessageID string `json:"message_id"`
 	}
 	if len(msg.Payload) > 0 {
-		json.Unmarshal(msg.Payload, &payload)
+		_ = json.Unmarshal(msg.Payload, &payload)
 	}
 
 	if client.conversationID == "" {
@@ -348,7 +326,7 @@ func (h *DMHub) handleMarkDelivered(client *DMClient, msg *DMMessage) {
 		MessageID string `json:"message_id"`
 	}
 	if len(msg.Payload) > 0 {
-		json.Unmarshal(msg.Payload, &payload)
+		_ = json.Unmarshal(msg.Payload, &payload)
 	}
 
 	if client.conversationID == "" {
@@ -378,7 +356,7 @@ func (h *DMHub) handleJoinConversation(client *DMClient, msg *DMMessage) {
 			ConversationID string `json:"conversation_id"`
 		}
 		if len(msg.Payload) > 0 {
-			json.Unmarshal(msg.Payload, &payload)
+			_ = json.Unmarshal(msg.Payload, &payload)
 			convID = payload.ConversationID
 		}
 	}

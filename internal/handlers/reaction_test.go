@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -228,31 +229,42 @@ func TestReactionHandler_GetReactions(t *testing.T) {
 		messageID      string
 		expectedStatus int
 		userID         uuid.UUID
+		setupContext   func(ctx context.Context, userID uuid.UUID) context.Context
 	}{
 		{
 			name:           "valid get reactions",
 			messageID:      messageID.String(),
 			expectedStatus: http.StatusOK,
 			userID:         userID,
+			setupContext:   addUserIDToContext,
 		},
 		{
 			name:           "missing message_id",
 			messageID:      "",
 			expectedStatus: http.StatusBadRequest,
 			userID:         userID,
+			setupContext:   addUserIDToContext,
 		},
 		{
 			name:           "invalid message_id",
 			messageID:      "invalid",
 			expectedStatus: http.StatusBadRequest,
 			userID:         userID,
+			setupContext:   addUserIDToContext,
+		},
+		{
+			name:           "unauthorized",
+			messageID:      messageID.String(),
+			expectedStatus: http.StatusUnauthorized,
+			userID:         userID,
+			setupContext:   func(ctx context.Context, _ uuid.UUID) context.Context { return ctx },
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/reactions?message_id="+tt.messageID, nil)
-			req = req.WithContext(addUserIDToContext(req.Context(), tt.userID))
+			req = req.WithContext(tt.setupContext(req.Context(), tt.userID))
 			w := httptest.NewRecorder()
 
 			handler.GetReactions(w, req)
@@ -261,5 +273,59 @@ func TestReactionHandler_GetReactions(t *testing.T) {
 				t.Errorf("expected status %d, got %d, body: %s", tt.expectedStatus, w.Code, w.Body.String())
 			}
 		})
+	}
+}
+
+func TestReactionHandler_GetReactions_MultipleUsers(t *testing.T) {
+	handler, db, userID, _, messageID := setupReactionHandler(t)
+
+	otherUser := models.User{
+		ID:       uuid.New(),
+		Username: "otheruser",
+		Email:    "other@example.com",
+	}
+	db.Create(&otherUser)
+
+	reaction1 := models.MessageReaction{
+		ID:        uuid.New(),
+		MessageID: messageID,
+		UserID:    userID,
+		Emoji:     "👍",
+	}
+	db.Create(&reaction1)
+
+	reaction2 := models.MessageReaction{
+		ID:        uuid.New(),
+		MessageID: messageID,
+		UserID:    otherUser.ID,
+		Emoji:     "👍",
+	}
+	db.Create(&reaction2)
+
+	reaction3 := models.MessageReaction{
+		ID:        uuid.New(),
+		MessageID: messageID,
+		UserID:    userID,
+		Emoji:     "❤️",
+	}
+	db.Create(&reaction3)
+
+	req := httptest.NewRequest(http.MethodGet, "/reactions?message_id="+messageID.String(), nil)
+	req = req.WithContext(addUserIDToContext(req.Context(), userID))
+	w := httptest.NewRecorder()
+
+	handler.GetReactions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	var reactions []ReactionWithCount
+	if err := json.Unmarshal(w.Body.Bytes(), &reactions); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+
+	if len(reactions) != 2 {
+		t.Errorf("expected 2 reaction groups, got %d", len(reactions))
 	}
 }
