@@ -135,6 +135,9 @@ const (
 	MinReconnectDelay      = 1 * time.Second
 	MaxReconnectStates     = 100
 	TypingThrottleDuration = 2 * time.Second
+	MaxPendingMessages     = 50
+	ReconnectStateTTL      = 2 * time.Minute
+	CompletedReconnectTTL  = 5 * time.Minute
 )
 
 var messageBufferPool = sync.Pool{
@@ -284,6 +287,29 @@ type Hub struct {
 
 	readReceipts     map[uuid.UUID]map[uuid.UUID]time.Time
 	readReceiptMutex sync.RWMutex
+
+	pendingMessages      map[uuid.UUID][]PendingMessage
+	pendingMessagesMutex sync.RWMutex
+	deliveryStatus       map[string]*DeliveryStatus
+	deliveryMutex        sync.RWMutex
+}
+
+type PendingMessage struct {
+	ID        uuid.UUID       `json:"id"`
+	Type      string          `json:"type"`
+	Payload   json.RawMessage `json:"payload"`
+	CreatedAt time.Time       `json:"created_at"`
+	RoomID    uuid.UUID       `json:"room_id"`
+}
+
+type DeliveryStatus struct {
+	MessageID   string    `json:"message_id"`
+	Status      string    `json:"status"`
+	SentAt      time.Time `json:"sent_at"`
+	DeliveredAt time.Time `json:"delivered_at,omitempty"`
+	ReadAt      time.Time `json:"read_at,omitempty"`
+	RetryCount  int       `json:"retry_count"`
+	LastAttempt time.Time `json:"last_attempt"`
 }
 
 type ReconnectState struct {
@@ -407,12 +433,16 @@ func NewHub() *Hub {
 		reconnectTicker:      time.NewTicker(10 * time.Second),
 		blockedUsers:         make(map[uuid.UUID]map[uuid.UUID]bool),
 		readReceipts:         make(map[uuid.UUID]map[uuid.UUID]time.Time),
+		pendingMessages:      make(map[uuid.UUID][]PendingMessage),
+		deliveryStatus:       make(map[string]*DeliveryStatus),
 	}
 	go hub.processBatch()
 	go hub.cleanupTypingUsers()
 	go hub.cleanupIdleUsers()
 	go hub.updateRoomStats()
 	go hub.cleanupReconnectStates()
+	go hub.cleanupPendingMessages()
+	go hub.cleanupDeliveryStatus()
 	return hub
 }
 
@@ -1507,6 +1537,65 @@ func (h *Hub) cleanupReconnectStates() {
 				h.reconnectStates = make(map[uuid.UUID]*ReconnectState)
 			}
 			h.reconnectMutex.Unlock()
+		}
+	}
+}
+
+func (h *Hub) cleanupPendingMessages() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-h.shutdown:
+			return
+		case <-ticker.C:
+			h.pendingMessagesMutex.Lock()
+			now := time.Now()
+			for userID, messages := range h.pendingMessages {
+				var validMessages []PendingMessage
+				for _, msg := range messages {
+					if now.Sub(msg.CreatedAt) < 5*time.Minute {
+						validMessages = append(validMessages, msg)
+					}
+				}
+				if len(validMessages) == 0 {
+					delete(h.pendingMessages, userID)
+				} else if len(validMessages) < len(messages) {
+					if len(validMessages) > MaxPendingMessages {
+						h.pendingMessages[userID] = validMessages[len(validMessages)-MaxPendingMessages:]
+					} else {
+						h.pendingMessages[userID] = validMessages
+					}
+				}
+			}
+			h.pendingMessagesMutex.Unlock()
+		}
+	}
+}
+
+func (h *Hub) cleanupDeliveryStatus() {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-h.shutdown:
+			return
+		case <-ticker.C:
+			h.deliveryMutex.Lock()
+			now := time.Now()
+			for key, status := range h.deliveryStatus {
+				age := now.Sub(status.SentAt)
+				if age > 24*time.Hour {
+					delete(h.deliveryStatus, key)
+				} else if status.Status == "delivered" && now.Sub(status.DeliveredAt) > 1*time.Hour {
+					delete(h.deliveryStatus, key)
+				} else if status.Status == "failed" && status.RetryCount > 5 {
+					delete(h.deliveryStatus, key)
+				}
+			}
+			h.deliveryMutex.Unlock()
 		}
 	}
 }
