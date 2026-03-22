@@ -2,6 +2,7 @@ package models
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"time"
 
@@ -52,7 +53,8 @@ func generateSecureKey(length int) (string, error) {
 }
 
 func hashKey(key string) string {
-	return key
+	hash := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(hash[:])
 }
 
 type Role struct {
@@ -411,6 +413,10 @@ type RoomFeatured struct {
 
 	Room Room `gorm:"foreignKey:RoomID" json:"-"`
 	User User `gorm:"foreignKey:FeaturedBy" json:"-"`
+}
+
+func (rf *RoomFeatured) TableName() string {
+	return "room_featured"
 }
 
 func (rf *RoomFeatured) BeforeCreate(tx *gorm.DB) error {

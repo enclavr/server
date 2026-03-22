@@ -141,17 +141,19 @@ func (d *Database) Migrate() error {
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_bans_user_id ON bans(user_id)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_bans_room_id ON bans(room_id)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_bookmarks_user_id ON bookmarks(user_id)")
-	d.Exec("CREATE INDEX IF NOT EXISTS idx_server_emoji_created_by ON server_emoji(created_by)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_server_emojis_created_by ON server_emojis(created_by)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_server_stickers_created_by ON server_stickers(created_by)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_soundboard_sounds_created_by ON soundboard_sounds(created_by)")
-	d.Exec("CREATE INDEX IF NOT EXISTS idx_channel_activity_room_id_date ON channel_activity(room_id, date DESC)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_channel_activities_room_id_date ON channel_activities(room_id, date DESC)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_user_preferences_user_id ON user_preferences(user_id)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_room_settings_room_id ON room_settings(room_id)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_blocks_blocker_blocked ON blocks(blocker_id, blocked_id)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_push_subscriptions_endpoint_user ON push_subscriptions(endpoint, user_id)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_voice_sessions_user_id ON voice_sessions(user_id)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_room_invites_room_id ON room_invites(room_id)")
-	d.Exec("CREATE INDEX IF NOT EXISTS idx_invite_links_code ON invite_links(code)")
+	if tableExists(d.DB, "invite_links") {
+		d.Exec("CREATE INDEX IF NOT EXISTS idx_invite_links_code ON invite_links(code)")
+	}
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_user_rooms_user_room_role ON user_rooms(user_id, room_id, role)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_messages_is_deleted ON messages(is_deleted)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_direct_messages_is_deleted ON direct_messages(is_deleted)")
@@ -175,14 +177,14 @@ func (d *Database) Migrate() error {
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_files_user_room ON files(user_id, room_id)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_bookmarks_message_user ON bookmarks(message_id, user_id)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_threads_parent_created ON threads(parent_id, created_at DESC)")
-	d.Exec("CREATE INDEX IF NOT EXISTS idx_user_status_user ON user_statuses(user_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_user_statuses_user ON user_statuses(user_id)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_category_permissions_user_role ON category_permissions(user_id, role_id)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_attachments_user ON attachments(user_id)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_invites_created_expires ON invites(created_at, expires_at)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_webhooks_active_room ON webhooks(room_id, is_active)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON user_notifications(user_id, is_read)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_analytics_date ON daily_analytics(date DESC)")
-	d.Exec("CREATE INDEX IF NOT EXISTS idx_hourly_activity_date_hour ON hourly_activity(date, hour)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_hourly_activities_date_hour ON hourly_activities(date, hour)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_api_keys_active ON api_keys(is_active)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_roles_room_id ON roles(room_id)")
@@ -194,19 +196,29 @@ func (d *Database) Migrate() error {
 
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_audit_logs_user_action ON audit_logs(user_id, action, created_at DESC)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_message_reactions_message_user ON message_reactions(message_id, user_id)")
-	d.Exec("CREATE INDEX IF NOT EXISTS idx_user_status_status ON user_statuses(status, updated_at DESC)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_user_status_models_status ON user_status_models(status, updated_at DESC)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_attachments_message_created ON attachments(message_id, created_at DESC)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_poll_votes_option_user ON poll_votes(option_id, user_id)")
-	d.Exec("CREATE INDEX IF NOT EXISTS idx_scheduled_messages_room_scheduled ON scheduled_messages(room_id, scheduled_at ASC) WHERE is_sent = false AND is_cancelled = false")
-	d.Exec("CREATE INDEX IF NOT EXISTS idx_message_reminders_user_triggered ON message_reminders(user_id, remind_at ASC) WHERE is_triggered = false")
+	if tableExists(d.DB, "scheduled_messages") {
+		d.Exec("CREATE INDEX IF NOT EXISTS idx_scheduled_messages_room_scheduled ON scheduled_messages(room_id, scheduled_at ASC) WHERE is_sent = false AND is_cancelled = false")
+	}
+	if tableExists(d.DB, "message_reminders") {
+		d.Exec("CREATE INDEX IF NOT EXISTS idx_message_reminders_user_triggered ON message_reminders(user_id, remind_at ASC) WHERE is_triggered = false")
+	}
 
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_presence_status ON presences(status, last_seen DESC)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_categories_sort_order ON categories(sort_order)")
-	d.Exec("CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user_provider ON oauth_accounts(user_id, provider)")
+	if tableExists(d.DB, "oauth_accounts") {
+		d.Exec("CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user_provider ON oauth_accounts(user_id, provider)")
+	}
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_user_rooms_by_role ON user_rooms(room_id, role)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_messages_search ON messages USING gin(to_tsvector('english', content))")
-	d.Exec("CREATE INDEX IF NOT EXISTS idx_password_resets_token ON password_resets(token) WHERE used = false")
-	d.Exec("CREATE INDEX IF NOT EXISTS idx_email_verifications_token ON email_verifications(token) WHERE used = false")
+	if tableExists(d.DB, "password_resets") {
+		d.Exec("CREATE INDEX IF NOT EXISTS idx_password_resets_token ON password_resets(token) WHERE used = false")
+	}
+	if tableExists(d.DB, "email_verifications") {
+		d.Exec("CREATE INDEX IF NOT EXISTS idx_email_verifications_token ON email_verifications(token) WHERE used = false")
+	}
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_attachment_share_url ON attachment_shares(share_url)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_attachment_share_attachment ON attachment_shares(attachment_id)")
 
@@ -218,4 +230,10 @@ func isPostgresDB(db *Database) bool {
 	var result string
 	db.Raw("SELECT version()").Scan(&result)
 	return strings.Contains(result, "PostgreSQL")
+}
+
+func tableExists(db *gorm.DB, tableName string) bool {
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?", tableName).Scan(&count)
+	return count > 0
 }

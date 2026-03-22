@@ -260,6 +260,10 @@ type UserStatusModel struct {
 	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
+func (us *UserStatusModel) TableName() string {
+	return "user_statuses"
+}
+
 func (us *UserStatusModel) BeforeCreate(tx *gorm.DB) error {
 	if us.ID == uuid.Nil {
 		us.ID = uuid.New()
