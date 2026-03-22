@@ -57,30 +57,29 @@ docker compose up -d
 
 ### Manual Setup
 
-1. Create a PostgreSQL database (local or Neon)
-2. Set environment variables:
-   - For local PostgreSQL: copy `.env.example` to `.env`
-   - For Neon PostgreSQL 17 (free tier): copy `.env.neon` to `.env` and sign up at https://neon.tech
-   ```
-   DB_HOST=localhost
-   DB_PORT=5432
-   DB_USER=enclavr
-   DB_PASSWORD=enclavr
-   DB_NAME=enclavr
-   DB_SSLMODE=disable  # use 'require' for Neon
-   JWT_SECRET=your-secret-key
-   ```
+1. Copy `.env.example` to `.env`
+2. Configure database (Neon is default, or use self-hosted PostgreSQL):
+
+**Option 1: Neon PostgreSQL (default)** - Sign up at https://neon.tech
+```bash
+NEON_CONNECTION_STRING=postgres://user:password@host.neon.tech/neondb?sslmode=require
+```
+
+**Option 2: Self-hosted PostgreSQL**
+```bash
+NEON_CONNECTION_STRING=  # Empty to use self-hosted
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=enclavr
+DB_PASSWORD=enclavr
+DB_NAME=enclavr
+DB_SSLMODE=disable
+```
+
 3. Run the server:
    ```bash
    go run ./cmd/server
    ```
-
-### Neon PostgreSQL (Free Tier)
-
-For testing without setting up local PostgreSQL:
-1. Sign up at https://neon.tech (free: 0.5GB storage, 1 branch)
-2. Copy `server/.env.neon` to `server/.env`
-3. Run the server - migrations run automatically
 
 Note: The server uses GORM with standard PostgreSQL driver, so it works with any PostgreSQL provider (Neon, Supabase, self-hosted, etc.).
 
@@ -116,12 +115,13 @@ go fmt ./...
 | Variable | Default | Description |
 |----------|---------|-------------|
 | SERVER_PORT | 8080 | Server port |
-| DB_HOST | localhost | Database host |
+| NEON_CONNECTION_STRING | - | Neon PostgreSQL connection string (when set, takes priority) |
+| DB_HOST | localhost | Database host (used when NEON_CONNECTION_STRING is empty) |
 | DB_PORT | 5432 | Database port |
 | DB_USER | enclavr | Database user |
 | DB_PASSWORD | enclavr | Database password |
 | DB_NAME | enclavr | Database name |
-| DB_SSLMODE | disable | SSL mode |
+| DB_SSLMODE | disable | SSL mode (use 'require' for Neon) |
 | JWT_SECRET | - | JWT signing secret |
 | JWT_EXPIRATION | 24h | Token expiration |
 | REFRESH_EXPIRATION | 7d | Refresh token expiration |
@@ -155,11 +155,17 @@ ADMIN_PASSWORD=your-secure-password
 
 ## Testing
 
-Run tests with real SQLite in-memory database:
+Run tests (defaults to SQLite for local, uses Neon in CI):
 
 ```bash
+# Run all tests
 go test -v ./...
+
+# Run specific test
 go test -v -run TestAuthHandler ./...
+
+# Run with Neon PostgreSQL
+NEON_CONNECTION_STRING=postgres://... go test -v ./...
 ```
 
 Run with coverage:

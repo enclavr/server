@@ -26,11 +26,11 @@ This repository maintains a `memory-bank/` directory for agent context. It is **
 
 - **Language:** Go 1.25 (August 2025)
 - **Web Framework:** Go net/http with gorilla/mux
-- **Database:** PostgreSQL 17 (Neon) / PostgreSQL 18 (self-hosted) + GORM ORM
+- **Database:** PostgreSQL (Neon default) / PostgreSQL 18 (self-hosted) + GORM ORM
 - **WebSocket:** gorilla/websocket
 - **Real-time:** WebSocket with Redis pub/sub for scaling
 - **Auth:** JWT + bcrypt + OIDC
-- **Testing:** Go built-in testing with SQLite in-memory
+- **Testing:** Go built-in testing with Neon PostgreSQL (CI) / SQLite (local)
 - **Migrations:** golang-migrate
 
 ## Tools You Can Use
@@ -101,8 +101,8 @@ api/
 ## Testing Standards
 
 - Use **Go's built-in testing package** (`testing`)
-- **Use PostgreSQL for CI/CD** - tests run against PostgreSQL when `POSTGRES_HOST` secret is set
-- **Use SQLite for local development** - defaults to SQLite in-memory when no PostgreSQL credentials
+- **Use Neon PostgreSQL for CI/CD** - tests run against Neon when `NEON_CONNECTION_STRING` secret is set
+- **Use SQLite for local development** - defaults to SQLite in-memory when no Neon connection string
 - **NEVER mock external services** - use real implementations or test servers
 - Test with real data and real responses
 - Place test files next to source files (`handler.go` → `handler_test.go`)
@@ -115,10 +115,8 @@ api/
 # Run with SQLite (default - local development)
 go test -v ./...
 
-# Run with PostgreSQL (CI/CD - uses GitHub secrets)
-# Set these environment variables:
-#   POSTGRES_HOST, POSTGRES_PORT, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
-go test -v ./...
+# Run with Neon PostgreSQL (CI/CD - uses GitHub secret)
+NEON_CONNECTION_STRING=postgres://... go test -v ./...
 ```
 
 ## Database Migrations
