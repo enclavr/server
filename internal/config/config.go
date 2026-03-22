@@ -37,12 +37,13 @@ type AdminConfig struct {
 }
 
 type DatabaseConfig struct {
-	Host     string
-	Port     string
-	User     string
-	Password string
-	DBName   string
-	SSLMode  string
+	Host                 string
+	Port                 string
+	User                 string
+	Password             string
+	DBName               string
+	SSLMode              string
+	NeonConnectionString string
 }
 
 type AuthConfig struct {
@@ -119,12 +120,13 @@ func Load() *Config {
 			MaxUploadSizeMB: getEnvInt("MAX_UPLOAD_SIZE_MB", 10),
 		},
 		Database: DatabaseConfig{
-			Host:     getEnv("DB_HOST", "localhost"),
-			Port:     getEnv("DB_PORT", "5432"),
-			User:     getEnv("DB_USER", "enclavr"),
-			Password: getEnv("DB_PASSWORD", "enclavr"),
-			DBName:   getEnv("DB_NAME", "enclavr"),
-			SSLMode:  getEnv("DB_SSLMODE", "disable"),
+			Host:                 getEnv("DB_HOST", "localhost"),
+			Port:                 getEnv("DB_PORT", "5432"),
+			User:                 getEnv("DB_USER", "enclavr"),
+			Password:             getEnv("DB_PASSWORD", "enclavr"),
+			DBName:               getEnv("DB_NAME", "enclavr"),
+			SSLMode:              getEnv("DB_SSLMODE", "disable"),
+			NeonConnectionString: getEnv("NEON_CONNECTION_STRING", ""),
 		},
 		Auth: AuthConfig{
 			JWTSecret:           getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
@@ -215,6 +217,9 @@ func getDurationEnv(key string, defaultValue time.Duration) time.Duration {
 }
 
 func (d *DatabaseConfig) DSN() string {
+	if d.NeonConnectionString != "" {
+		return d.NeonConnectionString
+	}
 	return "host=" + d.Host +
 		" port=" + d.Port +
 		" user=" + d.User +

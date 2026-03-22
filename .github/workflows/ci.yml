@@ -56,7 +56,16 @@ jobs:
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
           POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
 
+      - name: Run tests with Neon PostgreSQL
+        if: env.NEON_CONNECTION_STRING != ''
+        run: |
+          go test -v -race -coverprofile=coverage.out -count=1 -timeout 15m ./...
+        env:
+          JWT_SECRET: test-jwt-secret-for-ci
+          NEON_CONNECTION_STRING: ${{ secrets.NEON_CONNECTION_STRING }}
+
       - name: Run tests with SQLite
+        if: env.NEON_CONNECTION_STRING == ''
         run: |
           # Skip tests that require PostgreSQL or Redis when using SQLite
           # Also skip tests that use PostgreSQL-specific SQL syntax
