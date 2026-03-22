@@ -1,12 +1,10 @@
 package websocket
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"net"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,233 +14,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
-
-type Logger interface {
-	Debug(msg string, fields ...interface{})
-	Info(msg string, fields ...interface{})
-	Warn(msg string, fields ...interface{})
-	Error(msg string, fields ...interface{})
-}
-
-type StructuredLogger struct{}
-
-func (l StructuredLogger) Debug(msg string, fields ...interface{}) {
-	log.Printf("[DEBUG] "+msg, fields...)
-}
-
-func (l StructuredLogger) Info(msg string, fields ...interface{}) {
-	log.Printf("[INFO] "+msg, fields...)
-}
-
-func (l StructuredLogger) Warn(msg string, fields ...interface{}) {
-	log.Printf("[WARN] "+msg, fields...)
-}
-
-func (l StructuredLogger) Error(msg string, fields ...interface{}) {
-	log.Printf("[ERROR] "+msg, fields...)
-}
-
-func getCloseCode(err error) int {
-	if ce, ok := err.(*websocket.CloseError); ok {
-		return ce.Code
-	}
-	return -1
-}
-
-func isTemporaryNetworkError(err error) bool {
-	if ce, ok := err.(*websocket.CloseError); ok {
-		return ce.Code == websocket.CloseAbnormalClosure
-	}
-	return false
-}
-
-func getErrorCategory(err error) (category, detail string) {
-	if err == nil {
-		return "unknown", "no error provided"
-	}
-
-	var ce *websocket.CloseError
-	if errors.As(err, &ce) {
-		switch ce.Code {
-		case websocket.CloseNormalClosure:
-			return "graceful", "client initiated normal closure"
-		case websocket.CloseGoingAway:
-			return "graceful", "client leaving or navigation"
-		case websocket.CloseAbnormalClosure:
-			return "network", "abnormal network closure"
-		case websocket.CloseNoStatusReceived:
-			return "protocol", "no close frame received"
-		case websocket.CloseTLSHandshake:
-			return "tls", "TLS handshake failure"
-		case 4000 - 4999:
-			return "custom", "application-specific close"
-		default:
-			return "unknown", fmt.Sprintf("code %d: %s", ce.Code, ce.Text)
-		}
-	}
-
-	var netErr *net.OpError
-	if errors.As(err, &netErr) {
-		if netErr.Timeout() {
-			return "timeout", "connection timeout"
-		}
-		return "network", "network operation error"
-	}
-
-	if errors.Is(err, context.Canceled) {
-		return "cancelled", "operation cancelled"
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return "timeout", "deadline exceeded"
-	}
-
-	return "unknown", err.Error()
-}
-
-var wsLogger Logger = StructuredLogger{}
-
-var ErrConnectionClosed = errors.New("connection closed")
-var ErrInvalidMessage = errors.New("invalid message")
-var ErrRateLimitExceeded = errors.New("rate limit exceeded")
-var ErrInvalidState = errors.New("invalid connection state")
-
-func SetLogger(logger Logger) {
-	wsLogger = logger
-}
-
-type TraceContext struct {
-	TraceID uuid.UUID
-	SpanID  uuid.UUID
-}
-
-func NewTraceContext() TraceContext {
-	return TraceContext{
-		TraceID: uuid.New(),
-		SpanID:  uuid.New(),
-	}
-}
-
-const (
-	MaxErrorThreshold      = 10
-	IdleTimeout            = 5 * time.Minute
-	MaxMessageSize         = 512 * 1024
-	ReconnectRetryDelay    = 5 * time.Second
-	MaxReconnectAttempts   = 3
-	MaxMessageQueueSize    = 256
-	PingInterval           = 30 * time.Second
-	PongTimeout            = 60 * time.Second
-	MaxReconnectDelay      = 30 * time.Second
-	MinReconnectDelay      = 1 * time.Second
-	MaxReconnectStates     = 100
-	TypingThrottleDuration = 2 * time.Second
-	MaxPendingMessages     = 50
-	ReconnectStateTTL      = 2 * time.Minute
-	CompletedReconnectTTL  = 5 * time.Minute
-)
-
-var messageBufferPool = sync.Pool{
-	New: func() interface{} {
-		buf := make([]byte, 0, 512)
-		return &buf
-	},
-}
-
-type WebSocketError struct {
-	Code       string
-	Message    string
-	Connection uuid.UUID
-	UserID     uuid.UUID
-	Timestamp  time.Time
-	Ctx        context.Context
-	Cancel     context.CancelFunc
-}
-
-func (e *WebSocketError) Error() string {
-	return fmt.Sprintf("[%s] %s (conn=%s, user=%s)", e.Code, e.Message, e.Connection, e.UserID)
-}
-
-type ReconnectBackoff struct {
-	attempt    int
-	maxAttempt int
-	delay      time.Duration
-	minDelay   time.Duration
-	maxDelay   time.Duration
-}
-
-func NewReconnectBackoff() *ReconnectBackoff {
-	return &ReconnectBackoff{
-		attempt:    0,
-		maxAttempt: MaxReconnectAttempts,
-		delay:      MinReconnectDelay,
-		minDelay:   MinReconnectDelay,
-		maxDelay:   MaxReconnectDelay,
-	}
-}
-
-func (rb *ReconnectBackoff) Reset() {
-	rb.attempt = 0
-	rb.delay = rb.minDelay
-}
-
-func (rb *ReconnectBackoff) Next() (time.Duration, bool) {
-	if rb.attempt >= rb.maxAttempt {
-		return 0, false
-	}
-	rb.attempt++
-	delay := rb.delay
-	rb.delay = time.Duration(float64(rb.delay) * 2)
-	if rb.delay > rb.maxDelay {
-		rb.delay = rb.maxDelay
-	}
-	return delay, true
-}
-
-type ConnectionState int32
-
-const (
-	StateConnecting ConnectionState = iota
-	StateConnected
-	StateDisconnecting
-	StateDisconnected
-)
-
-func (s ConnectionState) String() string {
-	switch s {
-	case StateConnecting:
-		return "connecting"
-	case StateConnected:
-		return "connected"
-	case StateDisconnecting:
-		return "disconnecting"
-	case StateDisconnected:
-		return "disconnected"
-	default:
-		return "unknown"
-	}
-}
-
-type TypingState struct {
-	UserID    uuid.UUID
-	RoomID    uuid.UUID
-	StartedAt time.Time
-	Context   string
-}
-
-type TypingPayload struct {
-	Context   string `json:"context,omitempty"`
-	ChannelID string `json:"channel_id,omitempty"`
-	ThreadID  string `json:"thread_id,omitempty"`
-}
-
-type TypingEvent struct {
-	UserID      uuid.UUID `json:"user_id"`
-	RoomID      uuid.UUID `json:"room_id"`
-	ChannelID   string    `json:"channel_id,omitempty"`
-	ThreadID    string    `json:"thread_id,omitempty"`
-	ContextType string    `json:"context_type,omitempty"` // "room", "channel", "thread"
-	IsTyping    bool      `json:"is_typing"`
-	Timestamp   time.Time `json:"timestamp"`
-}
 
 type Hub struct {
 	rooms           map[uuid.UUID]*room
@@ -294,34 +65,6 @@ type Hub struct {
 	deliveryMutex        sync.RWMutex
 }
 
-type PendingMessage struct {
-	ID        uuid.UUID       `json:"id"`
-	Type      string          `json:"type"`
-	Payload   json.RawMessage `json:"payload"`
-	CreatedAt time.Time       `json:"created_at"`
-	RoomID    uuid.UUID       `json:"room_id"`
-}
-
-type DeliveryStatus struct {
-	MessageID   string    `json:"message_id"`
-	Status      string    `json:"status"`
-	SentAt      time.Time `json:"sent_at"`
-	DeliveredAt time.Time `json:"delivered_at,omitempty"`
-	ReadAt      time.Time `json:"read_at,omitempty"`
-	RetryCount  int       `json:"retry_count"`
-	LastAttempt time.Time `json:"last_attempt"`
-}
-
-type ReconnectState struct {
-	UserID        uuid.UUID
-	OldConnection uuid.UUID
-	NewConnection uuid.UUID
-	RoomID        uuid.UUID
-	Timestamp     time.Time
-	Attempts      int
-	Completed     bool
-}
-
 type room struct {
 	clients    map[*Client]bool
 	mutex      sync.RWMutex
@@ -356,57 +99,6 @@ type Client struct {
 	packetsOut    atomic.Int64
 	bytesIn       atomic.Int64
 	bytesOut      atomic.Int64
-}
-
-type Message struct {
-	Type         string          `json:"type"`
-	RoomID       uuid.UUID       `json:"room_id,omitempty"`
-	UserID       uuid.UUID       `json:"user_id,omitempty"`
-	TargetUserID uuid.UUID       `json:"target_user_id,omitempty"`
-	Payload      json.RawMessage `json:"payload,omitempty"`
-	SDP          string          `json:"sdp,omitempty"`
-	Candidate    string          `json:"candidate,omitempty"`
-	Timestamp    time.Time       `json:"timestamp"`
-}
-
-type RateLimiter struct {
-	mu         sync.Mutex
-	messages   int
-	resetTime  time.Time
-	limit      int
-	windowSecs int
-}
-
-func NewRateLimiter(limit int, windowSecs int) *RateLimiter {
-	return &RateLimiter{
-		limit:      limit,
-		windowSecs: windowSecs,
-		resetTime:  time.Now().Add(time.Duration(windowSecs) * time.Second),
-	}
-}
-
-func (r *RateLimiter) Allow() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if time.Now().After(r.resetTime) {
-		r.messages = 0
-		r.resetTime = time.Now().Add(time.Duration(r.windowSecs) * time.Second)
-	}
-
-	if r.messages >= r.limit {
-		return false
-	}
-	r.messages++
-	return true
-}
-
-type HubMetrics struct {
-	ActiveClients int64         `json:"active_clients"`
-	TotalMessages int64         `json:"total_messages"`
-	Uptime        time.Duration `json:"uptime"`
-	RoomCount     int           `json:"room_count"`
-	RedisEnabled  bool          `json:"redis_enabled"`
 }
 
 func NewHub() *Hub {
@@ -922,31 +614,6 @@ func (h *Hub) GetUserActivity(userID uuid.UUID) (*RoomActivity, bool) {
 	defer h.activityMutex.RUnlock()
 	activity, exists := h.userActivities[userID]
 	return activity, exists
-}
-
-func (m *Message) encode() []byte {
-	if m.Timestamp.IsZero() {
-		m.Timestamp = time.Now()
-	}
-
-	bufPtr := messageBufferPool.Get().(*[]byte)
-	defer messageBufferPool.Put(bufPtr)
-	*bufPtr = (*bufPtr)[:0]
-
-	data, err := json.Marshal(m)
-	if err != nil {
-		log.Println("Error encoding message:", err)
-		return []byte{}
-	}
-	*bufPtr = append(*bufPtr, data...)
-
-	result := make([]byte, len(*bufPtr))
-	copy(result, *bufPtr)
-	return result
-}
-
-func (m *Message) decode(data []byte) error {
-	return json.Unmarshal(data, m)
 }
 
 func (c *Client) ReadPump() {
@@ -2105,13 +1772,6 @@ func (h *Hub) GetTypingUsers(roomID uuid.UUID) []uuid.UUID {
 	return users
 }
 
-type PresenceState struct {
-	UserID    uuid.UUID
-	RoomID    uuid.UUID
-	Status    string
-	UpdatedAt time.Time
-}
-
 var userPresence = struct {
 	sync.RWMutex
 	states map[uuid.UUID]*PresenceState
@@ -2269,13 +1929,6 @@ func (h *Hub) setRoomNotificationSettings(userID, roomID uuid.UUID, payload json
 		"sound", settings.Sound)
 }
 
-type RoomState struct {
-	RoomID        uuid.UUID    `json:"room_id"`
-	OnlineUsers   []OnlineUser `json:"online_users"`
-	TypingUsers   []uuid.UUID  `json:"typing_users"`
-	ActiveClients int          `json:"active_clients"`
-}
-
 func (h *Hub) sendRoomState(client *Client) {
 	clients := h.GetRoomClients(client.roomID)
 	typingUsers := h.GetTypingUsers(client.roomID)
@@ -2335,150 +1988,6 @@ func (h *Hub) sendTypingUsersList(client *Client) {
 		Timestamp: time.Now(),
 	}
 	h.sendToClient(client.userID, msg)
-}
-
-type OnlineUser struct {
-	UserID          uuid.UUID `json:"user_id"`
-	ConnectionID    uuid.UUID `json:"connection_id"`
-	State           string    `json:"state"`
-	ConnectedAt     time.Time `json:"connected_at"`
-	LastSeen        time.Time `json:"last_seen"`
-	RemoteAddress   string    `json:"remote_address,omitempty"`
-	Speaking        bool      `json:"speaking,omitempty"`
-	Muted           bool      `json:"muted,omitempty"`
-	Deafened        bool      `json:"deafened,omitempty"`
-	ScreenSharing   bool      `json:"screen_sharing,omitempty"`
-	DeviceInfo      string    `json:"device_info,omitempty"`
-	ClientVersion   string    `json:"client_version,omitempty"`
-	PresenceStatus  string    `json:"presence_status,omitempty"` // "online", "idle", "away", "dnd"
-	CustomStatus    string    `json:"custom_status,omitempty"`
-	ActiveChannelID string    `json:"active_channel_id,omitempty"`
-	ActiveThreadID  string    `json:"active_thread_id,omitempty"`
-}
-
-type PresenceInfo struct {
-	UserID        uuid.UUID `json:"user_id"`
-	Status        string    `json:"status"` // "online", "idle", "away", "dnd", "offline"
-	Since         time.Time `json:"since"`
-	Activity      string    `json:"activity,omitempty"`
-	CustomStatus  string    `json:"custom_status,omitempty"`
-	Device        string    `json:"device,omitempty"`    // "mobile", "desktop", "web"
-	LastSeen      time.Time `json:"last_seen,omitempty"` // For offline users
-	ClientVersion string    `json:"client_version,omitempty"`
-}
-
-type RoomEvent struct {
-	Type      string          `json:"type"`
-	RoomID    uuid.UUID       `json:"room_id"`
-	UserID    uuid.UUID       `json:"user_id,omitempty"`
-	Payload   json.RawMessage `json:"payload,omitempty"`
-	Timestamp time.Time       `json:"timestamp"`
-}
-
-type RoomNotification struct {
-	ID           string          `json:"id"`
-	Type         string          `json:"type"` // "user_joined", "user_left", "typing", "mention", "message", "user_kicked", "user_banned", "role_changed", "room_archived"
-	RoomID       uuid.UUID       `json:"room_id"`
-	UserID       uuid.UUID       `json:"user_id,omitempty"`
-	TargetUserID uuid.UUID       `json:"target_user_id,omitempty"`
-	Message      string          `json:"message,omitempty"`
-	Timestamp    time.Time       `json:"timestamp"`
-	Read         bool            `json:"read"`
-	Actionable   bool            `json:"actionable"`
-	Reason       string          `json:"reason,omitempty"`
-	Duration     string          `json:"duration,omitempty"` // For bans: "permanent" or "24h", "7d", etc.
-	Payload      json.RawMessage `json:"payload,omitempty"`
-}
-
-type RoomNotificationSettings struct {
-	Enabled       bool `json:"enabled"`
-	Sound         bool `json:"sound"`
-	MentionOnly   bool `json:"mention_only"`
-	DesktopNotify bool `json:"desktop_notify"`
-}
-
-type RoomActivity struct {
-	UserID       uuid.UUID `json:"user_id"`
-	RoomID       uuid.UUID `json:"room_id"`
-	Status       string    `json:"status"` // "active", "idle", "away"
-	LastActivity time.Time `json:"last_activity"`
-	JoinedAt     time.Time `json:"joined_at"`
-}
-
-type RoomStats struct {
-	RoomID        uuid.UUID `json:"room_id"`
-	TotalUsers    int       `json:"total_users"`
-	ActiveUsers   int       `json:"active_users"`
-	IdleUsers     int       `json:"idle_users"`
-	TypingUsers   int       `json:"typing_users"`
-	MutedUsers    int       `json:"muted_users"`
-	DeafenedUsers int       `json:"deafened_users"`
-	SpeakingUsers int       `json:"speaking_users"`
-	ScreenSharing int       `json:"screen_sharing"`
-	LastActivity  time.Time `json:"last_activity"`
-}
-
-type UserActivityPayload struct {
-	Status    string `json:"status,omitempty"` // "active", "idle", "away"
-	ChannelID string `json:"channel_id,omitempty"`
-	ThreadID  string `json:"thread_id,omitempty"`
-}
-
-type RoomNotificationEvent struct {
-	Type      string                 `json:"type"` // "user-joined", "user-left", "user-kicked", "user-banned", "room-settings-changed"
-	UserID    uuid.UUID              `json:"user_id"`
-	RoomID    uuid.UUID              `json:"room_id"`
-	Timestamp time.Time              `json:"timestamp"`
-	User      *UserInfo              `json:"user,omitempty"`
-	ExtraData map[string]interface{} `json:"extra_data,omitempty"`
-}
-
-type UserInfo struct {
-	ID        uuid.UUID `json:"id"`
-	Username  string    `json:"username,omitempty"`
-	AvatarURL string    `json:"avatar_url,omitempty"`
-}
-
-type ConnectionHealth struct {
-	ConnectionID    uuid.UUID `json:"connection_id"`
-	UserID          uuid.UUID `json:"user_id"`
-	LatencyMs       int64     `json:"latency_ms"`
-	State           string    `json:"state"`
-	LastPing        time.Time `json:"last_ping"`
-	LastPong        time.Time `json:"last_pong"`
-	PacketsReceived int64     `json:"packets_received"`
-	PacketsSent     int64     `json:"packets_sent"`
-	BytesReceived   int64     `json:"bytes_received"`
-	BytesSent       int64     `json:"bytes_sent"`
-	ErrorCount      int32     `json:"error_count"`
-	ConnectedAt     time.Time `json:"connected_at"`
-}
-
-type ConnectionQuality struct {
-	ConnectionID uuid.UUID `json:"connection_id"`
-	UserID       uuid.UUID `json:"user_id"`
-	Quality      string    `json:"quality"` // "excellent", "good", "fair", "poor", "disconnected"
-	LatencyMs    int64     `json:"latency_ms"`
-	PacketLoss   float64   `json:"packet_loss,omitempty"`
-}
-
-type TypingIndicator struct {
-	UserID      uuid.UUID `json:"user_id"`
-	RoomID      uuid.UUID `json:"room_id"`
-	Context     string    `json:"context"` // "room", "channel:{id}", "thread:{id}", "dm:{id}"
-	ContextID   string    `json:"context_id,omitempty"`
-	ContextType string    `json:"context_type,omitempty"` // "room", "channel", "thread", "dm"
-	ChannelID   string    `json:"channel_id,omitempty"`
-	ThreadID    string    `json:"thread_id,omitempty"`
-	IsTyping    bool      `json:"is_typing"`
-	Timestamp   time.Time `json:"timestamp"`
-}
-
-type TypingDebouncer struct {
-	timers    map[uuid.UUID]*time.Timer
-	mutex     sync.Mutex
-	delay     time.Duration
-	onTimeout func(uuid.UUID)
 }
 
 func NewTypingDebouncer(delay time.Duration, onTimeout func(uuid.UUID)) *TypingDebouncer {
@@ -3222,13 +2731,6 @@ func (c *Client) handleStopTyping(msg *Message) {
 	}
 }
 
-type PresencePayload struct {
-	Status   string `json:"status"` // "online", "idle", "away", "dnd"
-	Since    int64  `json:"since"`
-	Activity string `json:"activity,omitempty"`
-	Custom   string `json:"custom_status,omitempty"`
-}
-
 func (c *Client) handleSetPresence(msg *Message) {
 	var payload PresencePayload
 	if len(msg.Payload) > 0 {
@@ -3348,11 +2850,6 @@ func (c *Client) handleRoomEvent(msg *Message) {
 	if c.hub.enableRedis {
 		c.hub.publishToRedis(notifyMsg)
 	}
-}
-
-type NotificationStore struct {
-	sync.RWMutex
-	notifications map[uuid.UUID][]RoomNotification
 }
 
 var notificationStore = &NotificationStore{
@@ -4266,10 +3763,6 @@ func (c *Client) handleRoleChanged(msg *Message) {
 		"new_role", payload.NewRole)
 }
 
-type TypingBulkPayload struct {
-	TypingUsers []TypingEvent `json:"typing_users"`
-}
-
 func (c *Client) handleTypingBulk(msg *Message) {
 	var payload TypingBulkPayload
 	if len(msg.Payload) > 0 {
@@ -4319,11 +3812,6 @@ func (c *Client) handleTypingBulk(msg *Message) {
 		"connection_id", c.connectionID,
 		"user_id", c.userID,
 		"count", len(payload.TypingUsers))
-}
-
-type RoomStateSubscription struct {
-	mu          sync.RWMutex
-	subscribers map[uuid.UUID]map[uuid.UUID]bool
 }
 
 var roomStateSubscriptions = &RoomStateSubscription{
@@ -4560,13 +4048,6 @@ func (c *Client) handlePingPong(msg *Message) {
 		"latency_ms", latencyMs)
 }
 
-type ClientReadyPayload struct {
-	ClientVersion string `json:"client_version,omitempty"`
-	DeviceInfo    string `json:"device_info,omitempty"`
-	Platform      string `json:"platform,omitempty"` // "web", "desktop", "mobile"
-	Locale        string `json:"locale,omitempty"`
-}
-
 func (c *Client) handleClientReady(msg *Message) {
 	var payload ClientReadyPayload
 	if len(msg.Payload) > 0 {
@@ -4614,13 +4095,6 @@ func (c *Client) handleClientReady(msg *Message) {
 		"connection_id", c.connectionID,
 		"user_id", c.userID,
 		"room_id", c.roomID)
-}
-
-type TypingStatusPayload struct {
-	Context     string `json:"context"`      // "room", "channel:123", "thread:456", "dm:789"
-	ContextID   string `json:"context_id"`   // ID of channel/thread/dm
-	ContextType string `json:"context_type"` // "room", "channel", "thread", "dm"
-	IsTyping    bool   `json:"is_typing"`
 }
 
 func (c *Client) handleTypingStatus(msg *Message) {
@@ -4733,37 +4207,6 @@ func (c *Client) handlePresenceBulkSubscribe(msg *Message) {
 		"connection_id", c.connectionID,
 		"user_id", c.userID,
 		"count", len(payload.UserIDs))
-}
-
-type NotificationPreferencePayload struct {
-	RoomID         string `json:"room_id,omitempty"`
-	Mentions       *bool  `json:"mentions,omitempty"`
-	Messages       *bool  `json:"messages,omitempty"`
-	Reactions      *bool  `json:"reactions,omitempty"`
-	VoiceActivity  *bool  `json:"voice_activity,omitempty"`
-	ThreadReplies  *bool  `json:"thread_replies,omitempty"`
-	DirectMessages *bool  `json:"direct_messages,omitempty"`
-	CustomKeyword  string `json:"custom_keyword,omitempty"`
-	SoundEnabled   *bool  `json:"sound_enabled,omitempty"`
-	DesktopEnabled *bool  `json:"desktop_enabled,omitempty"`
-	MobileEnabled  *bool  `json:"mobile_enabled,omitempty"`
-	MuteDuration   int    `json:"mute_duration,omitempty"` // minutes, 0 = indefinite
-}
-
-type RoomNotificationPreferences struct {
-	RoomID         string    `json:"room_id"`
-	Mentions       bool      `json:"mentions"`
-	Messages       bool      `json:"messages"`
-	Reactions      bool      `json:"reactions"`
-	VoiceActivity  bool      `json:"voice_activity"`
-	ThreadReplies  bool      `json:"thread_replies"`
-	DirectMessages bool      `json:"direct_messages"`
-	CustomKeyword  string    `json:"custom_keyword,omitempty"`
-	SoundEnabled   bool      `json:"sound_enabled"`
-	DesktopEnabled bool      `json:"desktop_enabled"`
-	MobileEnabled  bool      `json:"mobile_enabled"`
-	MuteDuration   int       `json:"mute_duration"`
-	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 func (c *Client) handleNotificationPreferences(msg *Message) {
@@ -4913,28 +4356,6 @@ func (c *Client) handleGetNotificationPreferences(msg *Message) {
 	c.hub.sendToClient(c.userID, responseMsg)
 }
 
-type EnhancedTypingPayload struct {
-	Context        string      `json:"context"`    // "room", "channel", "thread", "dm"
-	ContextID      string      `json:"context_id"` // ID of the context (channel_id, thread_id, dm_id)
-	ChannelID      string      `json:"channel_id,omitempty"`
-	ThreadID       string      `json:"thread_id,omitempty"`
-	DmID           string      `json:"dm_id,omitempty"`
-	IsTyping       bool        `json:"is_typing"`
-	MessageID      string      `json:"message_id,omitempty"` // For reply typing indicators
-	MentionedUsers []uuid.UUID `json:"mentioned_users,omitempty"`
-}
-
-type EnhancedTypingEvent struct {
-	UserID         uuid.UUID   `json:"user_id"`
-	RoomID         uuid.UUID   `json:"room_id"`
-	Context        string      `json:"context"`
-	ContextID      string      `json:"context_id"`
-	IsTyping       bool        `json:"is_typing"`
-	MessageID      string      `json:"message_id,omitempty"`
-	MentionedUsers []uuid.UUID `json:"mentioned_users,omitempty"`
-	Timestamp      time.Time   `json:"timestamp"`
-}
-
 func (c *Client) handleEnhancedTyping(msg *Message) {
 	var payload EnhancedTypingPayload
 	if len(msg.Payload) > 0 {
@@ -5012,25 +4433,6 @@ func (c *Client) handleEnhancedTyping(msg *Message) {
 		"message_id", payload.MessageID)
 }
 
-type PresenceEventPayload struct {
-	UserID       uuid.UUID `json:"user_id"`
-	Status       string    `json:"status"` // "online", "idle", "away", "dnd", "offline"
-	Activity     string    `json:"activity,omitempty"`
-	CustomStatus string    `json:"custom_status,omitempty"`
-	Device       string    `json:"device,omitempty"` // "mobile", "desktop", "web"
-	Since        int64     `json:"since"`
-}
-
-type PresenceEvent struct {
-	UserID       uuid.UUID `json:"user_id"`
-	Status       string    `json:"status"`
-	Activity     string    `json:"activity,omitempty"`
-	CustomStatus string    `json:"custom_status,omitempty"`
-	Device       string    `json:"device,omitempty"`
-	Since        time.Time `json:"since"`
-	Timestamp    time.Time `json:"timestamp"`
-}
-
 func (c *Client) handlePresenceEvent(msg *Message) {
 	var payload PresenceEventPayload
 	if len(msg.Payload) > 0 {
@@ -5094,13 +4496,6 @@ func (c *Client) handlePresenceEvent(msg *Message) {
 		"user_id", c.userID,
 		"status", payload.Status,
 		"activity", payload.Activity)
-}
-
-type RoomNotificationSubscription struct {
-	RoomID         uuid.UUID `json:"room_id"`
-	Types          []string  `json:"types"` // "user_joined", "user_left", "typing", "message", "mention"
-	NotifySelf     bool      `json:"notify_self"`
-	IncludeHistory bool      `json:"include_history"`
 }
 
 var roomNotificationSubscriptions = struct {
@@ -5260,15 +4655,6 @@ func (c *Client) handleGetOnlineUsersDetailed(msg *Message) {
 		"count", len(onlineUsers))
 }
 
-type UserStatusUpdate struct {
-	UserID       uuid.UUID `json:"user_id"`
-	RoomID       uuid.UUID `json:"room_id"`
-	Status       string    `json:"status"` // "online", "idle", "away", "dnd"
-	CustomStatus string    `json:"custom_status,omitempty"`
-	Device       string    `json:"device,omitempty"`
-	Timestamp    time.Time `json:"timestamp"`
-}
-
 func (h *Hub) broadcastUserStatusUpdate(userID, roomID uuid.UUID, status, customStatus, device string) {
 	statusUpdate := UserStatusUpdate{
 		UserID:       userID,
@@ -5336,13 +4722,6 @@ func (c *Client) handleBroadcastStatusUpdate(msg *Message) {
 		"status", payload.Status)
 }
 
-type MessageAckPayload struct {
-	MessageID   string `json:"message_id"`
-	Delivered   bool   `json:"delivered"`
-	ReceivedAt  int64  `json:"received_at"`
-	SequenceNum int64  `json:"sequence_num,omitempty"`
-}
-
 func (c *Client) handleMessageAck(msg *Message) {
 	var payload MessageAckPayload
 	if len(msg.Payload) > 0 {
@@ -5377,11 +4756,6 @@ func (c *Client) handleMessageAck(msg *Message) {
 		Timestamp: time.Now(),
 	}
 	c.hub.sendToClient(c.userID, responseMsg)
-}
-
-type MessageDeliveryStatusPayload struct {
-	MessageIDs []string `json:"message_ids"`
-	Status     string   `json:"status"` // "delivered", "read", "failed"
 }
 
 func (c *Client) handleMessageDeliveryStatus(msg *Message) {
@@ -5424,13 +4798,6 @@ func (c *Client) handleMessageDeliveryStatus(msg *Message) {
 	if c.hub.enableRedis {
 		c.hub.publishToRedis(notifyMsg)
 	}
-}
-
-type UserFocusPayload struct {
-	FocusContext string `json:"focus_context"` // "room", "channel", "thread", "dm", "settings", "profile"
-	ContextID    string `json:"context_id"`
-	PanelID      string `json:"panel_id"` // "chat", "voice", "members", "files"
-	IsFocused    bool   `json:"is_focused"`
 }
 
 var userFocusState = struct {
@@ -5524,14 +4891,6 @@ func (c *Client) handleUserFocusQuery(msg *Message) {
 	c.hub.sendToClient(c.userID, responseMsg)
 }
 
-type MediaStatePayload struct {
-	Muted         bool `json:"muted"`
-	Deafened      bool `json:"deafened"`
-	ScreenSharing bool `json:"screen_sharing"`
-	VideoEnabled  bool `json:"video_enabled"`
-	VoiceActive   bool `json:"voice_active"`
-}
-
 var mediaStateStore = struct {
 	sync.RWMutex
 	states map[uuid.UUID]MediaStatePayload
@@ -5611,14 +4970,6 @@ func (c *Client) handleMediaStateRequest(msg *Message) {
 		"returned_states", len(states))
 }
 
-type TypingPausePayload struct {
-	Context     string `json:"context"`
-	ChannelID   string `json:"channel_id"`
-	ThreadID    string `json:"thread_id"`
-	ContextType string `json:"context_type"`
-	Paused      bool   `json:"paused"`
-}
-
 func (c *Client) handleTypingPause(msg *Message) {
 	var payload TypingPausePayload
 	if len(msg.Payload) > 0 {
@@ -5651,11 +5002,6 @@ func (c *Client) handleTypingPause(msg *Message) {
 	if c.hub.enableRedis {
 		c.hub.publishToRedis(notifyMsg)
 	}
-}
-
-type UserFocusWindowPayload struct {
-	Context string `json:"context"` // "room", "channel", "thread", "dm"
-	Focused bool   `json:"focused"`
 }
 
 func (c *Client) handleUserFocusWindow(msg *Message) {
@@ -5702,12 +5048,6 @@ func (c *Client) handleUserFocusWindow(msg *Message) {
 		"user_id", c.userID,
 		"context", payload.Context,
 		"focused", payload.Focused)
-}
-
-type ReactionPayload struct {
-	MessageID string `json:"message_id"`
-	Emoji     string `json:"emoji"`
-	Action    string `json:"action"` // "add" or "remove"
 }
 
 func (c *Client) handleReactionAdd(msg *Message) {
@@ -5785,12 +5125,6 @@ func (c *Client) handleReactionRemove(msg *Message) {
 		"emoji", payload.Emoji)
 }
 
-type MessagePinPayload struct {
-	MessageID string `json:"message_id"`
-	Action    string `json:"action"` // "pin" or "unpin"
-	ChannelID string `json:"channel_id,omitempty"`
-}
-
 func (c *Client) handleMessagePin(msg *Message) {
 	var payload MessagePinPayload
 	if len(msg.Payload) > 0 {
@@ -5837,11 +5171,6 @@ func (c *Client) handleMessagePin(msg *Message) {
 		"action", payload.Action)
 }
 
-type UserViewingChannelPayload struct {
-	ChannelID string `json:"channel_id"`
-	Viewing   bool   `json:"viewing"`
-}
-
 func (c *Client) handleUserViewingChannel(msg *Message) {
 	var payload UserViewingChannelPayload
 	if len(msg.Payload) > 0 {
@@ -5874,11 +5203,6 @@ func (c *Client) handleUserViewingChannel(msg *Message) {
 		"user_id", c.userID,
 		"channel_id", payload.ChannelID,
 		"viewing", payload.Viewing)
-}
-
-type RoomConfigPayload struct {
-	Key   string      `json:"key"`
-	Value interface{} `json:"value"`
 }
 
 func (c *Client) handleRoomConfigUpdate(msg *Message) {
