@@ -469,3 +469,81 @@ func (sa *SessionActivity) BeforeCreate(tx *gorm.DB) error {
 	}
 	return nil
 }
+
+type PreferenceOverride struct {
+	ID           uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	UserID       uuid.UUID      `gorm:"type:uuid;not null;index" json:"user_id"`
+	RoomID       uuid.UUID      `gorm:"type:uuid;not null;index" json:"room_id"`
+	SettingKey   string         `gorm:"size:50;not null" json:"setting_key"`
+	SettingValue string         `gorm:"type:text" json:"setting_value"`
+	IsActive     bool           `gorm:"default:true" json:"is_active"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+func (po *PreferenceOverride) TableName() string {
+	return "preference_overrides"
+}
+
+func (po *PreferenceOverride) BeforeCreate(tx *gorm.DB) error {
+	if po.ID == uuid.Nil {
+		po.ID = uuid.New()
+	}
+	if po.CreatedAt.IsZero() {
+		po.CreatedAt = time.Now()
+	}
+	return nil
+}
+
+type CategorySettings struct {
+	ID               uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	CategoryID       uuid.UUID      `gorm:"type:uuid;not null;uniqueIndex" json:"category_id"`
+	MinRoleToPost    *uuid.UUID     `gorm:"type:uuid" json:"min_role_to_post"`
+	MinRoleToVoice   *uuid.UUID     `gorm:"type:uuid" json:"min_role_to_voice"`
+	MinRoleToInvite  *uuid.UUID     `gorm:"type:uuid" json:"min_role_to_invite"`
+	IsNSFW           bool           `gorm:"default:false" json:"is_nsfw"`
+	AgeRestricted    bool           `gorm:"default:false" json:"age_restricted"`
+	MinAge           int            `gorm:"default:0" json:"min_age"`
+	RequiresApproval bool           `gorm:"default:false" json:"requires_approval"`
+	RateLimit        int            `gorm:"default:0" json:"rate_limit"`
+	AutoArchiveDays  int            `gorm:"default:0" json:"auto_archive_days"`
+	CreatedAt        time.Time      `json:"created_at"`
+	UpdatedAt        time.Time      `json:"updated_at"`
+	DeletedAt        gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+func (cs *CategorySettings) TableName() string {
+	return "category_settings"
+}
+
+func (cs *CategorySettings) BeforeCreate(tx *gorm.DB) error {
+	if cs.ID == uuid.Nil {
+		cs.ID = uuid.New()
+	}
+	return nil
+}
+
+type AttachmentTag struct {
+	ID         uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	Tag        string         `gorm:"size:50;not null;index" json:"tag"`
+	Attachment uuid.UUID      `gorm:"type:uuid;not null;index" json:"attachment_id"`
+	Color      string         `gorm:"size:7" json:"color"`
+	CreatedBy  *uuid.UUID     `gorm:"type:uuid" json:"created_by"`
+	CreatedAt  time.Time      `json:"created_at"`
+	DeletedAt  gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+func (at *AttachmentTag) TableName() string {
+	return "attachment_tags"
+}
+
+func (at *AttachmentTag) BeforeCreate(tx *gorm.DB) error {
+	if at.ID == uuid.Nil {
+		at.ID = uuid.New()
+	}
+	if at.CreatedAt.IsZero() {
+		at.CreatedAt = time.Now()
+	}
+	return nil
+}
