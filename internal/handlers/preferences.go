@@ -157,6 +157,36 @@ func (h *PreferencesHandler) UpdatePreferences(w http.ResponseWriter, r *http.Re
 	if req.TextSize != nil {
 		preferences.TextSize = *req.TextSize
 	}
+	if req.NotificationSound != nil {
+		preferences.NotificationSound = *req.NotificationSound
+	}
+	if req.DesktopNotification != nil {
+		preferences.DesktopNotification = *req.DesktopNotification
+	}
+	if req.MobileNotification != nil {
+		preferences.MobileNotification = *req.MobileNotification
+	}
+	if req.MentionNotification != nil {
+		preferences.MentionNotification = *req.MentionNotification
+	}
+	if req.DmNotification != nil {
+		preferences.DmNotification = *req.DmNotification
+	}
+	if req.ShowTypingIndicator != nil {
+		preferences.ShowTypingIndicator = *req.ShowTypingIndicator
+	}
+	if req.ShowReadReceipts != nil {
+		preferences.ShowReadReceipts = *req.ShowReadReceipts
+	}
+	if req.AutoScrollMessages != nil {
+		preferences.AutoScrollMessages = *req.AutoScrollMessages
+	}
+	if req.Use24HourFormat != nil {
+		preferences.Use24HourFormat = *req.Use24HourFormat
+	}
+	if req.DisplayMode != nil {
+		preferences.DisplayMode = *req.DisplayMode
+	}
 
 	preferences.UpdatedAt = time.Now()
 
