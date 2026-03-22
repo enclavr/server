@@ -59,6 +59,9 @@ jobs:
       - name: Run tests with Neon PostgreSQL
         if: env.NEON_CONNECTION_STRING != ''
         run: |
+          # Test database connectivity first
+          go test -v -run TestDatabase_ConfigDSN ./internal/database/...
+          # Then run full test suite
           go test -v -race -coverprofile=coverage.out -count=1 -timeout 15m ./...
         env:
           JWT_SECRET: test-jwt-secret-for-ci
