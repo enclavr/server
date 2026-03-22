@@ -225,6 +225,93 @@ func (h *PrivacyHandler) ExportPrivacySettings(w http.ResponseWriter, r *http.Re
 	}
 }
 
+func (h *PrivacyHandler) ImportPrivacySettings(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	type ImportData struct {
+		AllowDirectMessages   *string `json:"allow_direct_messages"`
+		AllowRoomInvites      *string `json:"allow_room_invites"`
+		AllowVoiceCalls       *string `json:"allow_voice_calls"`
+		ShowOnlineStatus      *bool   `json:"show_online_status"`
+		ShowReadReceipts      *bool   `json:"show_read_receipts"`
+		ShowTypingIndicator   *bool   `json:"show_typing_indicator"`
+		AllowSearchByEmail    *bool   `json:"allow_search_by_email"`
+		AllowSearchByUsername *bool   `json:"allow_search_by_username"`
+	}
+
+	var importData ImportData
+	if err := json.NewDecoder(r.Body).Decode(&importData); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	validSettings := map[string]map[string]bool{
+		"allow_direct_messages": {"everyone": true, "friends": true, "none": true},
+		"allow_room_invites":    {"everyone": true, "friends": true, "none": true},
+		"allow_voice_calls":     {"everyone": true, "friends": true, "none": true},
+	}
+
+	var settings models.UserPrivacySettings
+	if err := h.db.Where("user_id = ?", userID).First(&settings).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			settings = models.UserPrivacySettings{UserID: userID}
+		} else {
+			http.Error(w, "Failed to fetch privacy settings", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if importData.AllowDirectMessages != nil && validSettings["allow_direct_messages"][*importData.AllowDirectMessages] {
+		settings.AllowDirectMessages = *importData.AllowDirectMessages
+	}
+	if importData.AllowRoomInvites != nil && validSettings["allow_room_invites"][*importData.AllowRoomInvites] {
+		settings.AllowRoomInvites = *importData.AllowRoomInvites
+	}
+	if importData.AllowVoiceCalls != nil && validSettings["allow_voice_calls"][*importData.AllowVoiceCalls] {
+		settings.AllowVoiceCalls = *importData.AllowVoiceCalls
+	}
+	if importData.ShowOnlineStatus != nil {
+		settings.ShowOnlineStatus = *importData.ShowOnlineStatus
+	}
+	if importData.ShowReadReceipts != nil {
+		settings.ShowReadReceipts = *importData.ShowReadReceipts
+	}
+	if importData.ShowTypingIndicator != nil {
+		settings.ShowTypingIndicator = *importData.ShowTypingIndicator
+	}
+	if importData.AllowSearchByEmail != nil {
+		settings.AllowSearchByEmail = *importData.AllowSearchByEmail
+	}
+	if importData.AllowSearchByUsername != nil {
+		settings.AllowSearchByUsername = *importData.AllowSearchByUsername
+	}
+
+	settings.UpdatedAt = time.Now()
+
+	if settings.ID == uuid.Nil {
+		settings.ID = uuid.New()
+		settings.CreatedAt = time.Now()
+		if err := h.db.Create(&settings).Error; err != nil {
+			http.Error(w, "Failed to create privacy settings", http.StatusInternalServerError)
+			return
+		}
+	} else {
+		if err := h.db.Save(&settings).Error; err != nil {
+			http.Error(w, "Failed to update privacy settings", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(settings); err != nil {
+		log.Printf("Error encoding response: %v", err)
+	}
+}
+
 func (h *PrivacyHandler) ResetPrivacySettings(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
 	if !ok {
