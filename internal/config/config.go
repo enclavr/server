@@ -227,3 +227,7 @@ func (d *DatabaseConfig) DSN() string {
 		" dbname=" + d.DBName +
 		" sslmode=" + d.SSLMode
 }
+
+func (d *DatabaseConfig) IsNeon() bool {
+	return d.NeonConnectionString != ""
+}
