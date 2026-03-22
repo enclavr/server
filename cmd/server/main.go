@@ -393,6 +393,7 @@ func main() {
 	mux.HandleFunc("/api/block/unblock", middleware.RequireAuth(authService, blockHandler.UnblockUser))
 	mux.HandleFunc("/api/block/list", middleware.RequireAuth(authService, blockHandler.GetBlockedUsers))
 	mux.HandleFunc("/api/block/check", middleware.RequireAuth(authService, blockHandler.IsBlocked))
+	mux.HandleFunc("/api/block/blocked-by", middleware.RequireAuth(authService, blockHandler.GetBlockedByUsers))
 
 	mux.HandleFunc("/api/reminders", middleware.RequireAuth(authService, reminderHandler.GetReminders))
 	mux.HandleFunc("/api/reminder/create", middleware.RequireAuth(authService, reminderHandler.CreateReminder))

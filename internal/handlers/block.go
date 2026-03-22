@@ -102,7 +102,7 @@ func (h *BlockHandler) UnblockUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	blockedID, err := uuid.Parse(blockedIDStr)
-	if err != nil {
+	if err != nil || blockedID == uuid.Nil {
 		http.Error(w, "Invalid blocked_id", http.StatusBadRequest)
 		return
 	}
@@ -139,6 +139,31 @@ func (h *BlockHandler) GetBlockedUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(blocks) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode([]struct{}{}); err != nil {
+			log.Printf("Error encoding response: %v", err)
+		}
+		return
+	}
+
+	blockedIDs := make([]uuid.UUID, len(blocks))
+	for i, block := range blocks {
+		blockedIDs[i] = block.BlockedID
+	}
+
+	var users []models.User
+	if err := h.db.Where("id IN ?", blockedIDs).Find(&users).Error; err != nil {
+		log.Printf("Error fetching users: %v", err)
+		http.Error(w, "Failed to fetch blocked users", http.StatusInternalServerError)
+		return
+	}
+
+	userMap := make(map[uuid.UUID]string)
+	for _, user := range users {
+		userMap[user.ID] = user.Username
+	}
+
 	type BlockedUserResponse struct {
 		ID        uuid.UUID `json:"id"`
 		BlockedID uuid.UUID `json:"blocked_id"`
@@ -147,18 +172,15 @@ func (h *BlockHandler) GetBlockedUsers(w http.ResponseWriter, r *http.Request) {
 		CreatedAt string    `json:"created_at"`
 	}
 
-	var response []BlockedUserResponse
-	for _, block := range blocks {
-		var user models.User
-		h.db.First(&user, "id = ?", block.BlockedID)
-
-		response = append(response, BlockedUserResponse{
+	response := make([]BlockedUserResponse, len(blocks))
+	for i, block := range blocks {
+		response[i] = BlockedUserResponse{
 			ID:        block.ID,
 			BlockedID: block.BlockedID,
-			Username:  user.Username,
+			Username:  userMap[block.BlockedID],
 			Reason:    block.Reason,
 			CreatedAt: block.CreatedAt.String(),
-		})
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -181,7 +203,7 @@ func (h *BlockHandler) IsBlocked(w http.ResponseWriter, r *http.Request) {
 	}
 
 	targetID, err := uuid.Parse(targetIDStr)
-	if err != nil {
+	if err != nil || targetID == uuid.Nil {
 		http.Error(w, "Invalid user_id", http.StatusBadRequest)
 		return
 	}
@@ -192,6 +214,70 @@ func (h *BlockHandler) IsBlocked(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]bool{"is_blocked": isBlocked}); err != nil {
+		log.Printf("Error encoding response: %v", err)
+	}
+}
+
+func (h *BlockHandler) GetBlockedByUsers(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var blocks []models.Block
+	if err := h.db.Where("blocked_id = ?", userID).Find(&blocks).Error; err != nil {
+		log.Printf("Error fetching blocked by users: %v", err)
+		http.Error(w, "Failed to fetch blocked by users", http.StatusInternalServerError)
+		return
+	}
+
+	if len(blocks) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode([]struct{}{}); err != nil {
+			log.Printf("Error encoding response: %v", err)
+		}
+		return
+	}
+
+	blockerIDs := make([]uuid.UUID, len(blocks))
+	for i, block := range blocks {
+		blockerIDs[i] = block.BlockerID
+	}
+
+	var users []models.User
+	if err := h.db.Where("id IN ?", blockerIDs).Find(&users).Error; err != nil {
+		log.Printf("Error fetching users: %v", err)
+		http.Error(w, "Failed to fetch users", http.StatusInternalServerError)
+		return
+	}
+
+	userMap := make(map[uuid.UUID]string)
+	for _, user := range users {
+		userMap[user.ID] = user.Username
+	}
+
+	type BlockedByUserResponse struct {
+		ID        uuid.UUID `json:"id"`
+		BlockerID uuid.UUID `json:"blocker_id"`
+		Username  string    `json:"username"`
+		Reason    string    `json:"reason"`
+		CreatedAt string    `json:"created_at"`
+	}
+
+	response := make([]BlockedByUserResponse, len(blocks))
+	for i, block := range blocks {
+		response[i] = BlockedByUserResponse{
+			ID:        block.ID,
+			BlockerID: block.BlockerID,
+			Username:  userMap[block.BlockerID],
+			Reason:    block.Reason,
+			CreatedAt: block.CreatedAt.String(),
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("Error encoding response: %v", err)
 	}
 }
