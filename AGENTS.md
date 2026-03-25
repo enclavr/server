@@ -396,6 +396,40 @@ chrome-devtools_close_page --pageId 1
 - ✅ Use for performance analysis
 - 🚫 Don't use for API testing (use actual HTTP requests instead)
 
+### MANDATORY: Chrome DevTools Usage for Full Stack Testing
+
+**⚠️ ALL work that involves frontend verification MUST use Chrome DevTools MCP tools.**
+
+If your work touches the frontend (even for server-side changes like API endpoints, WebSocket handlers, etc.), you MUST verify the changes work in a real browser:
+
+```bash
+# REQUIRED for any frontend verification:
+# 1. Start the frontend dev server: cd /path/to/frontend && bun run dev &
+# 2. Start the server: go run ./cmd/server
+# 3. Use Chrome DevTools MCP to verify:
+
+# List available pages to confirm Chrome is running
+chrome-devtools_list_pages
+
+# Navigate to the frontend
+chrome-devtools_navigate_page --type "url" --url "http://localhost:3000"
+
+# Take a snapshot to verify page renders
+chrome-devtools_take_snapshot
+
+# Check console for JavaScript errors
+chrome-devtools_list_console_messages
+
+# Verify API calls are working
+chrome-devtools_list_network_requests
+
+# If issues found, fix them and re-verify
+```
+
+**Consequences of not following:**
+- Full stack changes cannot be considered complete without browser verification
+- Always start Chrome for full stack testing: `google-chrome --headless=new --remote-debugging-port=9222`
+
 ### Neon Database MCP Tools
 
 Use these tools for PostgreSQL database operations. NEVER use direct SQL clients or psql.
