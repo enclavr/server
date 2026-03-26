@@ -11,7 +11,6 @@ import (
 	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/internal/models"
 	"github.com/enclavr/server/pkg/middleware"
-	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -58,15 +57,12 @@ func TestNotificationHandler_GetNotifications(t *testing.T) {
 	}
 	db.Create(&notification)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/notifications", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/notifications", nil)
 	ctx := context.WithValue(req.Context(), middleware.UserIDKey, userID)
 	req = req.WithContext(ctx)
 
 	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = req
-
-	handler.GetNotifications(c.Writer, c.Request)
+	handler.GetNotifications(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
@@ -106,15 +102,12 @@ func TestNotificationHandler_GetUnreadCount(t *testing.T) {
 	db.Create(&notification1)
 	db.Create(&notification2)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/notifications/unread-count", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/notifications/unread-count", nil)
 	ctx := context.WithValue(req.Context(), middleware.UserIDKey, userID)
 	req = req.WithContext(ctx)
 
 	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = req
-
-	handler.GetUnreadCount(c.Writer, c.Request)
+	handler.GetUnreadCount(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
@@ -142,16 +135,13 @@ func TestNotificationHandler_CreateNotification(t *testing.T) {
 	}
 	body, _ := json.Marshal(reqBody)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/notifications", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/notifications", bytes.NewReader(body))
 	ctx := context.WithValue(req.Context(), middleware.UserIDKey, userID)
 	req = req.WithContext(ctx)
 	req.Header.Set("Content-Type", "application/json")
 
 	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = req
-
-	handler.CreateNotification(c.Writer, c.Request)
+	handler.CreateNotification(w, req)
 
 	if w.Code != http.StatusCreated {
 		t.Errorf("expected status %d, got %d", http.StatusCreated, w.Code)
@@ -171,26 +161,6 @@ func TestNotificationHandler_CreateNotification(t *testing.T) {
 	}
 }
 
-func setupTestRouter(handler *NotificationHandler, userID uuid.UUID) *gin.Engine {
-	router := gin.New()
-	router.PUT("/api/v1/notifications/:id/read", func(c *gin.Context) {
-		ctx := context.WithValue(c.Request.Context(), middleware.UserIDKey, userID)
-		c.Request = c.Request.WithContext(ctx)
-		handler.MarkAsRead(c)
-	})
-	router.DELETE("/api/v1/notifications/:id", func(c *gin.Context) {
-		ctx := context.WithValue(c.Request.Context(), middleware.UserIDKey, userID)
-		c.Request = c.Request.WithContext(ctx)
-		handler.DeleteNotification(c)
-	})
-	router.PUT("/api/v1/notifications/:id/archive", func(c *gin.Context) {
-		ctx := context.WithValue(c.Request.Context(), middleware.UserIDKey, userID)
-		c.Request = c.Request.WithContext(ctx)
-		handler.ArchiveNotification(c)
-	})
-	return router
-}
-
 func TestNotificationHandler_MarkAsRead(t *testing.T) {
 	handler, db, userID := setupNotificationHandlerTest(t)
 
@@ -203,11 +173,12 @@ func TestNotificationHandler_MarkAsRead(t *testing.T) {
 	}
 	db.Create(&notification)
 
-	router := setupTestRouter(handler, userID)
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/notifications/"+notification.ID.String()+"/read", nil)
-	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/notification/read?id="+notification.ID.String(), nil)
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, userID)
+	req = req.WithContext(ctx)
 
-	router.ServeHTTP(w, req)
+	w := httptest.NewRecorder()
+	handler.MarkAsRead(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status %d, got %d, body: %s", http.StatusOK, w.Code, w.Body.String())
@@ -238,11 +209,12 @@ func TestNotificationHandler_DeleteNotification(t *testing.T) {
 	}
 	db.Create(&notification)
 
-	router := setupTestRouter(handler, userID)
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/notifications/"+notification.ID.String(), nil)
-	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/api/notification/delete?id="+notification.ID.String(), nil)
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, userID)
+	req = req.WithContext(ctx)
 
-	router.ServeHTTP(w, req)
+	w := httptest.NewRecorder()
+	handler.DeleteNotification(w, req)
 
 	if w.Code != http.StatusNoContent {
 		t.Errorf("expected status %d, got %d, body: %s", http.StatusNoContent, w.Code, w.Body.String())
@@ -267,11 +239,12 @@ func TestNotificationHandler_ArchiveNotification(t *testing.T) {
 	}
 	db.Create(&notification)
 
-	router := setupTestRouter(handler, userID)
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/notifications/"+notification.ID.String()+"/archive", nil)
-	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/notification/archive?id="+notification.ID.String(), nil)
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, userID)
+	req = req.WithContext(ctx)
 
-	router.ServeHTTP(w, req)
+	w := httptest.NewRecorder()
+	handler.ArchiveNotification(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status %d, got %d, body: %s", http.StatusOK, w.Code, w.Body.String())

@@ -185,6 +185,16 @@ func main() {
 	privacyHandler := handlers.NewPrivacyHandler(db)
 	statusHandler := handlers.NewStatusHandler(db)
 	reminderHandler := handlers.NewReminderHandler(db)
+	roomSettingsHandler := handlers.NewRoomSettingsHandler(db)
+	scheduledMessageHandler := handlers.NewScheduledMessageHandler(db, hub)
+	stickerPackHandler := handlers.NewStickerPackHandler(db)
+	roomRatingHandler := handlers.NewRoomRatingHandler(db)
+	userActivityLogHandler := handlers.NewUserActivityLogHandler(db)
+	roomMetricHandler := handlers.NewRoomMetricHandler(db)
+	notificationHandler := handlers.NewNotificationHandler(db)
+	editHistoryHandler := handlers.NewEditHistoryHandler(db)
+	roomBookmarkHandler := handlers.NewRoomBookmarkHandler(db)
+	notificationPrefsHandler := handlers.NewNotificationPreferencesHandler(db)
 	_ = services.NewPushService(db, cfg)
 
 	go hub.Run()
@@ -405,6 +415,46 @@ func main() {
 	mux.HandleFunc("/api/message/read", middleware.RequireAuth(authService, readReceiptHandler.MarkMessageRead))
 	mux.HandleFunc("/api/message/read/receipts", middleware.RequireAuth(authService, readReceiptHandler.GetReadReceipts))
 	mux.HandleFunc("/api/message/read/last", middleware.RequireAuth(authService, readReceiptHandler.GetLastReadMessage))
+
+	mux.HandleFunc("/api/room/settings", middleware.RequireAuth(authService, roomSettingsHandler.GetRoomSettings))
+	mux.HandleFunc("/api/room/settings/update", middleware.RequireAuth(authService, roomSettingsHandler.UpdateRoomSettings))
+
+	mux.HandleFunc("/api/scheduled-messages", middleware.RequireAuth(authService, scheduledMessageHandler.GetScheduledMessages))
+	mux.HandleFunc("/api/scheduled-message/create", middleware.RequireAuth(authService, scheduledMessageHandler.CreateScheduledMessage))
+	mux.HandleFunc("/api/scheduled-message", middleware.RequireAuth(authService, scheduledMessageHandler.GetScheduledMessage))
+	mux.HandleFunc("/api/scheduled-message/update", middleware.RequireAuth(authService, scheduledMessageHandler.UpdateScheduledMessage))
+	mux.HandleFunc("/api/scheduled-message/delete", middleware.RequireAuth(authService, scheduledMessageHandler.DeleteScheduledMessage))
+	mux.HandleFunc("/api/scheduled-message/cancel", middleware.RequireAuth(authService, scheduledMessageHandler.CancelScheduledMessage))
+
+	mux.HandleFunc("/api/sticker-pack/create", middleware.RequireAuth(authService, stickerPackHandler.CreateStickerPack))
+	mux.HandleFunc("/api/sticker-packs", middleware.RequireAuth(authService, stickerPackHandler.GetStickerPacks))
+
+	mux.HandleFunc("/api/room/rating/create", middleware.RequireAuth(authService, roomRatingHandler.CreateRating))
+	mux.HandleFunc("/api/room/ratings", middleware.RequireAuth(authService, roomRatingHandler.GetRoomRatings))
+
+	mux.HandleFunc("/api/activity/log", middleware.RequireAuth(authService, userActivityLogHandler.LogActivity))
+	mux.HandleFunc("/api/activity/history", middleware.RequireAuth(authService, userActivityLogHandler.GetUserActivity))
+
+	mux.HandleFunc("/api/room/metric/update", middleware.RequireAuth(authService, roomMetricHandler.UpdateMetric))
+	mux.HandleFunc("/api/room/metrics", middleware.RequireAuth(authService, roomMetricHandler.GetRoomMetrics))
+
+	mux.HandleFunc("/api/notifications", middleware.RequireAuth(authService, notificationHandler.GetNotifications))
+	mux.HandleFunc("/api/notification/unread-count", middleware.RequireAuth(authService, notificationHandler.GetUnreadCount))
+	mux.HandleFunc("/api/notification/read", middleware.RequireAuth(authService, notificationHandler.MarkAsRead))
+	mux.HandleFunc("/api/notification/read-all", middleware.RequireAuth(authService, notificationHandler.MarkAllAsRead))
+	mux.HandleFunc("/api/notification/archive", middleware.RequireAuth(authService, notificationHandler.ArchiveNotification))
+	mux.HandleFunc("/api/notification/delete", middleware.RequireAuth(authService, notificationHandler.DeleteNotification))
+	mux.HandleFunc("/api/notification/create", middleware.RequireAuth(authService, notificationHandler.CreateNotification))
+
+	mux.HandleFunc("/api/message/edit-history", middleware.RequireAuth(authService, editHistoryHandler.GetMessageEditHistory))
+
+	mux.HandleFunc("/api/room-bookmarks", middleware.RequireAuth(authService, roomBookmarkHandler.GetRoomBookmarks))
+	mux.HandleFunc("/api/room-bookmark/create", middleware.RequireAuth(authService, roomBookmarkHandler.CreateRoomBookmark))
+	mux.HandleFunc("/api/room-bookmark/update", middleware.RequireAuth(authService, roomBookmarkHandler.UpdateRoomBookmark))
+	mux.HandleFunc("/api/room-bookmark/delete", middleware.RequireAuth(authService, roomBookmarkHandler.DeleteRoomBookmark))
+
+	mux.HandleFunc("/api/notification-preferences", middleware.RequireAuth(authService, notificationPrefsHandler.GetPreferences))
+	mux.HandleFunc("/api/notification-preferences/update", middleware.RequireAuth(authService, notificationPrefsHandler.UpdatePreferences))
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
