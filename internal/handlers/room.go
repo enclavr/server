@@ -116,7 +116,7 @@ func (h *RoomHandler) GetRooms(w http.ResponseWriter, r *http.Request) {
 func (h *RoomHandler) GetRoom(w http.ResponseWriter, r *http.Request) {
 	roomIDStr := r.URL.Query().Get("id")
 	roomID, err := uuid.Parse(roomIDStr)
-	if err != nil {
+	if err != nil || roomID == uuid.Nil {
 		http.Error(w, "Invalid room ID", http.StatusBadRequest)
 		return
 	}

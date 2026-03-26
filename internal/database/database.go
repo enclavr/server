@@ -102,6 +102,9 @@ func (d *Database) Migrate() error {
 		&models.UserNotification{},
 		&models.MessageAttachmentMetadata{},
 		&models.AttachmentShare{},
+		&models.PreferenceOverride{},
+		&models.CategorySettings{},
+		&models.AttachmentTag{},
 	)
 	if err != nil {
 		return err
@@ -230,6 +233,12 @@ func isPostgresDB(db *Database) bool {
 	var result string
 	db.Raw("SELECT version()").Scan(&result)
 	return strings.Contains(result, "PostgreSQL")
+}
+
+func IsSQLiteDB(db *gorm.DB) bool {
+	var result string
+	db.Raw("SELECT sqlite_version()").Scan(&result)
+	return result != ""
 }
 
 func tableExists(db *gorm.DB, tableName string) bool {

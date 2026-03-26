@@ -167,7 +167,7 @@ func TestMessageHandler_GetMessages(t *testing.T) {
 		{
 			name:           "invalid room uuid",
 			roomID:         uuid.Nil,
-			expectedStatus: http.StatusForbidden,
+			expectedStatus: http.StatusBadRequest,
 			setupCtx:       messageContextWithUserID,
 		},
 		{

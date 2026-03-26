@@ -150,7 +150,7 @@ func (h *MessageHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	roomID, err := uuid.Parse(roomIDStr)
-	if err != nil {
+	if err != nil || roomID == uuid.Nil {
 		http.Error(w, "Invalid room_id", http.StatusBadRequest)
 		return
 	}

@@ -191,10 +191,19 @@ func (h *AnalyticsHandler) GetHourlyActivity(w http.ResponseWriter, r *http.Requ
 	}
 
 	var results []hourlyData
+	isSQLite := database.IsSQLiteDB(h.db.DB)
+	var selectSQL, groupSQL string
+	if isSQLite {
+		selectSQL = "CAST(strftime('%H', created_at) AS INTEGER) as hour, COUNT(*) as message_count, COUNT(DISTINCT user_id) as user_count"
+		groupSQL = "CAST(strftime('%H', created_at) AS INTEGER)"
+	} else {
+		selectSQL = "CAST(EXTRACT(HOUR FROM created_at) AS INTEGER) as hour, COUNT(*) as message_count, COUNT(DISTINCT user_id) as user_count"
+		groupSQL = "CAST(EXTRACT(HOUR FROM created_at) AS INTEGER)"
+	}
 	err := h.db.Model(&models.Message{}).
-		Select("CAST(EXTRACT(HOUR FROM created_at) AS INTEGER) as hour, COUNT(*) as message_count, COUNT(DISTINCT user_id) as user_count").
+		Select(selectSQL).
 		Where("created_at >= ?", since).
-		Group("CAST(EXTRACT(HOUR FROM created_at) AS INTEGER)").
+		Group(groupSQL).
 		Order("hour ASC").
 		Scan(&results).Error
 
