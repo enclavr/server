@@ -10,6 +10,7 @@ import (
 	"github.com/enclavr/server/internal/models"
 	"github.com/enclavr/server/pkg/middleware"
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type AttachmentHandler struct {
@@ -365,7 +366,12 @@ func (h *AttachmentHandler) ShareAttachment(w http.ResponseWriter, r *http.Reque
 	}
 
 	if req.Password != "" {
-		share.Password = req.Password
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		if err != nil {
+			http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+			return
+		}
+		share.Password = string(hashedPassword)
 	}
 
 	if err := h.db.Create(&share).Error; err != nil {
@@ -480,9 +486,11 @@ func (h *AttachmentHandler) GetSharedAttachment(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if share.Password != "" && share.Password != password {
-		http.Error(w, "Invalid password", http.StatusUnauthorized)
-		return
+	if share.Password != "" {
+		if err := bcrypt.CompareHashAndPassword([]byte(share.Password), []byte(password)); err != nil {
+			http.Error(w, "Invalid password", http.StatusUnauthorized)
+			return
+		}
 	}
 
 	share.ViewCount++

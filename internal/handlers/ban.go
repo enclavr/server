@@ -56,6 +56,16 @@ func (h *BanHandler) CreateBan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var requesterRoom models.UserRoom
+	if err := h.db.Where("user_id = ? AND room_id = ?", userID, req.RoomID).First(&requesterRoom).Error; err != nil {
+		http.Error(w, "You are not a member of this room", http.StatusForbidden)
+		return
+	}
+	if requesterRoom.Role != "owner" && requesterRoom.Role != "admin" {
+		http.Error(w, "Only room owners and admins can ban users", http.StatusForbidden)
+		return
+	}
+
 	var user models.User
 	if err := h.db.First(&user, req.UserID).Error; err != nil {
 		http.Error(w, "User not found", http.StatusNotFound)
@@ -135,9 +145,24 @@ func (h *BanHandler) GetBans(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := make([]BanResponse, len(bans))
+
+	userIDs := make([]uuid.UUID, len(bans))
 	for i, ban := range bans {
-		var bannedUser models.User
-		h.db.First(&bannedUser, ban.UserID)
+		userIDs[i] = ban.UserID
+	}
+
+	userMap := make(map[uuid.UUID]models.User)
+	var users []models.User
+	if len(userIDs) > 0 {
+		if err := h.db.Where("id IN ?", userIDs).Find(&users).Error; err == nil {
+			for _, u := range users {
+				userMap[u.ID] = u
+			}
+		}
+	}
+
+	for i, ban := range bans {
+		bannedUser := userMap[ban.UserID]
 
 		response[i] = BanResponse{
 			ID:        ban.ID,
@@ -189,6 +214,8 @@ func (h *BanHandler) GetBan(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *BanHandler) UpdateBan(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r)
+
 	banID := r.URL.Query().Get("id")
 	if banID == "" {
 		http.Error(w, "ban_id is required", http.StatusBadRequest)
@@ -210,6 +237,16 @@ func (h *BanHandler) UpdateBan(w http.ResponseWriter, r *http.Request) {
 	var ban models.Ban
 	if err := h.db.First(&ban, banUUID).Error; err != nil {
 		http.Error(w, "Ban not found", http.StatusNotFound)
+		return
+	}
+
+	var requesterRoom models.UserRoom
+	if err := h.db.Where("user_id = ? AND room_id = ?", userID, ban.RoomID).First(&requesterRoom).Error; err != nil {
+		http.Error(w, "You are not a member of this room", http.StatusForbidden)
+		return
+	}
+	if requesterRoom.Role != "owner" && requesterRoom.Role != "admin" {
+		http.Error(w, "Only room owners and admins can update bans", http.StatusForbidden)
 		return
 	}
 
@@ -247,6 +284,16 @@ func (h *BanHandler) DeleteBan(w http.ResponseWriter, r *http.Request) {
 	var ban models.Ban
 	if err := h.db.First(&ban, banUUID).Error; err != nil {
 		http.Error(w, "Ban not found", http.StatusNotFound)
+		return
+	}
+
+	var requesterRoom models.UserRoom
+	if err := h.db.Where("user_id = ? AND room_id = ?", userID, ban.RoomID).First(&requesterRoom).Error; err != nil {
+		http.Error(w, "You are not a member of this room", http.StatusForbidden)
+		return
+	}
+	if requesterRoom.Role != "owner" && requesterRoom.Role != "admin" {
+		http.Error(w, "Only room owners and admins can delete bans", http.StatusForbidden)
 		return
 	}
 

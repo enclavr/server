@@ -105,9 +105,13 @@ func (h *ReactionHandler) AddReaction(w http.ResponseWriter, r *http.Request) {
 		UserID:    userID,
 		Timestamp: time.Now(),
 	}
-	wsPayload, _ := json.Marshal(response)
-	wsMsg.Payload = wsPayload
-	h.hub.BroadcastToRoom(msg.RoomID, wsMsg, uuid.Nil)
+	wsPayload, err := json.Marshal(response)
+	if err != nil {
+		log.Printf("Error marshaling WebSocket payload for AddReaction: %v", err)
+	} else {
+		wsMsg.Payload = wsPayload
+		h.hub.BroadcastToRoom(msg.RoomID, wsMsg, uuid.Nil)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -202,6 +206,20 @@ func (h *ReactionHandler) GetReactions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userIDs := make([]uuid.UUID, 0, len(reactions))
+	for _, r := range reactions {
+		userIDs = append(userIDs, r.UserID)
+	}
+	userMap := make(map[uuid.UUID]models.User)
+	if len(userIDs) > 0 {
+		var users []models.User
+		if err := h.db.Where("id IN ?", userIDs).Find(&users).Error; err == nil {
+			for _, u := range users {
+				userMap[u.ID] = u
+			}
+		}
+	}
+
 	reactionMap := make(map[string]*ReactionWithCount)
 	for _, r := range reactions {
 		if _, exists := reactionMap[r.Emoji]; !exists {
@@ -213,8 +231,7 @@ func (h *ReactionHandler) GetReactions(w http.ResponseWriter, r *http.Request) {
 		}
 		reactionMap[r.Emoji].Count++
 
-		var user models.User
-		if err := h.db.First(&user, "id = ?", r.UserID).Error; err == nil {
+		if user, ok := userMap[r.UserID]; ok {
 			reactionMap[r.Emoji].Users = append(reactionMap[r.Emoji].Users, user.Username)
 			if r.UserID == userID {
 				reactionMap[r.Emoji].HasReacted = true

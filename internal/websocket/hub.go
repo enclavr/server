@@ -143,6 +143,7 @@ func NewHubWithRedis(redisHost, redisPassword string, redisDB int) (*Hub, error)
 
 	hub.pubSub = NewPubSubService(redisHost, redisPassword, redisDB)
 	if err := hub.pubSub.Connect(); err != nil {
+		close(hub.shutdown)
 		return nil, err
 	}
 
@@ -205,12 +206,11 @@ func (h *Hub) Run() {
 			metrics.ActiveUsers.Dec()
 
 		case message := <-h.broadcast:
-			roomMutex := h.getRoomMutex(message.RoomID)
-			if roomMutex != nil {
-				roomMutex.RLock()
-			}
-			if r, ok := h.rooms[message.RoomID]; ok {
-				r.mutex.RLock()
+			h.mutex.RLock()
+			r, ok := h.rooms[message.RoomID]
+			h.mutex.RUnlock()
+			if ok {
+				r.mutex.Lock()
 				for client := range r.clients {
 					select {
 					case client.send <- message.encode():
@@ -220,13 +220,11 @@ func (h *Hub) Run() {
 						h.activeClients.Add(-1)
 					}
 				}
-				r.mutex.RUnlock()
+				clientCount := len(r.clients)
+				r.mutex.Unlock()
 				h.totalMessages.Add(1)
-				metrics.MessagesSent.Add(float64(len(r.clients)))
-				metrics.WebSocketMessagesTotal.WithLabelValues(message.Type, "sent").Add(float64(len(r.clients)))
-			}
-			if roomMutex != nil {
-				roomMutex.RUnlock()
+				metrics.MessagesSent.Add(float64(clientCount))
+				metrics.WebSocketMessagesTotal.WithLabelValues(message.Type, "sent").Add(float64(clientCount))
 			}
 		}
 	}
@@ -273,12 +271,11 @@ func (h *Hub) flushBatch(batch []*batchItem) {
 	}
 
 	for roomID, items := range roomGroups {
-		roomMutex := h.getRoomMutex(roomID)
-		if roomMutex != nil {
-			roomMutex.RLock()
-		}
-		if r, ok := h.rooms[roomID]; ok {
-			r.mutex.RLock()
+		h.mutex.RLock()
+		r, ok := h.rooms[roomID]
+		h.mutex.RUnlock()
+		if ok {
+			r.mutex.Lock()
 			for _, item := range items {
 				encoded := item.message.encode()
 				for client := range r.clients {
@@ -293,10 +290,7 @@ func (h *Hub) flushBatch(batch []*batchItem) {
 					}
 				}
 			}
-			r.mutex.RUnlock()
-		}
-		if roomMutex != nil {
-			roomMutex.RUnlock()
+			r.mutex.Unlock()
 		}
 
 		for _, item := range items {
@@ -352,19 +346,6 @@ func (h *Hub) gracefulShutdown() {
 func (h *Hub) Shutdown() {
 	wsLogger.Info("Shutting down WebSocket hub...")
 	close(h.shutdown)
-
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-
-	for _, r := range h.rooms {
-		r.mutex.Lock()
-		for client := range r.clients {
-			close(client.send)
-			delete(r.clients, client)
-		}
-		r.mutex.Unlock()
-	}
-
 	log.Println("WebSocket hub shutdown complete")
 }
 
@@ -500,30 +481,23 @@ func (h *Hub) broadcastToRoom(roomID uuid.UUID, msg *Message, excludeUserID uuid
 		return
 	}
 
-	roomMutex := h.getRoomMutex(roomID)
-	if roomMutex != nil {
-		roomMutex.RLock()
-	}
+	h.mutex.RLock()
 	r, ok := h.rooms[roomID]
+	h.mutex.RUnlock()
 	if !ok {
 		wsLogger.Debug("Broadcast to non-existent room",
 			"room_id", roomID,
 			"message_type", msg.Type)
-		if roomMutex != nil {
-			roomMutex.RUnlock()
-		}
 		return
 	}
-	r.mutex.RLock()
+
+	r.mutex.Lock()
 	clientCount := len(r.clients)
 	if clientCount == 0 {
 		wsLogger.Debug("Broadcast to empty room",
 			"room_id", roomID,
 			"message_type", msg.Type)
-		r.mutex.RUnlock()
-		if roomMutex != nil {
-			roomMutex.RUnlock()
-		}
+		r.mutex.Unlock()
 		return
 	}
 
@@ -545,10 +519,7 @@ func (h *Hub) broadcastToRoom(roomID uuid.UUID, msg *Message, excludeUserID uuid
 			h.activeClients.Add(-1)
 		}
 	}
-	r.mutex.RUnlock()
-	if roomMutex != nil {
-		roomMutex.RUnlock()
-	}
+	r.mutex.Unlock()
 
 	h.totalMessages.Add(1)
 	metrics.MessagesSent.Add(float64(deliveredCount))
@@ -620,7 +591,11 @@ func (c *Client) ReadPump() {
 	defer func() {
 		c.SetState(StateDisconnecting)
 		c.hub.clearTypingUser(c.userID)
-		c.hub.unregister <- c
+
+		select {
+		case c.hub.unregister <- c:
+		case <-c.hub.shutdown:
+		}
 
 		disconnectDuration := time.Since(c.connectedAt)
 		closeCode := websocket.CloseNormalClosure
@@ -672,7 +647,6 @@ func (c *Client) ReadPump() {
 		} else {
 			wsLogger.Info("Connection closed cleanly", fields...)
 		}
-		metrics.WebSocketConnections.Dec()
 	}()
 
 	c.SetState(StateConnecting)
@@ -939,8 +913,6 @@ func (c *Client) WritePump() {
 			c.bytesOut.Add(int64(len(message)))
 
 			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
-				c.packetsOut.Add(1)
-				c.bytesOut.Add(int64(len(message)))
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 					wsLogger.Warn("Unexpected close while writing",
 						"connection_id", c.connectionID,
@@ -1455,6 +1427,7 @@ func (h *Hub) updateRoomStat(roomID uuid.UUID) {
 
 	var activeUsers, idleUsers, mutedUsers, deafenedUsers, speakingUsers, screenSharing int
 
+	h.activityMutex.RLock()
 	r.mutex.RLock()
 	for client := range r.clients {
 		activity, actExists := h.userActivities[client.userID]
@@ -1467,6 +1440,7 @@ func (h *Hub) updateRoomStat(roomID uuid.UUID) {
 		}
 	}
 	r.mutex.RUnlock()
+	h.activityMutex.RUnlock()
 
 	stats.ActiveUsers = activeUsers
 	stats.IdleUsers = idleUsers

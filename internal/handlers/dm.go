@@ -86,7 +86,7 @@ func (h *DirectMessageHandler) GetConversations(w http.ResponseWriter, r *http.R
 		DisplayName string    `json:"display_name"`
 		AvatarURL   string    `json:"avatar_url"`
 		LastMessage string    `json:"last_message"`
-		LastTime    time.Time `json:"last_time"`
+		LastTime    string    `json:"last_time"`
 		UnreadCount int64     `json:"unread_count"`
 	}
 
@@ -98,13 +98,17 @@ func (h *DirectMessageHandler) GetConversations(w http.ResponseWriter, r *http.R
 		Group("user_id").
 		Order("MAX(created_at) DESC")
 
-	h.db.Table("(?) as sub", subQuery).
+	if err := h.db.Table("(?) as sub", subQuery).
 		Select("sub.user_id, users.username, users.display_name, users.avatar_url, MAX(dm.content) as last_message, MAX(dm.created_at) as last_time, COUNT(*) as unread_count").
 		Joins("JOIN users ON users.id = sub.user_id").
 		Joins("LEFT JOIN direct_messages dm ON (dm.sender_id = ? AND dm.receiver_id = sub.user_id) OR (dm.sender_id = sub.user_id AND dm.receiver_id = ?)", userID, userID).
 		Group("sub.user_id, users.id, users.username, users.display_name, users.avatar_url").
 		Order("last_time DESC").
-		Scan(&conversations)
+		Scan(&conversations).Error; err != nil {
+		log.Printf("Error fetching conversations: %v", err)
+		http.Error(w, "Failed to fetch conversations", http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(conversations); err != nil {
@@ -130,14 +134,24 @@ func (h *DirectMessageHandler) GetMessages(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	var otherUser models.User
-	h.db.First(&otherUser, otherUserID)
+	userIDs := []uuid.UUID{otherUserID}
+	for _, dm := range dms {
+		userIDs = append(userIDs, dm.SenderID, dm.ReceiverID)
+	}
+	userMap := make(map[uuid.UUID]models.User)
+	if len(userIDs) > 0 {
+		var users []models.User
+		if err := h.db.Where("id IN ?", userIDs).Find(&users).Error; err == nil {
+			for _, u := range users {
+				userMap[u.ID] = u
+			}
+		}
+	}
 
 	responses := make([]DirectMessageResponse, 0, len(dms))
 	for _, dm := range dms {
-		var sender, receiver models.User
-		h.db.First(&sender, dm.SenderID)
-		h.db.First(&receiver, dm.ReceiverID)
+		sender := userMap[dm.SenderID]
+		receiver := userMap[dm.ReceiverID]
 		responses = append(responses, h.dmToResponse(&dm, &sender, &receiver))
 	}
 

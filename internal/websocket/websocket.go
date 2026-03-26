@@ -117,9 +117,10 @@ func getErrorCategory(err error) (category, detail string) {
 			return "protocol", "no close frame received"
 		case websocket.CloseTLSHandshake:
 			return "tls", "TLS handshake failure"
-		case 4000 - 4999:
-			return "custom", "application-specific close"
 		default:
+			if ce.Code >= 4000 && ce.Code <= 4999 {
+				return "custom", "application-specific close"
+			}
 			return "unknown", fmt.Sprintf("code %d: %s", ce.Code, ce.Text)
 		}
 	}

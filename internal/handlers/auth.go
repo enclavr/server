@@ -625,7 +625,7 @@ func (h *AuthHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 		DisplayName:      user.DisplayName,
 		AvatarURL:        user.AvatarURL,
 		IsAdmin:          user.IsAdmin,
-		EmailVerified:    user.OIDCIssuer != "",
+		EmailVerified:    user.EmailVerified,
 		TwoFactorEnabled: user.TwoFactorEnabled,
 	}
 
@@ -972,12 +972,12 @@ func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if user.OIDCIssuer != "" {
+	if user.EmailVerified {
 		http.Error(w, "Email already verified", http.StatusBadRequest)
 		return
 	}
 
-	user.OIDCIssuer = "verified"
+	user.EmailVerified = true
 	h.db.Save(&user)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1301,7 +1301,8 @@ func (h *AuthHandler) RotateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accessToken, err := h.authService.GenerateToken(&user)
+	sessionID := uuid.New()
+	accessToken, err := h.authService.GenerateToken(&user, sessionID)
 	if err != nil {
 		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
 		return

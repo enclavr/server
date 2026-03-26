@@ -215,7 +215,9 @@ func (d *Database) Migrate() error {
 		d.Exec("CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user_provider ON oauth_accounts(user_id, provider)")
 	}
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_user_rooms_by_role ON user_rooms(room_id, role)")
-	d.Exec("CREATE INDEX IF NOT EXISTS idx_messages_search ON messages USING gin(to_tsvector('english', content))")
+	if !IsSQLiteDB(d.DB) {
+		d.Exec("CREATE INDEX IF NOT EXISTS idx_messages_search ON messages USING gin(to_tsvector('english', content))")
+	}
 	if tableExists(d.DB, "password_resets") {
 		d.Exec("CREATE INDEX IF NOT EXISTS idx_password_resets_token ON password_resets(token) WHERE used = false")
 	}
@@ -242,6 +244,11 @@ func IsSQLiteDB(db *gorm.DB) bool {
 }
 
 func tableExists(db *gorm.DB, tableName string) bool {
+	if IsSQLiteDB(db) {
+		var count int64
+		db.Raw("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?", tableName).Scan(&count)
+		return count > 0
+	}
 	var count int64
 	db.Raw("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?", tableName).Scan(&count)
 	return count > 0

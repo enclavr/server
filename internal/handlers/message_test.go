@@ -102,7 +102,7 @@ func TestMessageHandler_SendMessage(t *testing.T) {
 			body: SendMessageRequest{
 				Content: "Hello",
 			},
-			expectedStatus: http.StatusOK,
+			expectedStatus: http.StatusBadRequest,
 			setupCtx:       messageContextWithUserID,
 		},
 		{
@@ -111,7 +111,7 @@ func TestMessageHandler_SendMessage(t *testing.T) {
 				RoomID:  uuid.New(),
 				Content: "Hello",
 			},
-			expectedStatus: http.StatusOK,
+			expectedStatus: http.StatusNotFound,
 			setupCtx:       messageContextWithUserID,
 		},
 		{

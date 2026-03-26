@@ -79,6 +79,17 @@ func (h *MessageHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.RoomID == uuid.Nil {
+		http.Error(w, "room_id is required", http.StatusBadRequest)
+		return
+	}
+
+	var room models.Room
+	if err := h.db.First(&room, "id = ?", req.RoomID).Error; err != nil {
+		http.Error(w, "Room not found", http.StatusNotFound)
+		return
+	}
+
 	if err := validator.ValidateMessageContent(req.Content); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -126,9 +137,13 @@ func (h *MessageHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		UserID:    msg.UserID,
 		Timestamp: time.Now(),
 	}
-	wsPayload, _ := json.Marshal(response)
-	wsMsg.Payload = wsPayload
-	h.hub.BroadcastToRoom(msg.RoomID, wsMsg, uuid.Nil)
+	wsPayload, err := json.Marshal(response)
+	if err != nil {
+		log.Printf("Error marshaling WebSocket payload for SendMessage: %v", err)
+	} else {
+		wsMsg.Payload = wsPayload
+		h.hub.BroadcastToRoom(msg.RoomID, wsMsg, uuid.Nil)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -305,9 +320,13 @@ func (h *MessageHandler) UpdateMessage(w http.ResponseWriter, r *http.Request) {
 		UserID:    msg.UserID,
 		Timestamp: time.Now(),
 	}
-	wsPayload, _ := json.Marshal(response)
-	wsMsg.Payload = wsPayload
-	h.hub.BroadcastToRoom(msg.RoomID, wsMsg, uuid.Nil)
+	wsPayload, err := json.Marshal(response)
+	if err != nil {
+		log.Printf("Error marshaling WebSocket payload for UpdateMessage: %v", err)
+	} else {
+		wsMsg.Payload = wsPayload
+		h.hub.BroadcastToRoom(msg.RoomID, wsMsg, uuid.Nil)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -360,9 +379,13 @@ func (h *MessageHandler) DeleteMessage(w http.ResponseWriter, r *http.Request) {
 		UserID:    userID,
 		Timestamp: time.Now(),
 	}
-	wsPayload, _ := json.Marshal(map[string]string{"id": messageID.String()})
-	wsMsg.Payload = wsPayload
-	h.hub.BroadcastToRoom(msg.RoomID, wsMsg, uuid.Nil)
+	wsPayload, err := json.Marshal(map[string]string{"id": messageID.String()})
+	if err != nil {
+		log.Printf("Error marshaling WebSocket payload for DeleteMessage: %v", err)
+	} else {
+		wsMsg.Payload = wsPayload
+		h.hub.BroadcastToRoom(msg.RoomID, wsMsg, uuid.Nil)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{"status": "deleted"}); err != nil {
@@ -407,13 +430,20 @@ func (h *MessageHandler) SearchMessages(w http.ResponseWriter, r *http.Request) 
 
 	var results []SearchResult
 
-	err := h.db.Table("messages").
+	queryBuilder := h.db.Table("messages").
 		Select("messages.id, messages.room_id, rooms.name as room_name, messages.user_id, users.username, messages.content, messages.created_at").
 		Joins("JOIN rooms ON messages.room_id = rooms.id").
 		Joins("JOIN users ON messages.user_id = users.id").
 		Joins("JOIN user_rooms ON messages.room_id = user_rooms.room_id AND user_rooms.user_id = ?", userID).
-		Where("messages.is_deleted = ?", false).
-		Where("to_tsvector('english', messages.content) @@ plainto_tsquery('english', ?)", query).
+		Where("messages.is_deleted = ?", false)
+
+	if database.IsSQLiteDB(h.db.DB) {
+		queryBuilder = queryBuilder.Where("messages.content LIKE ?", "%"+query+"%")
+	} else {
+		queryBuilder = queryBuilder.Where("to_tsvector('english', messages.content) @@ plainto_tsquery('english', ?)", query)
+	}
+
+	err := queryBuilder.
 		Order("messages.created_at DESC").
 		Limit(limit).
 		Scan(&results).Error

@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"log"
@@ -11,6 +10,7 @@ import (
 	"github.com/enclavr/server/internal/models"
 	"github.com/enclavr/server/pkg/middleware"
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
@@ -71,7 +71,12 @@ func (h *RoomHandler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Password != "" {
-		room.Password = req.Password
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		if err != nil {
+			http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+			return
+		}
+		room.Password = string(hashedPassword)
 	}
 
 	if err := h.db.Create(&room).Error; err != nil {
@@ -152,7 +157,7 @@ func (h *RoomHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if room.IsPrivate && room.Password != "" {
-		if subtle.ConstantTimeCompare([]byte(room.Password), []byte(req.Password)) != 1 {
+		if err := bcrypt.CompareHashAndPassword([]byte(room.Password), []byte(req.Password)); err != nil {
 			http.Error(w, "Invalid password", http.StatusForbidden)
 			return
 		}
@@ -302,8 +307,8 @@ func (h *RoomHandler) SearchRooms(w http.ResponseWriter, r *http.Request) {
 		h.db.Model(&models.UserRoom{}).Where("room_id = ?", room.ID).Count(&userCount)
 
 		isMember := false
-		h.db.Model(&models.UserRoom{}).Where("user_id = ? AND room_id = ?", userID, room.ID).First(&models.UserRoom{})
-		if !errors.Is(h.db.Error, gorm.ErrRecordNotFound) {
+		result := h.db.Model(&models.UserRoom{}).Where("user_id = ? AND room_id = ?", userID, room.ID).First(&models.UserRoom{})
+		if result.Error == nil {
 			isMember = true
 		}
 

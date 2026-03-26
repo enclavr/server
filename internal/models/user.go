@@ -15,6 +15,7 @@ type User struct {
 	DisplayName       string         `gorm:"size:100" json:"display_name"`
 	AvatarURL         string         `gorm:"size:500" json:"avatar_url"`
 	IsAdmin           bool           `gorm:"default:false" json:"is_admin"`
+	EmailVerified     bool           `gorm:"default:false" json:"email_verified"`
 	OIDCSubject       string         `gorm:"size:255" json:"-"`
 	OIDCIssuer        string         `gorm:"size:255" json:"-"`
 	TwoFactorEnabled  bool           `gorm:"default:false" json:"two_factor_enabled"`

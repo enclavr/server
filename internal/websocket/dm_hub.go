@@ -90,6 +90,7 @@ func NewDMHub() *DMHub {
 		typingTimeout:    DMTypingTimeout,
 	}
 	go hub.run()
+	go hub.cleanupTypingUsers()
 	return hub
 }
 
@@ -476,6 +477,32 @@ func (h *DMHub) isBlocked(blockerID, userID uuid.UUID) bool {
 		return h.blockedUsers[blockerID][userID]
 	}
 	return false
+}
+
+func (h *DMHub) cleanupTypingUsers() {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-h.shutdown:
+			return
+		case <-ticker.C:
+			h.typingMutex.Lock()
+			now := time.Now()
+			for convID, users := range h.typingUsers {
+				for userID, state := range users {
+					if now.Sub(state.StartedAt) > h.typingTimeout {
+						delete(users, userID)
+					}
+				}
+				if len(users) == 0 {
+					delete(h.typingUsers, convID)
+				}
+			}
+			h.typingMutex.Unlock()
+		}
+	}
 }
 
 func (h *DMHub) Shutdown() {

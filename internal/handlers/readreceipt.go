@@ -75,13 +75,17 @@ func (h *ReadReceiptHandler) MarkMessageRead(w http.ResponseWriter, r *http.Requ
 		UserID:    userID,
 		Timestamp: time.Now(),
 	}
-	wsPayload, _ := json.Marshal(map[string]interface{}{
+	wsPayload, err := json.Marshal(map[string]interface{}{
 		"message_id": req.MessageID.String(),
 		"user_id":    userID.String(),
 		"read_at":    time.Now().Format(time.RFC3339),
 	})
-	wsMsg.Payload = wsPayload
-	h.hub.BroadcastToRoom(req.RoomID, wsMsg, userID)
+	if err != nil {
+		log.Printf("Error marshaling WebSocket payload for ReadReceipt: %v", err)
+	} else {
+		wsMsg.Payload = wsPayload
+		h.hub.BroadcastToRoom(req.RoomID, wsMsg, userID)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{"status": "read"}); err != nil {
@@ -127,6 +131,20 @@ func (h *ReadReceiptHandler) GetReadReceipts(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	userIDs := make([]uuid.UUID, 0, len(reads))
+	for _, read := range reads {
+		userIDs = append(userIDs, read.UserID)
+	}
+	userMap := make(map[uuid.UUID]models.User)
+	if len(userIDs) > 0 {
+		var users []models.User
+		if err := h.db.Where("id IN ?", userIDs).Find(&users).Error; err == nil {
+			for _, u := range users {
+				userMap[u.ID] = u
+			}
+		}
+	}
+
 	type ReadReceiptResponse struct {
 		UserID   uuid.UUID `json:"user_id"`
 		Username string    `json:"username"`
@@ -135,8 +153,7 @@ func (h *ReadReceiptHandler) GetReadReceipts(w http.ResponseWriter, r *http.Requ
 
 	var response []ReadReceiptResponse
 	for _, read := range reads {
-		var user models.User
-		h.db.First(&user, "id = ?", read.UserID)
+		user := userMap[read.UserID]
 
 		response = append(response, ReadReceiptResponse{
 			UserID:   read.UserID,

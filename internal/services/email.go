@@ -116,7 +116,9 @@ func (es *EmailService) loadDefaultTemplates() {
 	}
 
 	for name, tmpl := range templates {
-		t, err := template.New(name).Parse(tmpl.HTMLBody)
+		t, err := template.New(name).Funcs(template.FuncMap{
+			"nowFormat": nowFormat,
+		}).Parse(tmpl.HTMLBody)
 		if err != nil {
 			log.Printf("Error parsing template %s: %v", name, err)
 			continue

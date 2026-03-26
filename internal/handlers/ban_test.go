@@ -65,6 +65,13 @@ func TestBanHandler_CreateBan(t *testing.T) {
 	}
 	db.Create(&user)
 
+	adminRoom := models.UserRoom{
+		UserID: adminID,
+		RoomID: room.ID,
+		Role:   "owner",
+	}
+	db.Create(&adminRoom)
+
 	tests := []struct {
 		name           string
 		body           CreateBanRequest
@@ -304,6 +311,13 @@ func TestBanHandler_UpdateBan(t *testing.T) {
 	}
 	db.Create(&user)
 
+	adminRoom := models.UserRoom{
+		UserID: adminID,
+		RoomID: room.ID,
+		Role:   "owner",
+	}
+	db.Create(&adminRoom)
+
 	ban := models.Ban{
 		ID:       uuid.New(),
 		UserID:   user.ID,
@@ -396,6 +410,13 @@ func TestBanHandler_DeleteBan(t *testing.T) {
 		Email:    "banned@example.com",
 	}
 	db.Create(&user)
+
+	adminRoom := models.UserRoom{
+		UserID: adminID,
+		RoomID: room.ID,
+		Role:   "owner",
+	}
+	db.Create(&adminRoom)
 
 	ban := models.Ban{
 		ID:       uuid.New(),
