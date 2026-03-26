@@ -19,14 +19,24 @@
 - Room ratings
 - User activity logging
 - Room metrics
+- Room templates (CRUD + create room from template)
+- Category permissions (CRUD + check permission)
+- Attachment sharing (share, get shares, get shared, delete share)
+- WebSocket DM hub integration (real-time DM connections)
 
 ## What's Left to Build
-- [ ] WebSocket DM hub integration (DMHub defined but not instantiated)
-- [ ] Room templates handler
-- [ ] Category permissions handler
-- [ ] Attachment sharing endpoints
+- [ ] Additional WebSocket events for DM hub
+- [ ] Rate limiting per user for DM connections
+- [ ] DM hub message persistence
 
 ## What's Completed (2026-03-27)
+- [x] NEW: RoomTemplateHandler - CRUD for room templates + create room from template
+- [x] NEW: CategoryPermissionHandler - CRUD for category permissions + check permission
+- [x] NEW: Register attachment sharing routes (4 endpoints)
+- [x] NEW: Integrate DMHub in main.go with shutdown handling
+- [x] NEW: DMWebSocketHandler for real-time DM WebSocket connections
+- [x] NEW: Exported methods for DMHub and DMClient
+- [x] NEW: 16 new test cases for RoomTemplate and CategoryPermission handlers
 - [x] NEW: Fix NotificationHandler - remove gin.Context, use http.HandlerFunc
 - [x] NEW: Register RoomSettingsHandler routes
 - [x] NEW: Register ScheduledMessageHandler routes

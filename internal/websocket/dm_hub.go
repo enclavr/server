@@ -531,3 +531,40 @@ func GenerateConversationID(userID1, userID2 uuid.UUID) string {
 	}
 	return fmt.Sprintf("%s-%s", userID2, userID1)
 }
+
+func NewDMClient(userID uuid.UUID, conversationID string, sendChan chan []byte) *DMClient {
+	client := &DMClient{
+		userID:         userID,
+		conversationID: conversationID,
+		send:           sendChan,
+	}
+	return client
+}
+
+func (c *DMClient) SetUserID(id uuid.UUID) {
+	c.userID = id
+}
+
+func (c *DMClient) SetConversationID(id string) {
+	c.conversationID = id
+}
+
+func (c *DMClient) SetSend(ch chan []byte) {
+	c.send = ch
+}
+
+func (c *DMClient) GetSend() chan []byte {
+	return c.send
+}
+
+func (h *DMHub) RegisterClient(client *DMClient) {
+	h.register <- client
+}
+
+func (h *DMHub) UnregisterClient(client *DMClient) {
+	h.unregister <- client
+}
+
+func (h *DMHub) GetActiveClients() int64 {
+	return h.activeClients.Load()
+}

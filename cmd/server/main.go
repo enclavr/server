@@ -129,6 +129,9 @@ func main() {
 	} else {
 		metrics.RedisEnabled.Set(0)
 	}
+
+	dmHub := websocket.NewDMHub()
+
 	inviteHandler := handlers.NewInviteHandler(db)
 	inviteLinkHandler := handlers.NewInviteLinkHandler(db)
 
@@ -195,6 +198,9 @@ func main() {
 	editHistoryHandler := handlers.NewEditHistoryHandler(db)
 	roomBookmarkHandler := handlers.NewRoomBookmarkHandler(db)
 	notificationPrefsHandler := handlers.NewNotificationPreferencesHandler(db)
+	roomTemplateHandler := handlers.NewRoomTemplateHandler(db)
+	categoryPermissionHandler := handlers.NewCategoryPermissionHandler(db)
+	dmWebSocketHandler := handlers.NewDMWebSocketHandler(db, dmHub, cfg)
 	_ = services.NewPushService(db, cfg)
 
 	go hub.Run()
@@ -253,6 +259,8 @@ func main() {
 
 	mux.HandleFunc("/api/voice/ws", voiceHandler.HandleWebSocket)
 	mux.HandleFunc("/api/voice/ice", voiceHandler.GetICEConfig)
+
+	mux.HandleFunc("/api/dm/ws", dmWebSocketHandler.HandleDMWebSocket)
 
 	mux.HandleFunc("/api/messages", middleware.RequireAuth(authService, messageHandler.GetMessages))
 	mux.HandleFunc("/api/message/send", middleware.RequireAuth(authService, messageHandler.SendMessage))
@@ -456,6 +464,24 @@ func main() {
 	mux.HandleFunc("/api/notification-preferences", middleware.RequireAuth(authService, notificationPrefsHandler.GetPreferences))
 	mux.HandleFunc("/api/notification-preferences/update", middleware.RequireAuth(authService, notificationPrefsHandler.UpdatePreferences))
 
+	mux.HandleFunc("/api/attachment/share", middleware.RequireAuth(authService, attachmentHandler.ShareAttachment))
+	mux.HandleFunc("/api/attachment/shares", middleware.RequireAuth(authService, attachmentHandler.GetAttachmentShares))
+	mux.HandleFunc("/api/attachment/shared", attachmentHandler.GetSharedAttachment)
+	mux.HandleFunc("/api/attachment/share/delete", middleware.RequireAuth(authService, attachmentHandler.DeleteShare))
+
+	mux.HandleFunc("/api/room-template/create", middleware.RequireAuth(authService, roomTemplateHandler.CreateTemplate))
+	mux.HandleFunc("/api/room-templates", middleware.RequireAuth(authService, roomTemplateHandler.GetTemplates))
+	mux.HandleFunc("/api/room-template", middleware.RequireAuth(authService, roomTemplateHandler.GetTemplate))
+	mux.HandleFunc("/api/room-template/update", middleware.RequireAuth(authService, roomTemplateHandler.UpdateTemplate))
+	mux.HandleFunc("/api/room-template/delete", middleware.RequireAuth(authService, roomTemplateHandler.DeleteTemplate))
+	mux.HandleFunc("/api/room-template/create-room", middleware.RequireAuth(authService, roomTemplateHandler.CreateRoomFromTemplate))
+
+	mux.HandleFunc("/api/category-permission/create", middleware.RequireAuth(authService, categoryPermissionHandler.CreatePermission))
+	mux.HandleFunc("/api/category-permissions", middleware.RequireAuth(authService, categoryPermissionHandler.GetCategoryPermissions))
+	mux.HandleFunc("/api/category-permission/update", middleware.RequireAuth(authService, categoryPermissionHandler.UpdatePermission))
+	mux.HandleFunc("/api/category-permission/delete", middleware.RequireAuth(authService, categoryPermissionHandler.DeletePermission))
+	mux.HandleFunc("/api/category-permission/check", middleware.RequireAuth(authService, categoryPermissionHandler.CheckPermission))
+
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		if _, err := fmt.Fprint(w, "OK"); err != nil {
@@ -469,6 +495,7 @@ func main() {
 			"active_clients": hub.GetClientCount(),
 			"room_count":     hub.GetRoomCount(),
 			"redis_enabled":  hub.IsRedisEnabled(),
+			"dm_clients":     dmHub.GetActiveClients(),
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(metrics); err != nil {
@@ -546,6 +573,7 @@ func main() {
 	}
 
 	hub.Shutdown()
+	dmHub.Shutdown()
 	if err := hub.ShutdownRedis(); err != nil {
 		log.Printf("Error shutting down Redis: %v", err)
 	}
