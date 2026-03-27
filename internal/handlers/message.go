@@ -90,6 +90,12 @@ func (h *MessageHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var userRoom models.UserRoom
+	if err := h.db.Where("user_id = ? AND room_id = ?", userID, req.RoomID).First(&userRoom).Error; err != nil {
+		http.Error(w, "You must be a member of this room to send messages", http.StatusForbidden)
+		return
+	}
+
 	if err := validator.ValidateMessageContent(req.Content); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

@@ -1104,6 +1104,11 @@ func (h *Hub) cleanupIdleUsers() {
 		case <-h.idleCheckTicker.C:
 			h.activityMutex.Lock()
 			now := time.Now()
+			type idleNotification struct {
+				userID uuid.UUID
+				roomID uuid.UUID
+			}
+			var notifications []idleNotification
 			for userID, activity := range h.userActivities {
 				if activity.Status == "idle" {
 					continue
@@ -1112,14 +1117,7 @@ func (h *Hub) cleanupIdleUsers() {
 					oldStatus := activity.Status
 					activity.Status = "idle"
 					activity.LastActivity = now
-
-					idleMsg := &Message{
-						Type:      "user-idle",
-						RoomID:    activity.RoomID,
-						UserID:    userID,
-						Timestamp: now,
-					}
-					h.broadcastToRoom(activity.RoomID, idleMsg, userID)
+					notifications = append(notifications, idleNotification{userID: userID, roomID: activity.RoomID})
 					wsLogger.Info("User transitioned to idle",
 						"user_id", userID,
 						"old_status", oldStatus,
@@ -1127,6 +1125,16 @@ func (h *Hub) cleanupIdleUsers() {
 				}
 			}
 			h.activityMutex.Unlock()
+
+			for _, n := range notifications {
+				idleMsg := &Message{
+					Type:      "user-idle",
+					RoomID:    n.roomID,
+					UserID:    n.userID,
+					Timestamp: time.Now(),
+				}
+				h.broadcastToRoom(n.roomID, idleMsg, n.userID)
+			}
 		}
 	}
 }
@@ -1410,7 +1418,12 @@ func (h *Hub) updateRoomStat(roomID uuid.UUID) {
 
 	r.mutex.RLock()
 	clientCount := len(r.clients)
+	clientUserIDs := make([]uuid.UUID, 0, clientCount)
+	for client := range r.clients {
+		clientUserIDs = append(clientUserIDs, client.userID)
+	}
 	r.mutex.RUnlock()
+	h.mutex.RUnlock()
 
 	typingUsers := h.GetTypingUsers(roomID)
 
@@ -1425,12 +1438,11 @@ func (h *Hub) updateRoomStat(roomID uuid.UUID) {
 	stats.TypingUsers = len(typingUsers)
 	stats.LastActivity = time.Now()
 
-	var activeUsers, idleUsers, mutedUsers, deafenedUsers, speakingUsers, screenSharing int
+	var activeUsers, idleUsers int
 
 	h.activityMutex.RLock()
-	r.mutex.RLock()
-	for client := range r.clients {
-		activity, actExists := h.userActivities[client.userID]
+	for _, userID := range clientUserIDs {
+		activity, actExists := h.userActivities[userID]
 		if actExists && activity.Status == "active" {
 			activeUsers++
 		} else if actExists && activity.Status == "idle" {
@@ -1439,18 +1451,12 @@ func (h *Hub) updateRoomStat(roomID uuid.UUID) {
 			activeUsers++
 		}
 	}
-	r.mutex.RUnlock()
 	h.activityMutex.RUnlock()
 
 	stats.ActiveUsers = activeUsers
 	stats.IdleUsers = idleUsers
-	stats.MutedUsers = mutedUsers
-	stats.DeafenedUsers = deafenedUsers
-	stats.SpeakingUsers = speakingUsers
-	stats.ScreenSharing = screenSharing
 
 	h.roomStatsMutex.Unlock()
-	h.mutex.RUnlock()
 }
 
 func (h *Hub) GetRoomStats(roomID uuid.UUID) *RoomStats {

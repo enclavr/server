@@ -87,6 +87,14 @@ func (h *ReportHandler) CreateReport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ReportHandler) GetReports(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r)
+
+	var user models.User
+	if err := h.db.First(&user, "id = ?", userID).Error; err != nil || !user.IsAdmin {
+		http.Error(w, "Admin access required", http.StatusForbidden)
+		return
+	}
+
 	status := r.URL.Query().Get("status")
 
 	query := h.db.Model(&models.Report{})
@@ -139,6 +147,14 @@ func (h *ReportHandler) GetReports(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ReportHandler) GetReport(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r)
+
+	var user models.User
+	if err := h.db.First(&user, "id = ?", userID).Error; err != nil || !user.IsAdmin {
+		http.Error(w, "Admin access required", http.StatusForbidden)
+		return
+	}
+
 	reportID := r.URL.Query().Get("id")
 	if reportID == "" {
 		http.Error(w, "report_id is required", http.StatusBadRequest)
@@ -182,6 +198,12 @@ func (h *ReportHandler) ReviewReport(w http.ResponseWriter, r *http.Request) {
 
 	userID := middleware.GetUserID(r)
 
+	var user models.User
+	if err := h.db.First(&user, "id = ?", userID).Error; err != nil || !user.IsAdmin {
+		http.Error(w, "Admin access required", http.StatusForbidden)
+		return
+	}
+
 	var report models.Report
 	if err := h.db.First(&report, reportUUID).Error; err != nil {
 		http.Error(w, "Report not found", http.StatusNotFound)
@@ -202,6 +224,14 @@ func (h *ReportHandler) ReviewReport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ReportHandler) DeleteReport(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r)
+
+	var user models.User
+	if err := h.db.First(&user, "id = ?", userID).Error; err != nil || !user.IsAdmin {
+		http.Error(w, "Admin access required", http.StatusForbidden)
+		return
+	}
+
 	reportID := r.URL.Query().Get("id")
 	if reportID == "" {
 		http.Error(w, "report_id is required", http.StatusBadRequest)

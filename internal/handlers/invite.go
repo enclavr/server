@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -11,6 +10,7 @@ import (
 	"github.com/enclavr/server/internal/models"
 	"github.com/enclavr/server/pkg/middleware"
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type InviteHandler struct {
@@ -178,7 +178,11 @@ func (h *InviteHandler) UseInvite(w http.ResponseWriter, r *http.Request) {
 		var pwReq struct {
 			Password string `json:"password"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&pwReq); err == nil && subtle.ConstantTimeCompare([]byte(room.Password), []byte(pwReq.Password)) != 1 {
+		if err := json.NewDecoder(r.Body).Decode(&pwReq); err != nil || pwReq.Password == "" {
+			http.Error(w, "Password required for private room", http.StatusForbidden)
+			return
+		}
+		if err := bcrypt.CompareHashAndPassword([]byte(room.Password), []byte(pwReq.Password)); err != nil {
 			http.Error(w, "Invalid password", http.StatusForbidden)
 			return
 		}

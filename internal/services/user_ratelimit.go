@@ -49,12 +49,18 @@ func (r *UserRateLimiter) Allow(ctx context.Context, userID string) (bool, error
 	dayKey := fmt.Sprintf("ratelimit:user:%s:day", userID)
 	blockKey := fmt.Sprintf("ratelimit:user:%s:blocked", userID)
 
-	blocked, _ := r.cache.Exists(ctx, blockKey)
+	blocked, err := r.cache.Exists(ctx, blockKey)
+	if err != nil {
+		return false, fmt.Errorf("rate limiter unavailable: %w", err)
+	}
 	if blocked {
 		return false, fmt.Errorf("user is temporarily blocked")
 	}
 
-	minuteCount, _ := r.cache.Incr(ctx, minuteKey)
+	minuteCount, err := r.cache.Incr(ctx, minuteKey)
+	if err != nil {
+		return false, fmt.Errorf("rate limiter unavailable: %w", err)
+	}
 	if minuteCount == 1 {
 		if err := r.cache.Expire(ctx, minuteKey, time.Minute); err != nil {
 			return false, err
@@ -65,7 +71,10 @@ func (r *UserRateLimiter) Allow(ctx context.Context, userID string) (bool, error
 		return false, fmt.Errorf("minute rate limit exceeded")
 	}
 
-	hourCount, _ := r.cache.Incr(ctx, hourKey)
+	hourCount, err := r.cache.Incr(ctx, hourKey)
+	if err != nil {
+		return false, fmt.Errorf("rate limiter unavailable: %w", err)
+	}
 	if hourCount == 1 {
 		if err := r.cache.Expire(ctx, hourKey, time.Hour); err != nil {
 			return false, err
@@ -76,7 +85,10 @@ func (r *UserRateLimiter) Allow(ctx context.Context, userID string) (bool, error
 		return false, fmt.Errorf("hourly rate limit exceeded")
 	}
 
-	dayCount, _ := r.cache.Incr(ctx, dayKey)
+	dayCount, err := r.cache.Incr(ctx, dayKey)
+	if err != nil {
+		return false, fmt.Errorf("rate limiter unavailable: %w", err)
+	}
 	if dayCount == 1 {
 		if err := r.cache.Expire(ctx, dayKey, 24*time.Hour); err != nil {
 			return false, err

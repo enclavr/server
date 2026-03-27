@@ -418,8 +418,9 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	var existingToken models.RefreshToken
 	if err := h.db.Where("user_id = ? AND token = ?", user.ID, req.RefreshToken).First(&existingToken).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			// Token reuse detected - only revoke tokens from the same family
-			h.db.Where("user_id = ? AND token = ?", user.ID, req.RefreshToken).Delete(&models.RefreshToken{})
+			// Token reuse detected - revoke all tokens for this user since
+			// we cannot determine the token family of the reused token
+			h.db.Where("user_id = ?", user.ID).Delete(&models.RefreshToken{})
 			http.Error(w, "Token reuse detected, sessions revoked", http.StatusUnauthorized)
 			return
 		}

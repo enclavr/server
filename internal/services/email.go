@@ -136,6 +136,10 @@ func (es *EmailService) Connect() error {
 	es.mu.Lock()
 	defer es.mu.Unlock()
 
+	return es.connectLocked()
+}
+
+func (es *EmailService) connectLocked() error {
 	var err error
 	es.conn, err = net.DialTimeout("tcp",
 		fmt.Sprintf("%s:%d", es.config.SMTPHost, es.config.SMTPPort),
@@ -210,7 +214,7 @@ func (es *EmailService) sendSMTP(to EmailRecipient, subject, htmlBody, textBody 
 	defer es.mu.Unlock()
 
 	if es.client == nil {
-		if err := es.Connect(); err != nil {
+		if err := es.connectLocked(); err != nil {
 			return err
 		}
 	}

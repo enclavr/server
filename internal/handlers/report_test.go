@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func setupReportHandlerTest(t *testing.T) (*ReportHandler, *database.Database, uuid.UUID, uuid.UUID, uuid.UUID) {
+func setupReportHandlerTest(t *testing.T) (*ReportHandler, *database.Database, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) {
 	db := openTestDB(t)
 
 	err := db.AutoMigrate(
@@ -30,20 +30,23 @@ func setupReportHandlerTest(t *testing.T) (*ReportHandler, *database.Database, u
 	reporterID := uuid.New()
 	reportedID := uuid.New()
 	roomID := uuid.New()
+	adminID := uuid.New()
 
 	reporter := models.User{ID: reporterID, Username: "reporter", Email: "reporter@test.com"}
 	reported := models.User{ID: reportedID, Username: "reported", Email: "reported@test.com"}
+	admin := models.User{ID: adminID, Username: "admin", Email: "admin@test.com", IsAdmin: true}
 	room := models.Room{ID: roomID, Name: "Test Room"}
 
 	db.Create(&reporter)
 	db.Create(&reported)
+	db.Create(&admin)
 	db.Create(&room)
 
-	return handler, testDB, reporterID, reportedID, roomID
+	return handler, testDB, reporterID, reportedID, roomID, adminID
 }
 
 func TestReportHandler_CreateReport(t *testing.T) {
-	handler, _, reporterID, reportedID, roomID := setupReportHandlerTest(t)
+	handler, _, reporterID, reportedID, roomID, _ := setupReportHandlerTest(t)
 
 	tests := []struct {
 		name           string
@@ -118,7 +121,7 @@ func TestReportHandler_CreateReport(t *testing.T) {
 }
 
 func TestReportHandler_CreateReport_CannotReportSelf(t *testing.T) {
-	handler, _, reporterID, _, roomID := setupReportHandlerTest(t)
+	handler, _, reporterID, _, roomID, _ := setupReportHandlerTest(t)
 
 	body, _ := json.Marshal(CreateReportRequest{
 		ReportedID:  reporterID,
@@ -139,7 +142,7 @@ func TestReportHandler_CreateReport_CannotReportSelf(t *testing.T) {
 }
 
 func TestReportHandler_GetReports(t *testing.T) {
-	handler, db, reporterID, reportedID, roomID := setupReportHandlerTest(t)
+	handler, db, reporterID, reportedID, roomID, adminID := setupReportHandlerTest(t)
 
 	report := models.Report{
 		ID:          uuid.New(),
@@ -153,6 +156,7 @@ func TestReportHandler_GetReports(t *testing.T) {
 	db.Create(&report)
 
 	req := httptest.NewRequest(http.MethodGet, "/reports", nil)
+	req = req.WithContext(addUserIDToContext(req.Context(), adminID))
 	w := httptest.NewRecorder()
 
 	handler.GetReports(w, req)
@@ -163,7 +167,7 @@ func TestReportHandler_GetReports(t *testing.T) {
 }
 
 func TestReportHandler_GetReports_WithStatusFilter(t *testing.T) {
-	handler, db, reporterID, reportedID, roomID := setupReportHandlerTest(t)
+	handler, db, reporterID, reportedID, roomID, adminID := setupReportHandlerTest(t)
 
 	report := models.Report{
 		ID:          uuid.New(),
@@ -177,6 +181,7 @@ func TestReportHandler_GetReports_WithStatusFilter(t *testing.T) {
 	db.Create(&report)
 
 	req := httptest.NewRequest(http.MethodGet, "/reports?status=resolved", nil)
+	req = req.WithContext(addUserIDToContext(req.Context(), adminID))
 	w := httptest.NewRecorder()
 
 	handler.GetReports(w, req)
@@ -187,7 +192,7 @@ func TestReportHandler_GetReports_WithStatusFilter(t *testing.T) {
 }
 
 func TestReportHandler_GetReport(t *testing.T) {
-	handler, db, reporterID, reportedID, roomID := setupReportHandlerTest(t)
+	handler, db, reporterID, reportedID, roomID, adminID := setupReportHandlerTest(t)
 
 	report := models.Report{
 		ID:          uuid.New(),
@@ -201,6 +206,7 @@ func TestReportHandler_GetReport(t *testing.T) {
 	db.Create(&report)
 
 	req := httptest.NewRequest(http.MethodGet, "/report?id="+report.ID.String(), nil)
+	req = req.WithContext(addUserIDToContext(req.Context(), adminID))
 	w := httptest.NewRecorder()
 
 	handler.GetReport(w, req)
@@ -211,9 +217,10 @@ func TestReportHandler_GetReport(t *testing.T) {
 }
 
 func TestReportHandler_GetReport_MissingID(t *testing.T) {
-	handler, _, _, _, _ := setupReportHandlerTest(t)
+	handler, _, _, _, _, adminID := setupReportHandlerTest(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/report", nil)
+	req = req.WithContext(addUserIDToContext(req.Context(), adminID))
 	w := httptest.NewRecorder()
 
 	handler.GetReport(w, req)
@@ -224,9 +231,10 @@ func TestReportHandler_GetReport_MissingID(t *testing.T) {
 }
 
 func TestReportHandler_GetReport_InvalidID(t *testing.T) {
-	handler, _, _, _, _ := setupReportHandlerTest(t)
+	handler, _, _, _, _, adminID := setupReportHandlerTest(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/report?id=invalid", nil)
+	req = req.WithContext(addUserIDToContext(req.Context(), adminID))
 	w := httptest.NewRecorder()
 
 	handler.GetReport(w, req)
@@ -237,9 +245,10 @@ func TestReportHandler_GetReport_InvalidID(t *testing.T) {
 }
 
 func TestReportHandler_GetReport_NotFound(t *testing.T) {
-	handler, _, _, _, _ := setupReportHandlerTest(t)
+	handler, _, _, _, _, adminID := setupReportHandlerTest(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/report?id="+uuid.New().String(), nil)
+	req = req.WithContext(addUserIDToContext(req.Context(), adminID))
 	w := httptest.NewRecorder()
 
 	handler.GetReport(w, req)
@@ -250,7 +259,7 @@ func TestReportHandler_GetReport_NotFound(t *testing.T) {
 }
 
 func TestReportHandler_ReviewReport(t *testing.T) {
-	handler, db, reviewerID, reporterID, roomID := setupReportHandlerTest(t)
+	handler, db, reporterID, _, roomID, adminID := setupReportHandlerTest(t)
 
 	report := models.Report{
 		ID:          uuid.New(),
@@ -270,7 +279,7 @@ func TestReportHandler_ReviewReport(t *testing.T) {
 	body, _ := json.Marshal(reviewReq)
 	req := httptest.NewRequest(http.MethodPut, "/report/review?id="+report.ID.String(), bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = req.WithContext(addUserIDToContext(req.Context(), reviewerID))
+	req = req.WithContext(addUserIDToContext(req.Context(), adminID))
 	w := httptest.NewRecorder()
 
 	handler.ReviewReport(w, req)
@@ -281,7 +290,7 @@ func TestReportHandler_ReviewReport(t *testing.T) {
 }
 
 func TestReportHandler_ReviewReport_NotFound(t *testing.T) {
-	handler, _, reviewerID, _, _ := setupReportHandlerTest(t)
+	handler, _, _, _, _, adminID := setupReportHandlerTest(t)
 
 	reviewReq := ReviewReportRequest{
 		Status:      models.ReportStatusResolved,
@@ -290,7 +299,7 @@ func TestReportHandler_ReviewReport_NotFound(t *testing.T) {
 	body, _ := json.Marshal(reviewReq)
 	req := httptest.NewRequest(http.MethodPut, "/report/review?id="+uuid.New().String(), bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = req.WithContext(addUserIDToContext(req.Context(), reviewerID))
+	req = req.WithContext(addUserIDToContext(req.Context(), adminID))
 	w := httptest.NewRecorder()
 
 	handler.ReviewReport(w, req)
@@ -301,7 +310,7 @@ func TestReportHandler_ReviewReport_NotFound(t *testing.T) {
 }
 
 func TestReportHandler_DeleteReport(t *testing.T) {
-	handler, db, _, reporterID, roomID := setupReportHandlerTest(t)
+	handler, db, _, reporterID, roomID, adminID := setupReportHandlerTest(t)
 
 	report := models.Report{
 		ID:          uuid.New(),
@@ -315,6 +324,7 @@ func TestReportHandler_DeleteReport(t *testing.T) {
 	db.Create(&report)
 
 	req := httptest.NewRequest(http.MethodDelete, "/report/delete?id="+report.ID.String(), nil)
+	req = req.WithContext(addUserIDToContext(req.Context(), adminID))
 	w := httptest.NewRecorder()
 
 	handler.DeleteReport(w, req)
@@ -325,9 +335,10 @@ func TestReportHandler_DeleteReport(t *testing.T) {
 }
 
 func TestReportHandler_DeleteReport_NotFound(t *testing.T) {
-	handler, _, _, _, _ := setupReportHandlerTest(t)
+	handler, _, _, _, _, adminID := setupReportHandlerTest(t)
 
 	req := httptest.NewRequest(http.MethodDelete, "/report/delete?id="+uuid.New().String(), nil)
+	req = req.WithContext(addUserIDToContext(req.Context(), adminID))
 	w := httptest.NewRecorder()
 
 	handler.DeleteReport(w, req)
@@ -338,7 +349,7 @@ func TestReportHandler_DeleteReport_NotFound(t *testing.T) {
 }
 
 func TestReportHandler_GetMyReports(t *testing.T) {
-	handler, db, reporterID, reportedID, roomID := setupReportHandlerTest(t)
+	handler, db, reporterID, reportedID, roomID, _ := setupReportHandlerTest(t)
 
 	report := models.Report{
 		ID:          uuid.New(),
