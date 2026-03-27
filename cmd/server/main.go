@@ -201,6 +201,8 @@ func main() {
 	roomTemplateHandler := handlers.NewRoomTemplateHandler(db)
 	categoryPermissionHandler := handlers.NewCategoryPermissionHandler(db)
 	dmWebSocketHandler := handlers.NewDMWebSocketHandler(db, dmHub, cfg)
+	dmReactionHandler := handlers.NewDMReactionHandler(db, dmHub)
+	dmReadReceiptHandler := handlers.NewDMReadReceiptHandler(db, dmHub)
 	_ = services.NewPushService(db, cfg)
 
 	go hub.Run()
@@ -276,6 +278,14 @@ func main() {
 	mux.HandleFunc("/api/dm/messages", middleware.RequireAuth(authService, dmHandler.GetMessages))
 	mux.HandleFunc("/api/dm/update", middleware.RequireAuth(authService, dmHandler.UpdateDM))
 	mux.HandleFunc("/api/dm/delete", middleware.RequireAuth(authService, dmHandler.DeleteDM))
+
+	mux.HandleFunc("/api/dm/reaction/add", middleware.RequireAuth(authService, dmReactionHandler.AddReaction))
+	mux.HandleFunc("/api/dm/reaction/remove", middleware.RequireAuth(authService, dmReactionHandler.RemoveReaction))
+	mux.HandleFunc("/api/dm/reactions", middleware.RequireAuth(authService, dmReactionHandler.GetReactions))
+
+	mux.HandleFunc("/api/dm/read", middleware.RequireAuth(authService, dmReadReceiptHandler.MarkRead))
+	mux.HandleFunc("/api/dm/read/status", middleware.RequireAuth(authService, dmReadReceiptHandler.GetReadStatus))
+	mux.HandleFunc("/api/dm/read/all", middleware.RequireAuth(authService, dmReadReceiptHandler.MarkAllRead))
 
 	mux.HandleFunc("/api/users/search", middleware.RequireAuth(authService, userHandler.SearchUsers))
 	mux.HandleFunc("/api/user/update", middleware.RequireAuth(authService, userHandler.UpdateUser))

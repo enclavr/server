@@ -578,3 +578,7 @@ func (h *DMHub) UnregisterClient(client *DMClient) {
 func (h *DMHub) GetActiveClients() int64 {
 	return h.activeClients.Load()
 }
+
+func (h *DMHub) Broadcast(msg *DMMessage) {
+	h.broadcast <- msg
+}
