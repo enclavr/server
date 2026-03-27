@@ -3,6 +3,8 @@ package services
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -482,7 +484,9 @@ func NewWebhookSigner(secret string) *WebhookSigner {
 }
 
 func (s *WebhookSigner) Sign(payload []byte) string {
-	return fmt.Sprintf("sha256=%x", payload)
+	mac := hmac.New(sha256.New, s.secret)
+	mac.Write(payload)
+	return fmt.Sprintf("sha256=%x", mac.Sum(nil))
 }
 
 type WebhookEvent struct {

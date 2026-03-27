@@ -9,6 +9,7 @@ import (
 	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/internal/models"
 	"github.com/enclavr/server/pkg/middleware"
+	"github.com/enclavr/server/pkg/validator"
 	"github.com/google/uuid"
 )
 
@@ -63,10 +64,17 @@ func (h *DirectMessageHandler) SendDM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var blockCount int64
+	h.db.Model(&models.Block{}).Where("blocker_id = ? AND blocked_id = ?", req.ReceiverID, userID).Count(&blockCount)
+	if blockCount > 0 {
+		http.Error(w, "You are blocked by this user", http.StatusForbidden)
+		return
+	}
+
 	dm := models.DirectMessage{
 		SenderID:   userID,
 		ReceiverID: req.ReceiverID,
-		Content:    req.Content,
+		Content:    validator.SanitizeMessageContent(req.Content),
 	}
 
 	if err := h.db.Create(&dm).Error; err != nil {
@@ -226,7 +234,7 @@ func (h *DirectMessageHandler) UpdateDM(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := h.db.Model(&dm).Updates(map[string]interface{}{
-		"content":    req.Content,
+		"content":    validator.SanitizeMessageContent(req.Content),
 		"is_edited":  true,
 		"updated_at": time.Now(),
 	}).Error; err != nil {

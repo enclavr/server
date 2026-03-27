@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -302,7 +303,7 @@ func (s *WebhookDeliveryService) deliver(delivery WebhookDelivery) WebhookDelive
 	result.StatusCode = resp.StatusCode
 
 	buf := new(bytes.Buffer)
-	if _, err := buf.ReadFrom(resp.Body); err != nil {
+	if _, err := buf.ReadFrom(io.LimitReader(resp.Body, 1<<20)); err != nil {
 		result.Error = fmt.Sprintf("failed to read response: %v", err)
 		result.Retryable = true
 		return result

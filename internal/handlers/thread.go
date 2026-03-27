@@ -10,6 +10,7 @@ import (
 	"github.com/enclavr/server/internal/models"
 	"github.com/enclavr/server/internal/websocket"
 	"github.com/enclavr/server/pkg/middleware"
+	"github.com/enclavr/server/pkg/validator"
 	"github.com/google/uuid"
 )
 
@@ -108,7 +109,7 @@ func (h *ThreadHandler) CreateThread(w http.ResponseWriter, r *http.Request) {
 	threadMsg := &models.ThreadMessage{
 		ThreadID: thread.ID,
 		UserID:   userID,
-		Content:  req.Content,
+		Content:  validator.SanitizeMessageContent(req.Content),
 	}
 
 	if err := h.db.Create(threadMsg).Error; err != nil {
@@ -359,7 +360,7 @@ func (h *ThreadHandler) AddThreadMessage(w http.ResponseWriter, r *http.Request)
 	threadMsg := &models.ThreadMessage{
 		ThreadID: threadID,
 		UserID:   userID,
-		Content:  req.Content,
+		Content:  validator.SanitizeMessageContent(req.Content),
 	}
 
 	if err := h.db.Create(threadMsg).Error; err != nil {
@@ -440,7 +441,7 @@ func (h *ThreadHandler) UpdateThreadMessage(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	threadMsg.Content = req.Content
+	threadMsg.Content = validator.SanitizeMessageContent(req.Content)
 	threadMsg.IsEdited = true
 	threadMsg.UpdatedAt = time.Now()
 

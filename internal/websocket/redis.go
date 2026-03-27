@@ -23,14 +23,16 @@ type PubSubMessage struct {
 }
 
 type PubSubService struct {
-	client    *redis.Client
-	pubsub    *redis.PubSub
-	mu        sync.RWMutex
-	handlers  map[string]MessageHandler
-	serverID  string
-	connected bool
-	ctx       context.Context
-	cancel    context.CancelFunc
+	client     *redis.Client
+	pubsub     *redis.PubSub
+	mu         sync.RWMutex
+	handlers   map[string]MessageHandler
+	serverID   string
+	connected  bool
+	ctx        context.Context
+	cancel     context.CancelFunc
+	channels   map[string]bool
+	channelsMu sync.RWMutex
 }
 
 type MessageHandler func(msg *PubSubMessage)
@@ -50,6 +52,7 @@ func NewPubSubService(host, password string, db int) *PubSubService {
 		serverID: uuid.New().String(),
 		ctx:      ctx,
 		cancel:   cancel,
+		channels: make(map[string]bool),
 	}
 }
 
@@ -117,6 +120,20 @@ func (p *PubSubService) reconnect() error {
 	p.client = newClient
 	p.connected = true
 
+	// Re-subscribe to all previously subscribed channels
+	p.channelsMu.RLock()
+	channels := make([]string, 0, len(p.channels))
+	for ch := range p.channels {
+		channels = append(channels, ch)
+	}
+	p.channelsMu.RUnlock()
+
+	for _, ch := range channels {
+		if err := p.subscribeLocked(ch); err != nil {
+			log.Printf("[Redis] Failed to re-subscribe to channel %s: %v", ch, err)
+		}
+	}
+
 	log.Printf("[Redis] Reconnection successful")
 	return nil
 }
@@ -152,12 +169,21 @@ func (p *PubSubService) GetServerID() string {
 }
 
 func (p *PubSubService) Subscribe(channel string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.subscribeLocked(channel)
+}
+
+func (p *PubSubService) subscribeLocked(channel string) error {
 	pubsub := p.client.Subscribe(p.ctx, channel)
 	ch := pubsub.Channel()
 
-	p.mu.Lock()
 	p.pubsub = pubsub
-	p.mu.Unlock()
+
+	p.channelsMu.Lock()
+	p.channels[channel] = true
+	p.channelsMu.Unlock()
 
 	go func() {
 		for {

@@ -165,7 +165,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	if h.emailService != nil && h.emailService.IsEnabled() {
 		token, err := h.authService.GenerateEmailVerificationToken(user.ID)
 		if err == nil {
-			verifyURL := h.cfg.Server.AllowedOrigins[0] + "/verify-email?token=" + token
+			verifyURL := h.cfg.Server.GetBaseURL() + "/verify-email?token=" + token
 			_ = h.emailService.SendEmailVerificationEmail(r.Context(), services.EmailRecipient{
 				To:   user.Email,
 				Name: user.DisplayName,
@@ -347,7 +347,7 @@ func (h *AuthHandler) OAuthBegin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	redirectURI := h.cfg.Server.AllowedOrigins[0] + "/api/v1/auth/oauth/callback"
+	redirectURI := h.cfg.Server.GetBaseURL() + "/api/v1/auth/oauth/callback"
 	authURL, err := h.oauthService.GetAuthURL(provider, state, redirectURI)
 	if err != nil {
 		http.Error(w, "Failed to get auth URL", http.StatusInternalServerError)
@@ -374,7 +374,7 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	provider := services.OAuthProvider(req.Provider)
-	redirectURI := h.cfg.Server.AllowedOrigins[0] + "/api/v1/auth/oauth/callback"
+	redirectURI := h.cfg.Server.GetBaseURL() + "/api/v1/auth/oauth/callback"
 	token, err := h.oauthService.ExchangeCode(r.Context(), provider, req.Code, redirectURI)
 	if err != nil {
 		http.Error(w, "Failed to exchange code: "+err.Error(), http.StatusBadRequest)
@@ -418,8 +418,9 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	var existingToken models.RefreshToken
 	if err := h.db.Where("user_id = ? AND token = ?", user.ID, req.RefreshToken).First(&existingToken).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			h.db.Where("user_id = ?", user.ID).Delete(&models.Session{})
-			http.Error(w, "Token reuse detected, all sessions revoked", http.StatusUnauthorized)
+			// Token reuse detected - only revoke tokens from the same family
+			h.db.Where("user_id = ? AND token = ?", user.ID, req.RefreshToken).Delete(&models.RefreshToken{})
+			http.Error(w, "Token reuse detected, sessions revoked", http.StatusUnauthorized)
 			return
 		}
 		http.Error(w, "Internal error", http.StatusInternalServerError)
@@ -470,7 +471,10 @@ func (h *AuthHandler) sendAuthResponseWithRotation(w http.ResponseWriter, user *
 		IPAddress: r.RemoteAddr,
 		UserAgent: r.UserAgent(),
 	}
-	h.db.Create(&session)
+	if err := h.db.Create(&session).Error; err != nil {
+		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		return
+	}
 
 	dbRefreshToken := models.RefreshToken{
 		ID:          uuid.New(),
@@ -480,7 +484,10 @@ func (h *AuthHandler) sendAuthResponseWithRotation(w http.ResponseWriter, user *
 		ExpiresAt:   time.Now().Add(h.cfg.Auth.RefreshExpiration),
 		CreatedAt:   time.Now(),
 	}
-	h.db.Create(&dbRefreshToken)
+	if err := h.db.Create(&dbRefreshToken).Error; err != nil {
+		http.Error(w, "Failed to create refresh token", http.StatusInternalServerError)
+		return
+	}
 
 	if existingSessionCount == 0 && h.emailService != nil && h.emailService.IsEnabled() {
 		go func() {
@@ -546,7 +553,10 @@ func (h *AuthHandler) sendAuthResponseWithPasswordExpiry(w http.ResponseWriter, 
 		IPAddress: r.RemoteAddr,
 		UserAgent: r.UserAgent(),
 	}
-	h.db.Create(&session)
+	if err := h.db.Create(&session).Error; err != nil {
+		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		return
+	}
 
 	dbRefreshToken := models.RefreshToken{
 		ID:          uuid.New(),
@@ -556,7 +566,10 @@ func (h *AuthHandler) sendAuthResponseWithPasswordExpiry(w http.ResponseWriter, 
 		ExpiresAt:   time.Now().Add(h.cfg.Auth.RefreshExpiration),
 		CreatedAt:   time.Now(),
 	}
-	h.db.Create(&dbRefreshToken)
+	if err := h.db.Create(&dbRefreshToken).Error; err != nil {
+		http.Error(w, "Failed to create refresh token", http.StatusInternalServerError)
+		return
+	}
 
 	response := AuthResponse{
 		AccessToken:  accessToken,
@@ -722,12 +735,15 @@ func (h *AuthHandler) ConfirmTwoFactor(w http.ResponseWriter, r *http.Request) {
 		"two_factor_secret":  secretToStore,
 	})
 
-	h.db.Create(&models.TwoFactorRecovery{
+	if err := h.db.Create(&models.TwoFactorRecovery{
 		ID:        uuid.New(),
 		UserID:    user.ID,
 		Codes:     hashedCodes,
 		CreatedAt: time.Now(),
-	})
+	}).Error; err != nil {
+		http.Error(w, "Failed to store recovery codes", http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -818,7 +834,7 @@ func (h *AuthHandler) RequestPasswordReset(w http.ResponseWriter, r *http.Reques
 	h.db.Create(&resetToken)
 
 	if h.emailService != nil && h.emailService.IsEnabled() {
-		resetURL := h.cfg.Server.AllowedOrigins[0] + "/reset-password?token=" + token
+		resetURL := h.cfg.Server.GetBaseURL() + "/reset-password?token=" + token
 		_ = h.emailService.SendPasswordResetEmail(r.Context(), services.EmailRecipient{
 			To:   user.Email,
 			Name: user.DisplayName,
@@ -892,12 +908,22 @@ func (h *AuthHandler) CompletePasswordReset(w http.ResponseWriter, r *http.Reque
 			UserID:       user.ID,
 			PasswordHash: oldPasswordHash,
 		}
-		h.db.Create(&historyEntry)
+		if err := h.db.Create(&historyEntry).Error; err != nil {
+			log.Printf("Error saving password history: %v", err)
+		}
 	}
 
-	h.db.Model(&user).Update("password_hash", hashedPassword)
-	h.db.Model(&user).Update("password_changed_at", time.Now())
-	h.db.Model(&resetToken).Update("used", true)
+	if err := h.db.Model(&user).Update("password_hash", hashedPassword).Error; err != nil {
+		http.Error(w, "Failed to update password", http.StatusInternalServerError)
+		return
+	}
+	if err := h.db.Model(&user).Update("password_changed_at", time.Now()).Error; err != nil {
+		http.Error(w, "Failed to update password timestamp", http.StatusInternalServerError)
+		return
+	}
+	if err := h.db.Model(&resetToken).Update("used", true).Error; err != nil {
+		log.Printf("Error marking reset token as used: %v", err)
+	}
 	h.db.Where("user_id = ?", user.ID).Delete(&models.TwoFactorRecovery{})
 
 	if h.emailService != nil && h.emailService.IsEnabled() {
@@ -938,7 +964,7 @@ func (h *AuthHandler) RequestEmailVerification(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	verifyURL := h.cfg.Server.AllowedOrigins[0] + "/verify-email?token=" + token
+	verifyURL := h.cfg.Server.GetBaseURL() + "/verify-email?token=" + token
 
 	if h.emailService != nil && h.emailService.IsEnabled() {
 		_ = h.emailService.SendEmailVerificationEmail(r.Context(), services.EmailRecipient{
@@ -978,7 +1004,10 @@ func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user.EmailVerified = true
-	h.db.Save(&user)
+	if err := h.db.Save(&user).Error; err != nil {
+		http.Error(w, "Failed to verify email", http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{

@@ -65,7 +65,7 @@ func (h *DMWebSocketHandler) HandleDMWebSocket(w http.ResponseWriter, r *http.Re
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
 			if origin == "" {
-				return true
+				return false
 			}
 
 			allowedOrigins := h.config.Server.AllowedOrigins

@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS user_activity_logs (
     metadata JSONB,
     ip_address VARCHAR(45),
     user_agent VARCHAR(500),
-    session_id UUID REFERENCES user_sessions(id) ON DELETE SET NULL,
+    session_id UUID REFERENCES sessions(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 

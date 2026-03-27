@@ -60,6 +60,10 @@ func (h *RoomHandler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 	if req.MaxUsers == 0 {
 		req.MaxUsers = 50
 	}
+	if req.MaxUsers < 0 {
+		http.Error(w, "Max users must be a positive number", http.StatusBadRequest)
+		return
+	}
 
 	room := models.Room{
 		Name:        req.Name,
@@ -182,7 +186,10 @@ func (h *RoomHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 		RoomID: req.RoomID,
 		Role:   "member",
 	}
-	h.db.Create(&userRoom)
+	if err := h.db.Create(&userRoom).Error; err != nil {
+		http.Error(w, "Failed to join room", http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{"status": "joined"}); err != nil {

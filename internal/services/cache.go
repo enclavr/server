@@ -20,6 +20,7 @@ type LocalCache struct {
 	mu      sync.RWMutex
 	items   map[string]cacheItem
 	expires map[string]time.Time
+	stopCh  chan struct{}
 }
 
 type cacheItem struct {
@@ -30,6 +31,7 @@ func NewLocalCache() *LocalCache {
 	lc := &LocalCache{
 		items:   make(map[string]cacheItem),
 		expires: make(map[string]time.Time),
+		stopCh:  make(chan struct{}),
 	}
 	go lc.cleanup()
 	return lc
@@ -39,9 +41,18 @@ func (lc *LocalCache) cleanup() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		lc.cleanupOnce()
+	for {
+		select {
+		case <-lc.stopCh:
+			return
+		case <-ticker.C:
+			lc.cleanupOnce()
+		}
 	}
+}
+
+func (lc *LocalCache) Stop() {
+	close(lc.stopCh)
 }
 
 func (lc *LocalCache) cleanupOnce() {
@@ -137,6 +148,7 @@ func (cs *CacheService) Ping(ctx context.Context) error {
 
 func (cs *CacheService) Close() error {
 	if cs.local != nil {
+		cs.local.Stop()
 		cs.local.Clear()
 	}
 	return cs.client.Close()

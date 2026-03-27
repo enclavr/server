@@ -86,7 +86,10 @@ func (h *BanHandler) CreateBan(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt: req.ExpiresAt,
 	}
 
-	if err := h.db.Create(&ban).Error; err != nil {
+	tx := h.db.Begin()
+
+	if err := tx.Create(&ban).Error; err != nil {
+		tx.Rollback()
 		http.Error(w, "Failed to create ban", http.StatusInternalServerError)
 		return
 	}
@@ -98,10 +101,20 @@ func (h *BanHandler) CreateBan(w http.ResponseWriter, r *http.Request) {
 		TargetID:   req.UserID,
 		Details:    "Banned from room: " + room.Name,
 	}
-	h.db.Create(&auditLog)
+	if err := tx.Create(&auditLog).Error; err != nil {
+		tx.Rollback()
+		http.Error(w, "Failed to create audit log", http.StatusInternalServerError)
+		return
+	}
 
-	if err := h.db.Where("user_id = ? AND room_id = ?", req.UserID, req.RoomID).Delete(&models.UserRoom{}).Error; err != nil {
+	if err := tx.Where("user_id = ? AND room_id = ?", req.UserID, req.RoomID).Delete(&models.UserRoom{}).Error; err != nil {
+		tx.Rollback()
 		http.Error(w, "Failed to remove user from room", http.StatusInternalServerError)
+		return
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		http.Error(w, "Failed to commit ban", http.StatusInternalServerError)
 		return
 	}
 
@@ -340,14 +353,7 @@ func (h *BanHandler) CheckUserBan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var ban models.Ban
-	if err := h.db.Where("user_id = ? AND room_id = ? AND deleted_at IS NULL", userUUID, roomUUID).First(&ban).Error; err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"banned": false})
-		return
-	}
-
-	if ban.ExpiresAt != nil && time.Now().After(*ban.ExpiresAt) {
-		h.db.Delete(&ban)
+	if err := h.db.Where("user_id = ? AND room_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)", userUUID, roomUUID, time.Now()).First(&ban).Error; err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"banned": false})
 		return

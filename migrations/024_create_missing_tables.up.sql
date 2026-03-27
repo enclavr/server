@@ -1,7 +1,7 @@
 -- +migrate Up
 -- Create api_keys table
 CREATE TABLE IF NOT EXISTS api_keys (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(100) NOT NULL,
     key_hash VARCHAR(64) NOT NULL UNIQUE,
     key_prefix VARCHAR(8) NOT NULL,
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
 
 -- Create roles table
 CREATE TABLE IF NOT EXISTS roles (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(50) NOT NULL,
     display_name VARCHAR(100) NOT NULL,
     description VARCHAR(255),
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS roles (
 
 -- Create role_permissions table
 CREATE TABLE IF NOT EXISTS role_permissions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     role_id UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
     permission VARCHAR(50) NOT NULL,
     resource VARCHAR(50) NOT NULL,
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS role_permissions (
 
 -- Create user_roles table
 CREATE TABLE IF NOT EXISTS user_roles (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     role_id UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
     room_id UUID REFERENCES rooms(id) ON DELETE CASCADE,
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS user_roles (
 
 -- Create user_notifications table
 CREATE TABLE IF NOT EXISTS user_notifications (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     type VARCHAR(50) NOT NULL,
     title VARCHAR(200) NOT NULL,
@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS user_notifications (
 
 -- Create category_permissions table
 CREATE TABLE IF NOT EXISTS category_permissions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     category_id UUID NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
     role_id UUID REFERENCES roles(id) ON DELETE CASCADE,
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS category_permissions (
 
 -- Create attachments table (for message attachments)
 CREATE TABLE IF NOT EXISTS attachments (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     message_id UUID REFERENCES messages(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     room_id UUID NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,

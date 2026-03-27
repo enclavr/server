@@ -49,6 +49,17 @@ func (h *CategoryHandler) CreateCategory(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	var user models.User
+	if err := h.db.First(&user, "id = ?", userID).Error; err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	if !user.IsAdmin {
+		http.Error(w, "Admin access required", http.StatusForbidden)
+		return
+	}
+
 	var req CreateCategoryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -116,6 +127,23 @@ func (h *CategoryHandler) GetCategories(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *CategoryHandler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var user models.User
+	if err := h.db.First(&user, "id = ?", userID).Error; err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	if !user.IsAdmin {
+		http.Error(w, "Admin access required", http.StatusForbidden)
+		return
+	}
+
 	var req struct {
 		ID          uuid.UUID `json:"id"`
 		Name        string    `json:"name"`
@@ -160,6 +188,23 @@ func (h *CategoryHandler) UpdateCategory(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *CategoryHandler) DeleteCategory(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var user models.User
+	if err := h.db.First(&user, "id = ?", userID).Error; err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	if !user.IsAdmin {
+		http.Error(w, "Admin access required", http.StatusForbidden)
+		return
+	}
+
 	var req struct {
 		ID uuid.UUID `json:"id"`
 	}

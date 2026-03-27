@@ -45,6 +45,7 @@ type DMClient struct {
 	conversationID string
 	send           chan []byte
 	lastSeen       atomic.Int64
+	closed         atomic.Bool
 }
 
 type DMMessage struct {
@@ -154,8 +155,25 @@ func (h *DMHub) unregisterClient(client *DMClient) {
 	}
 
 	h.activeClients.Add(-1)
+	client.closed.Store(true)
 	close(client.send)
 	log.Printf("[DMHub] Client unregistered: user=%s", client.userID)
+}
+
+func (h *DMHub) safeSend(client *DMClient, data []byte) bool {
+	if client.closed.Load() {
+		return false
+	}
+	defer func() {
+		recover() //nolint:errcheck // Channel was closed during send
+	}()
+	select {
+	case client.send <- data:
+		return true
+	default:
+		h.unregister <- client
+		return false
+	}
 }
 
 func (h *DMHub) broadcastMessage(msg *DMMessage) {
@@ -184,11 +202,7 @@ func (h *DMHub) broadcastMessage(msg *DMMessage) {
 		if h.isBlocked(client.userID, msg.UserID) {
 			continue
 		}
-		select {
-		case client.send <- msg.encode():
-		default:
-			h.unregister <- client
-		}
+		h.safeSend(client, msg.encode())
 	}
 }
 
@@ -237,7 +251,7 @@ func (h *DMHub) handleHeartbeat(client *DMClient, msg *DMMessage) {
 		Type:      "heartbeat-ack",
 		Timestamp: time.Now(),
 	}
-	client.send <- response.encode()
+	h.safeSend(client, response.encode())
 }
 
 func (h *DMHub) handleTyping(client *DMClient, msg *DMMessage) {
@@ -394,7 +408,7 @@ func (h *DMHub) handleJoinConversation(client *DMClient, msg *DMMessage) {
 		UserID:         client.userID,
 		Timestamp:      time.Now(),
 	}
-	client.send <- response.encode()
+	h.safeSend(client, response.encode())
 
 	log.Printf("[DMHub] Client joined conversation: user=%s, conv=%s", client.userID, convID)
 }
@@ -442,11 +456,7 @@ func (h *DMHub) broadcastToConversation(convID string, msg *DMMessage, excludeUs
 	msg.Timestamp = time.Now()
 
 	for _, client := range clients {
-		select {
-		case client.send <- msg.encode():
-		default:
-			h.unregister <- client
-		}
+		h.safeSend(client, msg.encode())
 	}
 }
 

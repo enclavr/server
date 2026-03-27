@@ -39,6 +39,7 @@ func setupCategoryHandlerWithUser(t *testing.T) (*CategoryHandler, *database.Dat
 		ID:       uuid.New(),
 		Username: "testuser",
 		Email:    "test@example.com",
+		IsAdmin:  true,
 	}
 	db.Create(&user)
 

@@ -58,7 +58,7 @@ func (h *VoiceHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
 			if origin == "" {
-				return true
+				return false
 			}
 
 			allowedOrigins := h.config.Server.AllowedOrigins

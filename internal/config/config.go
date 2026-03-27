@@ -231,3 +231,11 @@ func (d *DatabaseConfig) DSN() string {
 func (d *DatabaseConfig) IsNeon() bool {
 	return d.NeonConnectionString != ""
 }
+
+// GetBaseURL returns the first allowed origin, or a default if none configured.
+func (c *ServerConfig) GetBaseURL() string {
+	if len(c.AllowedOrigins) > 0 {
+		return c.AllowedOrigins[0]
+	}
+	return "http://localhost:" + c.Port
+}

@@ -30,6 +30,15 @@ type UpdateUserRequest struct {
 	AvatarURL   string `json:"avatar_url"`
 }
 
+type UserUpdateResponse struct {
+	ID          uuid.UUID `json:"id"`
+	Username    string    `json:"username"`
+	Email       string    `json:"email"`
+	DisplayName string    `json:"display_name"`
+	AvatarURL   string    `json:"avatar_url"`
+	IsAdmin     bool      `json:"is_admin"`
+}
+
 type UserProfileResponse struct {
 	ID          uuid.UUID `json:"id"`
 	Username    string    `json:"username"`
@@ -108,8 +117,17 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sanitized := UserResponse{
+		ID:          user.ID,
+		Username:    user.Username,
+		Email:       user.Email,
+		DisplayName: user.DisplayName,
+		AvatarURL:   user.AvatarURL,
+		IsAdmin:     user.IsAdmin,
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(user); err != nil {
+	if err := json.NewEncoder(w).Encode(sanitized); err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 	}
 }

@@ -76,6 +76,8 @@ type InviteExport struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+const maxExportRecords = 10000
+
 func (h *ExportHandler) ExportServer(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
 	if !ok {
@@ -100,7 +102,7 @@ func (h *ExportHandler) ExportServer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var users []models.User
-	h.db.DB.Select("id, username, display_name, avatar_url, is_admin, created_at").Find(&users)
+	h.db.DB.Select("id, username, display_name, avatar_url, is_admin, created_at").Limit(maxExportRecords).Find(&users)
 	for _, u := range users {
 		export.Users = append(export.Users, UserExport{
 			ID:          u.ID,
@@ -113,7 +115,7 @@ func (h *ExportHandler) ExportServer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var rooms []models.Room
-	h.db.DB.Select("id, name, description, is_private, max_users, category_id, created_at").Find(&rooms)
+	h.db.DB.Select("id, name, description, is_private, max_users, category_id, created_at").Limit(maxExportRecords).Find(&rooms)
 	for _, r := range rooms {
 		export.Rooms = append(export.Rooms, RoomExport{
 			ID:          r.ID,
@@ -127,7 +129,7 @@ func (h *ExportHandler) ExportServer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var categories []models.Category
-	h.db.DB.Select("id, name, sort_order, created_at").Find(&categories)
+	h.db.DB.Select("id, name, sort_order, created_at").Limit(maxExportRecords).Find(&categories)
 	for _, c := range categories {
 		export.Categories = append(export.Categories, CategoryExport{
 			ID:        c.ID,
@@ -138,7 +140,7 @@ func (h *ExportHandler) ExportServer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var messages []models.Message
-	h.db.DB.Select("id, room_id, user_id, content, created_at, updated_at").Find(&messages)
+	h.db.DB.Select("id, room_id, user_id, content, created_at, updated_at").Limit(maxExportRecords).Find(&messages)
 	for _, m := range messages {
 		export.Messages = append(export.Messages, MessageExport{
 			ID:        m.ID,
@@ -151,7 +153,7 @@ func (h *ExportHandler) ExportServer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var invites []models.Invite
-	h.db.DB.Select("id, code, room_id, created_by, expires_at, max_uses, uses, is_revoked, created_at").Find(&invites)
+	h.db.DB.Select("id, code, room_id, created_by, expires_at, max_uses, uses, is_revoked, created_at").Limit(maxExportRecords).Find(&invites)
 	for _, i := range invites {
 		export.Invites = append(export.Invites, InviteExport{
 			ID:        i.ID,
