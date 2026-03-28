@@ -163,6 +163,13 @@ func TestBanHandler_GetBans(t *testing.T) {
 	}
 	db.Create(&room)
 
+	adminRoom := models.UserRoom{
+		UserID: adminID,
+		RoomID: room.ID,
+		Role:   "admin",
+	}
+	db.Create(&adminRoom)
+
 	user := models.User{
 		ID:       uuid.New(),
 		Username: "banneduser",
@@ -231,6 +238,13 @@ func TestBanHandler_GetBan(t *testing.T) {
 		Name: "Test Room",
 	}
 	db.Create(&room)
+
+	adminRoom := models.UserRoom{
+		UserID: adminID,
+		RoomID: room.ID,
+		Role:   "admin",
+	}
+	db.Create(&adminRoom)
 
 	user := models.User{
 		ID:       uuid.New(),

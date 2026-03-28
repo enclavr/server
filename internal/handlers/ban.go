@@ -123,6 +123,8 @@ func (h *BanHandler) CreateBan(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *BanHandler) GetBans(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r)
+
 	roomID := r.URL.Query().Get("room_id")
 	if roomID == "" {
 		http.Error(w, "room_id is required", http.StatusBadRequest)
@@ -132,6 +134,16 @@ func (h *BanHandler) GetBans(w http.ResponseWriter, r *http.Request) {
 	roomUUID, err := uuid.Parse(roomID)
 	if err != nil {
 		http.Error(w, "Invalid room_id", http.StatusBadRequest)
+		return
+	}
+
+	var requesterRoom models.UserRoom
+	if err := h.db.Where("user_id = ? AND room_id = ?", userID, roomUUID).First(&requesterRoom).Error; err != nil {
+		http.Error(w, "You are not a member of this room", http.StatusForbidden)
+		return
+	}
+	if requesterRoom.Role != "owner" && requesterRoom.Role != "admin" {
+		http.Error(w, "Only room owners and admins can view bans", http.StatusForbidden)
 		return
 	}
 
@@ -204,6 +216,8 @@ func (h *BanHandler) GetBans(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *BanHandler) GetBan(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r)
+
 	banID := r.URL.Query().Get("id")
 	if banID == "" {
 		http.Error(w, "ban_id is required", http.StatusBadRequest)
@@ -219,6 +233,16 @@ func (h *BanHandler) GetBan(w http.ResponseWriter, r *http.Request) {
 	var ban models.Ban
 	if err := h.db.First(&ban, banUUID).Error; err != nil {
 		http.Error(w, "Ban not found", http.StatusNotFound)
+		return
+	}
+
+	var requesterRoom models.UserRoom
+	if err := h.db.Where("user_id = ? AND room_id = ?", userID, ban.RoomID).First(&requesterRoom).Error; err != nil {
+		http.Error(w, "You are not a member of this room", http.StatusForbidden)
+		return
+	}
+	if requesterRoom.Role != "owner" && requesterRoom.Role != "admin" {
+		http.Error(w, "Only room owners and admins can view ban details", http.StatusForbidden)
 		return
 	}
 

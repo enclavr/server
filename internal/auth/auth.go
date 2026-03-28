@@ -1,9 +1,12 @@
 package auth
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -77,6 +80,12 @@ func (s *AuthService) HashPassword(password string) (string, error) {
 func (s *AuthService) CheckPassword(password, hash string) bool {
 	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
 	return err == nil
+}
+
+func (s *AuthService) HashToken(token string) string {
+	mac := hmac.New(sha256.New, []byte(s.cfg.JWTSecret))
+	mac.Write([]byte(token))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func (s *AuthService) ValidatePasswordStrength(password string) error {

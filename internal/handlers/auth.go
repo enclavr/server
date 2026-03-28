@@ -6,7 +6,10 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/mail"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/enclavr/server/internal/auth"
@@ -19,6 +22,62 @@ import (
 	"gorm.io/gorm"
 )
 
+const maxRequestBodySize = 1 << 20 // 1MB
+
+var usernameRegexp = regexp.MustCompile(`^[a-zA-Z0-9_-]{3,32}$`)
+
+type oauthStateEntry struct {
+	state     string
+	createdAt time.Time
+}
+
+type oauthStateStore struct {
+	mu     sync.Mutex
+	states map[string]oauthStateEntry
+	ttl    time.Duration
+}
+
+func newOAuthStateStore(ttl time.Duration) *oauthStateStore {
+	s := &oauthStateStore{
+		states: make(map[string]oauthStateEntry),
+		ttl:    ttl,
+	}
+	go s.cleanup()
+	return s
+}
+
+func (s *oauthStateStore) Store(state string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.states[state] = oauthStateEntry{state: state, createdAt: time.Now()}
+}
+
+func (s *oauthStateStore) Validate(state string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, ok := s.states[state]
+	if !ok {
+		return false
+	}
+	delete(s.states, state)
+	return time.Since(entry.createdAt) < s.ttl
+}
+
+func (s *oauthStateStore) cleanup() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		s.mu.Lock()
+		now := time.Now()
+		for k, v := range s.states {
+			if now.Sub(v.createdAt) >= s.ttl {
+				delete(s.states, k)
+			}
+		}
+		s.mu.Unlock()
+	}
+}
+
 type AuthHandler struct {
 	db                   *database.Database
 	authService          *auth.AuthService
@@ -28,6 +87,7 @@ type AuthHandler struct {
 	firstIsAdmin         bool
 	loginTracker         *auth.LoginAttemptTracker
 	passwordResetLimiter *auth.PasswordResetRateLimiter
+	oauthStates          *oauthStateStore
 }
 
 func NewAuthHandler(db *database.Database, authService *auth.AuthService, emailService *services.EmailService, oauthService *services.OAuthService, cfg *config.Config, firstIsAdmin bool, loginTracker *auth.LoginAttemptTracker) *AuthHandler {
@@ -40,6 +100,7 @@ func NewAuthHandler(db *database.Database, authService *auth.AuthService, emailS
 		firstIsAdmin:         firstIsAdmin,
 		loginTracker:         loginTracker,
 		passwordResetLimiter: auth.NewPasswordResetRateLimiter(3, 1*time.Hour),
+		oauthStates:          newOAuthStateStore(10 * time.Minute),
 	}
 }
 
@@ -117,6 +178,7 @@ type RefreshTokenRequest struct {
 
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var req RegisterRequest
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -127,8 +189,18 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !usernameRegexp.MatchString(req.Username) {
+		http.Error(w, "Username must be 3-32 characters and contain only letters, numbers, hyphens, and underscores", http.StatusBadRequest)
+		return
+	}
+
+	if _, err := mail.ParseAddress(req.Email); err != nil {
+		http.Error(w, "Invalid email address", http.StatusBadRequest)
+		return
+	}
+
 	if err := h.authService.ValidatePasswordStrength(req.Password); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "Password does not meet strength requirements", http.StatusBadRequest)
 		return
 	}
 
@@ -153,7 +225,18 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := h.db.Create(&user).Error; err != nil {
+	if err := h.db.Transaction(func(tx *gorm.DB) error {
+		if h.firstIsAdmin {
+			var userCount int64
+			if err := tx.Model(&models.User{}).Count(&userCount).Error; err != nil {
+				return err
+			}
+			if userCount == 0 {
+				user.IsAdmin = true
+			}
+		}
+		return tx.Create(&user).Error
+	}); err != nil {
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
 			http.Error(w, "Username or email already exists", http.StatusConflict)
 			return
@@ -178,6 +261,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -224,7 +308,9 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			updates["locked_until"] = lockedUntil
 		}
 
-		h.db.Model(&user).Updates(updates)
+		if err := h.db.Model(&user).Updates(updates).Error; err != nil {
+			log.Printf("Failed to update login failure count: %v", err)
+		}
 
 		if h.loginTracker != nil {
 			h.loginTracker.RecordFailure(identifier)
@@ -234,10 +320,12 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if user.FailedLoginCount > 0 || user.LockedUntil != nil {
-		h.db.Model(&user).Updates(map[string]interface{}{
+		if err := h.db.Model(&user).Updates(map[string]interface{}{
 			"failed_login_count": 0,
 			"locked_until":       nil,
-		})
+		}).Error; err != nil {
+			log.Printf("Failed to reset login failure count: %v", err)
+		}
 	}
 
 	if h.loginTracker != nil {
@@ -261,9 +349,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) LoginWith2FA(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		UserID     string `json:"user_id"`
+		Password   string `json:"password"`
 		Code       string `json:"code"`
 		IsRecovery bool   `json:"is_recovery"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -277,7 +367,12 @@ func (h *AuthHandler) LoginWith2FA(w http.ResponseWriter, r *http.Request) {
 
 	var user models.User
 	if err := h.db.First(&user, userID).Error; err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	if !h.authService.CheckPassword(req.Password, user.PasswordHash) {
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
@@ -333,6 +428,7 @@ func (h *AuthHandler) OAuthBegin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req OAuthBeginRequest
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -349,6 +445,8 @@ func (h *AuthHandler) OAuthBegin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to generate state", http.StatusInternalServerError)
 		return
 	}
+
+	h.oauthStates.Store(state)
 
 	redirectURI := h.cfg.Server.GetBaseURL() + "/api/v1/auth/oauth/callback"
 	authURL, err := h.oauthService.GetAuthURL(provider, state, redirectURI)
@@ -371,8 +469,14 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req OAuthCallbackRequest
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.State == "" || !h.oauthStates.Validate(req.State) {
+		http.Error(w, "Invalid or expired OAuth state", http.StatusBadRequest)
 		return
 	}
 
@@ -401,6 +505,7 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 
 func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	var req RefreshTokenRequest
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -419,7 +524,8 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var existingToken models.RefreshToken
-	if err := h.db.Where("user_id = ? AND token = ?", user.ID, req.RefreshToken).First(&existingToken).Error; err != nil {
+	hashedToken := h.authService.HashToken(req.RefreshToken)
+	if err := h.db.Where("user_id = ? AND token = ?", user.ID, hashedToken).First(&existingToken).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			// Token reuse detected - revoke all tokens for this user since
 			// we cannot determine the token family of the reused token
@@ -431,7 +537,7 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.db.Where("user_id = ? AND token = ?", user.ID, req.RefreshToken).Delete(&models.RefreshToken{})
+	h.db.Where("user_id = ? AND token = ?", user.ID, hashedToken).Delete(&models.RefreshToken{})
 	if existingToken.TokenFamily != "" {
 		h.db.Where("user_id = ? AND token_family = ?", user.ID, existingToken.TokenFamily).Delete(&models.RefreshToken{})
 	}
@@ -483,7 +589,7 @@ func (h *AuthHandler) sendAuthResponseWithRotation(w http.ResponseWriter, user *
 	dbRefreshToken := models.RefreshToken{
 		ID:          uuid.New(),
 		UserID:      user.ID,
-		Token:       refreshToken,
+		Token:       h.authService.HashToken(refreshToken),
 		TokenFamily: tokenFamily,
 		ExpiresAt:   time.Now().Add(h.cfg.Auth.RefreshExpiration),
 		CreatedAt:   time.Now(),
@@ -565,7 +671,7 @@ func (h *AuthHandler) sendAuthResponseWithPasswordExpiry(w http.ResponseWriter, 
 	dbRefreshToken := models.RefreshToken{
 		ID:          uuid.New(),
 		UserID:      user.ID,
-		Token:       refreshToken,
+		Token:       h.authService.HashToken(refreshToken),
 		TokenFamily: tokenFamily,
 		ExpiresAt:   time.Now().Add(h.cfg.Auth.RefreshExpiration),
 		CreatedAt:   time.Now(),
@@ -1039,8 +1145,10 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RefreshToken string `json:"refresh_token"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 	if err := json.NewDecoder(r.Body).Decode(&req); err == nil && req.RefreshToken != "" {
-		h.db.Where("user_id = ? AND token = ?", userID, req.RefreshToken).Delete(&models.RefreshToken{})
+		hashedToken := h.authService.HashToken(req.RefreshToken)
+		h.db.Where("user_id = ? AND token = ?", userID, hashedToken).Delete(&models.RefreshToken{})
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -168,8 +168,9 @@ func removeInvalidUnicode(s string) string {
 }
 
 func TruncateContent(content string, maxLen int) string {
-	if len(content) <= maxLen {
+	if utf8.RuneCountInString(content) <= maxLen {
 		return content
 	}
-	return content[:maxLen]
+	runes := []rune(content)
+	return string(runes[:maxLen])
 }

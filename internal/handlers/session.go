@@ -195,11 +195,7 @@ func (h *SessionHandler) RotateToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SessionHandler) storeRefreshToken(userID uuid.UUID, token string) {
-	hashedToken, err := h.auth.HashPassword(token)
-	if err != nil {
-		log.Printf("Failed to hash refresh token: %v", err)
-		return
-	}
+	hashedToken := h.auth.HashToken(token)
 
 	refreshToken := models.RefreshToken{
 		ID:        uuid.New(),
