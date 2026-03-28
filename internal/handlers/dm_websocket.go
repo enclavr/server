@@ -49,9 +49,9 @@ func (h *DMWebSocketHandler) HandleDMWebSocket(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	var blocked models.BlockedUser
-	if err := h.db.Where("(blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)",
-		userID, peerID, peerID, userID).First(&blocked).Error; err == nil {
+	var blockCount int64
+	if err := h.db.Model(&models.Block{}).Where("(blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)",
+		userID, peerID, peerID, userID).Count(&blockCount).Error; err == nil && blockCount > 0 {
 		http.Error(w, "Cannot connect to blocked user", http.StatusForbidden)
 		return
 	}

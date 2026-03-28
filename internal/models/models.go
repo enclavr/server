@@ -15,15 +15,16 @@ const (
 )
 
 type Message struct {
-	ID        uuid.UUID   `gorm:"type:uuid;primary_key" json:"id"`
-	RoomID    uuid.UUID   `gorm:"type:uuid;not null;index" json:"room_id"`
-	UserID    uuid.UUID   `gorm:"type:uuid;not null" json:"user_id"`
-	Type      MessageType `gorm:"type:varchar(20);default:'text'" json:"type"`
-	Content   string      `gorm:"type:text;not null" json:"content"`
-	IsEdited  bool        `gorm:"default:false" json:"is_edited"`
-	IsDeleted bool        `gorm:"default:false" json:"is_deleted"`
-	CreatedAt time.Time   `json:"created_at"`
-	UpdatedAt time.Time   `json:"updated_at"`
+	ID        uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	RoomID    uuid.UUID      `gorm:"type:uuid;not null;index" json:"room_id"`
+	UserID    uuid.UUID      `gorm:"type:uuid;not null" json:"user_id"`
+	Type      MessageType    `gorm:"type:varchar(20);default:'text'" json:"type"`
+	Content   string         `gorm:"type:text;not null" json:"content"`
+	IsEdited  bool           `gorm:"default:false" json:"is_edited"`
+	IsDeleted bool           `gorm:"default:false" json:"is_deleted"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 
 	User User `gorm:"foreignKey:UserID" json:"-"`
 	Room Room `gorm:"foreignKey:RoomID" json:"-"`
@@ -40,14 +41,15 @@ func (m *Message) BeforeCreate(tx *gorm.DB) error {
 }
 
 type DirectMessage struct {
-	ID         uuid.UUID `gorm:"type:uuid;primary_key" json:"id"`
-	SenderID   uuid.UUID `gorm:"type:uuid;not null" json:"sender_id"`
-	ReceiverID uuid.UUID `gorm:"type:uuid;not null" json:"receiver_id"`
-	Content    string    `gorm:"type:text;not null" json:"content"`
-	IsEdited   bool      `gorm:"default:false" json:"is_edited"`
-	IsDeleted  bool      `gorm:"default:false" json:"is_deleted"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID         uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	SenderID   uuid.UUID      `gorm:"type:uuid;not null" json:"sender_id"`
+	ReceiverID uuid.UUID      `gorm:"type:uuid;not null" json:"receiver_id"`
+	Content    string         `gorm:"type:text;not null" json:"content"`
+	IsEdited   bool           `gorm:"default:false" json:"is_edited"`
+	IsDeleted  bool           `gorm:"default:false" json:"is_deleted"`
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+	DeletedAt  gorm.DeletedAt `gorm:"index" json:"-"`
 
 	Sender   User `gorm:"foreignKey:SenderID" json:"-"`
 	Receiver User `gorm:"foreignKey:ReceiverID" json:"-"`
@@ -267,14 +269,15 @@ func (t *Thread) BeforeCreate(tx *gorm.DB) error {
 }
 
 type ThreadMessage struct {
-	ID        uuid.UUID `gorm:"type:uuid;primary_key" json:"id"`
-	ThreadID  uuid.UUID `gorm:"type:uuid;not null;index" json:"thread_id"`
-	UserID    uuid.UUID `gorm:"type:uuid;not null" json:"user_id"`
-	Content   string    `gorm:"type:text;not null" json:"content"`
-	IsEdited  bool      `gorm:"default:false" json:"is_edited"`
-	IsDeleted bool      `gorm:"default:false" json:"is_deleted"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	ThreadID  uuid.UUID      `gorm:"type:uuid;not null;index" json:"thread_id"`
+	UserID    uuid.UUID      `gorm:"type:uuid;not null" json:"user_id"`
+	Content   string         `gorm:"type:text;not null" json:"content"`
+	IsEdited  bool           `gorm:"default:false" json:"is_edited"`
+	IsDeleted bool           `gorm:"default:false" json:"is_deleted"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 
 	Thread Thread `gorm:"foreignKey:ThreadID" json:"-"`
 	User   User   `gorm:"foreignKey:UserID" json:"-"`

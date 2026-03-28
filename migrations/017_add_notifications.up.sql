@@ -26,12 +26,21 @@ CREATE INDEX IF NOT EXISTS idx_notifications_room_id ON notifications(room_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, is_read) WHERE is_read = FALSE;
 CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at DESC);
 
--- Add foreign key constraints
-ALTER TABLE notifications ADD CONSTRAINT fk_notifications_user
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+-- Add foreign key constraints (idempotent)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_notifications_user') THEN
+        ALTER TABLE notifications ADD CONSTRAINT fk_notifications_user
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+    END IF;
 
-ALTER TABLE notifications ADD CONSTRAINT fk_notifications_room
-    FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE SET NULL;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_notifications_room') THEN
+        ALTER TABLE notifications ADD CONSTRAINT fk_notifications_room
+            FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE SET NULL;
+    END IF;
 
-ALTER TABLE notifications ADD CONSTRAINT fk_notifications_actor
-    FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_notifications_actor') THEN
+        ALTER TABLE notifications ADD CONSTRAINT fk_notifications_actor
+            FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL;
+    END IF;
+END $$;

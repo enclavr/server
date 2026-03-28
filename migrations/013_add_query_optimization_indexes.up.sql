@@ -22,12 +22,6 @@ CREATE INDEX IF NOT EXISTS idx_files_room_created ON files(room_id, created_at D
 -- Index for file by user and created_at
 CREATE INDEX IF NOT EXISTS idx_files_user_created ON files(user_id, created_at DESC);
 
--- Index for message read receipts (user + room)
-CREATE INDEX IF NOT EXISTS idx_message_read_user_room ON message_reads(user_id, room_id);
-
--- Index for user status by user_id
-CREATE INDEX IF NOT EXISTS idx_user_status_user ON user_statuses(user_id);
-
 -- Index for scheduled messages (pending)
 CREATE INDEX IF NOT EXISTS idx_scheduled_pending ON scheduled_messages(is_sent, is_cancelled, scheduled_at ASC);
 

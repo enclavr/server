@@ -1,0 +1,2 @@
+-- +migrate Down
+-- Nothing to roll back - all tables are managed by earlier migrations (001, 006, 014).

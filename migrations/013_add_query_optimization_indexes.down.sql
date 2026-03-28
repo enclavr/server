@@ -7,8 +7,6 @@ DROP INDEX IF EXISTS idx_categories_sort_order;
 DROP INDEX IF EXISTS idx_attachments_message_created;
 DROP INDEX IF EXISTS idx_files_room_created;
 DROP INDEX IF EXISTS idx_files_user_created;
-DROP INDEX IF EXISTS idx_message_read_user_room;
-DROP INDEX IF EXISTS idx_user_status_user;
 DROP INDEX IF EXISTS idx_scheduled_pending;
 DROP INDEX IF EXISTS idx_reminders_pending;
 DROP INDEX IF EXISTS idx_threads_parent;

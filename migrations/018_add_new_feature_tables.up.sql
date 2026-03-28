@@ -27,8 +27,8 @@ CREATE TABLE IF NOT EXISTS blocked_users (
     UNIQUE(blocker_id, blocked_id)
 );
 
-CREATE INDEX idx_blocked_users_blocker ON blocked_users(blocker_id, created_at DESC) WHERE deleted_at IS NULL;
-CREATE INDEX idx_blocked_users_blocked ON blocked_users(blocked_id, created_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_blocked_users_blocker ON blocked_users(blocker_id, created_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_blocked_users_blocked ON blocked_users(blocked_id, created_at DESC) WHERE deleted_at IS NULL;
 
 -- 3. RoomBookmarks table - bookmark favorite rooms
 CREATE TABLE IF NOT EXISTS room_bookmarks (
@@ -43,8 +43,8 @@ CREATE TABLE IF NOT EXISTS room_bookmarks (
     UNIQUE(user_id, room_id)
 );
 
-CREATE INDEX idx_room_bookmarks_user ON room_bookmarks(user_id, sort_order, created_at DESC) WHERE deleted_at IS NULL;
-CREATE INDEX idx_room_bookmarks_room ON room_bookmarks(room_id, created_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_room_bookmarks_user ON room_bookmarks(user_id, sort_order, created_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_room_bookmarks_room ON room_bookmarks(room_id, created_at DESC) WHERE deleted_at IS NULL;
 
 -- 4. UserConnections table - friends/followers system
 CREATE TABLE IF NOT EXISTS user_connections (
@@ -59,6 +59,6 @@ CREATE TABLE IF NOT EXISTS user_connections (
     UNIQUE(user_id, connected_user_id)
 );
 
-CREATE INDEX idx_user_connections_user ON user_connections(user_id, status, created_at DESC) WHERE deleted_at IS NULL;
-CREATE INDEX idx_user_connections_connected ON user_connections(connected_user_id, status, created_at DESC) WHERE deleted_at IS NULL;
-CREATE INDEX idx_user_connections_status ON user_connections(status, created_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_user_connections_user ON user_connections(user_id, status, created_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_user_connections_connected ON user_connections(connected_user_id, status, created_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_user_connections_status ON user_connections(status, created_at DESC) WHERE deleted_at IS NULL;
