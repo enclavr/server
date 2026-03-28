@@ -206,6 +206,12 @@ func main() {
 	mentionHandler := handlers.NewMentionHandler(db)
 	roomTransferHandler := handlers.NewRoomTransferHandler(db)
 	announcementHandler := handlers.NewAnnouncementHandler(db)
+	webAuthnRPID := os.Getenv("WEBAUTHN_RPID")
+	if webAuthnRPID == "" {
+		webAuthnRPID = "localhost"
+	}
+	webAuthnService := services.NewWebAuthnService(db.DB, webAuthnRPID)
+	webAuthnHandler := handlers.NewWebAuthnHandler(db, webAuthnService)
 	_ = services.NewPushService(db, cfg)
 
 	go hub.Run()
@@ -254,6 +260,22 @@ func main() {
 	mux.HandleFunc("/api/auth/sessions/revoke-all", middleware.RequireAuth(authService, sessionHandler.RevokeAllSessions))
 	mux.HandleFunc("/api/auth/sessions/rotate", middleware.RequireAuth(authService, sessionHandler.RotateToken))
 	mux.HandleFunc("/api/auth/sessions/count", middleware.RequireAuth(authService, sessionHandler.GetActiveSessionsCount))
+
+	mux.HandleFunc("/api/auth/webauthn/register/begin", middleware.RequireAuth(authService, webAuthnHandler.BeginRegistration))
+	mux.HandleFunc("/api/auth/webauthn/register/finish", middleware.RequireAuth(authService, webAuthnHandler.FinishRegistration))
+	mux.HandleFunc("/api/auth/webauthn/login/begin", middleware.RequireAuth(authService, webAuthnHandler.BeginLogin))
+	mux.HandleFunc("/api/auth/webauthn/login/finish", middleware.RequireAuth(authService, webAuthnHandler.FinishLogin))
+	mux.HandleFunc("/api/auth/webauthn/credentials", middleware.RequireAuth(authService, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			webAuthnHandler.GetCredentials(w, r)
+		case http.MethodDelete:
+			webAuthnHandler.DeleteCredential(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}))
+	mux.HandleFunc("/api/auth/webauthn/status", middleware.RequireAuth(authService, webAuthnHandler.GetStatus))
 
 	mux.HandleFunc("/api/rooms", middleware.RequireAuth(authService, roomHandler.GetRooms))
 	mux.HandleFunc("/api/room/create", middleware.RequireAuth(authService, roomHandler.CreateRoom))

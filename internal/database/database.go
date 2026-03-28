@@ -107,6 +107,8 @@ func (d *Database) Migrate() error {
 		&models.AttachmentTag{},
 		&models.MessageMention{},
 		&models.Announcement{},
+		&models.WebAuthnCredential{},
+		&models.WebAuthnSession{},
 	)
 	if err != nil {
 		return err

@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/enclavr/server/internal/models"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -21,26 +22,6 @@ import (
 type WebAuthnService struct {
 	db   *gorm.DB
 	RPID string
-}
-
-type WebAuthnCredential struct {
-	ID           uuid.UUID `gorm:"type:uuid;primary_key" json:"id"`
-	UserID       uuid.UUID `gorm:"type:uuid;not null;index" json:"user_id"`
-	Name         string    `gorm:"size:100;not null" json:"name"`
-	CredentialID string    `gorm:"size:255;not null;uniqueIndex" json:"credential_id"`
-	PublicKey    string    `gorm:"type:text;not null" json:"public_key"`
-	AAGUID       string    `gorm:"size:255" json:"aaguid"`
-	SignCount    uint32    `gorm:"default:0" json:"sign_count"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-}
-
-type WebAuthnSession struct {
-	ID          uuid.UUID `gorm:"type:uuid;primary_key" json:"id"`
-	UserID      uuid.UUID `gorm:"type:uuid;not null;index" json:"user_id"`
-	Challenge   string    `gorm:"size:255;not null" json:"challenge"`
-	SessionData string    `gorm:"type:text" json:"session_data"`
-	ExpiresAt   time.Time `json:"expires_at"`
 }
 
 type CredentialCreationOptions struct {
@@ -140,7 +121,7 @@ func (s *WebAuthnService) BeginRegistration(ctx context.Context, userID uuid.UUI
 	}
 	sessionJSON, _ := json.Marshal(sessionData)
 
-	session := WebAuthnSession{
+	session := models.WebAuthnSession{
 		ID:          uuid.New(),
 		UserID:      userID,
 		Challenge:   challenge,
@@ -156,8 +137,8 @@ func (s *WebAuthnService) BeginRegistration(ctx context.Context, userID uuid.UUI
 	return optionsJSON, challenge, err
 }
 
-func (s *WebAuthnService) FinishRegistration(ctx context.Context, userID uuid.UUID, name string, credentialData map[string]interface{}) (*WebAuthnCredential, error) {
-	var session WebAuthnSession
+func (s *WebAuthnService) FinishRegistration(ctx context.Context, userID uuid.UUID, name string, credentialData map[string]interface{}) (*models.WebAuthnCredential, error) {
+	var session models.WebAuthnSession
 	if err := s.db.Where("user_id = ? AND expires_at > ?", userID, time.Now()).First(&session).Error; err != nil {
 		return nil, fmt.Errorf("session not found or expired: %w", err)
 	}
@@ -209,7 +190,7 @@ func (s *WebAuthnService) FinishRegistration(ctx context.Context, userID uuid.UU
 		return nil, fmt.Errorf("failed to parse attestation object: %w", err)
 	}
 
-	webAuthnCred := WebAuthnCredential{
+	webAuthnCred := models.WebAuthnCredential{
 		ID:           uuid.New(),
 		UserID:       userID,
 		Name:         name,
@@ -228,7 +209,7 @@ func (s *WebAuthnService) FinishRegistration(ctx context.Context, userID uuid.UU
 }
 
 func (s *WebAuthnService) BeginLogin(ctx context.Context, userID uuid.UUID) ([]byte, string, error) {
-	var credentials []WebAuthnCredential
+	var credentials []models.WebAuthnCredential
 	if err := s.db.Where("user_id = ?", userID).Find(&credentials).Error; err != nil {
 		return nil, "", fmt.Errorf("failed to get credentials: %w", err)
 	}
@@ -264,7 +245,7 @@ func (s *WebAuthnService) BeginLogin(ctx context.Context, userID uuid.UUID) ([]b
 	}
 	sessionJSON, _ := json.Marshal(sessionData)
 
-	session := WebAuthnSession{
+	session := models.WebAuthnSession{
 		ID:          uuid.New(),
 		UserID:      userID,
 		Challenge:   challenge,
@@ -280,13 +261,13 @@ func (s *WebAuthnService) BeginLogin(ctx context.Context, userID uuid.UUID) ([]b
 	return optionsJSON, challenge, err
 }
 
-func (s *WebAuthnService) FinishLogin(ctx context.Context, userID uuid.UUID, credentialID string, assertionData map[string]interface{}) (*WebAuthnCredential, error) {
-	var session WebAuthnSession
+func (s *WebAuthnService) FinishLogin(ctx context.Context, userID uuid.UUID, credentialID string, assertionData map[string]interface{}) (*models.WebAuthnCredential, error) {
+	var session models.WebAuthnSession
 	if err := s.db.Where("user_id = ? AND expires_at > ?", userID, time.Now()).First(&session).Error; err != nil {
 		return nil, fmt.Errorf("session not found or expired: %w", err)
 	}
 
-	var webAuthnCred WebAuthnCredential
+	var webAuthnCred models.WebAuthnCredential
 	if err := s.db.Where("credential_id = ? AND user_id = ?", credentialID, userID).First(&webAuthnCred).Error; err != nil {
 		return nil, fmt.Errorf("credential not found: %w", err)
 	}
@@ -380,8 +361,8 @@ func (s *WebAuthnService) FinishLogin(ctx context.Context, userID uuid.UUID, cre
 	return &webAuthnCred, nil
 }
 
-func (s *WebAuthnService) GetCredentials(userID uuid.UUID) ([]WebAuthnCredential, error) {
-	var credentials []WebAuthnCredential
+func (s *WebAuthnService) GetCredentials(userID uuid.UUID) ([]models.WebAuthnCredential, error) {
+	var credentials []models.WebAuthnCredential
 	if err := s.db.Where("user_id = ?", userID).Find(&credentials).Error; err != nil {
 		return nil, err
 	}
@@ -389,7 +370,7 @@ func (s *WebAuthnService) GetCredentials(userID uuid.UUID) ([]WebAuthnCredential
 }
 
 func (s *WebAuthnService) DeleteCredential(credentialID string) error {
-	return s.db.Where("credential_id = ?", credentialID).Delete(&WebAuthnCredential{}).Error
+	return s.db.Where("credential_id = ?", credentialID).Delete(&models.WebAuthnCredential{}).Error
 }
 
 func (s *WebAuthnService) IsEnabled() bool {
