@@ -343,7 +343,7 @@ func validateWebhookURL(rawURL string) error {
 
 	ips, err := net.LookupIP(hostname)
 	if err != nil {
-		return nil
+		return fmt.Errorf("failed to resolve hostname: %w", err)
 	}
 	for _, resolvedIP := range ips {
 		if resolvedIP.IsLoopback() || resolvedIP.IsPrivate() || resolvedIP.IsLinkLocalUnicast() || resolvedIP.IsLinkLocalMulticast() {

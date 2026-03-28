@@ -299,7 +299,10 @@ func (h *AuthHandler) LoginWith2FA(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		h.db.Model(&recovery).Update("codes", newCodes)
+		if err := h.db.Model(&recovery).Update("codes", newCodes).Error; err != nil {
+			http.Error(w, "Failed to update recovery codes", http.StatusInternalServerError)
+			return
+		}
 
 		h.sendAuthResponse(w, &user, r)
 		return
@@ -731,10 +734,13 @@ func (h *AuthHandler) ConfirmTwoFactor(w http.ResponseWriter, r *http.Request) {
 		secretToStore = encrypted
 	}
 
-	h.db.Model(&user).Updates(map[string]interface{}{
+	if err := h.db.Model(&user).Updates(map[string]interface{}{
 		"two_factor_enabled": true,
 		"two_factor_secret":  secretToStore,
-	})
+	}).Error; err != nil {
+		http.Error(w, "Failed to enable two-factor authentication", http.StatusInternalServerError)
+		return
+	}
 
 	if err := h.db.Create(&models.TwoFactorRecovery{
 		ID:        uuid.New(),
@@ -1095,28 +1101,46 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if oldPasswordHash != "" {
-		historyEntry := models.PasswordHistory{
-			ID:           uuid.New(),
-			UserID:       user.ID,
-			PasswordHash: oldPasswordHash,
-		}
-		h.db.Create(&historyEntry)
+	err = h.db.Transaction(func(tx *gorm.DB) error {
+		if oldPasswordHash != "" {
+			historyEntry := models.PasswordHistory{
+				ID:           uuid.New(),
+				UserID:       user.ID,
+				PasswordHash: oldPasswordHash,
+			}
+			if err := tx.Create(&historyEntry).Error; err != nil {
+				return err
+			}
 
-		var count int64
-		h.db.Model(&models.PasswordHistory{}).Where("user_id = ?", user.ID).Count(&count)
-		if count > 5 {
-			h.db.Model(&models.PasswordHistory{}).
-				Where("user_id = ? AND id NOT IN (SELECT id FROM password_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 5)", user.ID, user.ID).
-				Delete(&models.PasswordHistory{})
+			var count int64
+			tx.Model(&models.PasswordHistory{}).Where("user_id = ?", user.ID).Count(&count)
+			if count > 5 {
+				tx.Model(&models.PasswordHistory{}).
+					Where("user_id = ? AND id NOT IN (SELECT id FROM password_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 5)", user.ID, user.ID).
+					Delete(&models.PasswordHistory{})
+			}
 		}
+
+		if err := tx.Model(&user).Updates(map[string]interface{}{
+			"password_hash":       hashedPassword,
+			"password_changed_at": time.Now(),
+		}).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Where("user_id = ?", user.ID).Delete(&models.RefreshToken{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ?", user.ID).Delete(&models.PasswordReset{}).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
+		http.Error(w, "Failed to change password", http.StatusInternalServerError)
+		return
 	}
-
-	h.db.Model(&user).Update("password_hash", hashedPassword)
-	h.db.Model(&user).Update("password_changed_at", time.Now())
-
-	h.db.Where("user_id = ?", user.ID).Delete(&models.RefreshToken{})
-	h.db.Where("user_id = ?", user.ID).Delete(&models.PasswordReset{})
 
 	if h.emailService != nil && h.emailService.IsEnabled() {
 		_ = h.emailService.SendPasswordChangedEmail(r.Context(), services.EmailRecipient{

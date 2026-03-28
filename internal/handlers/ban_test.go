@@ -579,6 +579,13 @@ func TestBanHandler_CheckUserBan(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/ban/check?user_id="+tt.userID+"&room_id="+tt.roomID, nil)
+			requesterID := user.ID
+			if tt.userID != "" {
+				if parsed, err := uuid.Parse(tt.userID); err == nil {
+					requesterID = parsed
+				}
+			}
+			req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, requesterID))
 			w := httptest.NewRecorder()
 
 			handler.CheckUserBan(w, req)

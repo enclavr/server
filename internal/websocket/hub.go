@@ -1400,6 +1400,20 @@ func (h *Hub) MarkMessageRead(userID, roomID, messageID uuid.UUID) {
 	}
 	h.readReceipts[userID][messageID] = time.Now()
 
+	if len(h.readReceipts[userID]) > 100 {
+		oldestID := uuid.Nil
+		oldestTime := time.Now()
+		for id, t := range h.readReceipts[userID] {
+			if t.Before(oldestTime) {
+				oldestTime = t
+				oldestID = id
+			}
+		}
+		if oldestID != uuid.Nil {
+			delete(h.readReceipts[userID], oldestID)
+		}
+	}
+
 	if len(h.readReceipts) > 10000 {
 		for uid := range h.readReceipts {
 			delete(h.readReceipts, uid)

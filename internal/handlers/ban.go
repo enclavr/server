@@ -316,14 +316,17 @@ func (h *BanHandler) DeleteBan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var room models.Room
-	h.db.First(&room, ban.RoomID)
+	roomName := "unknown"
+	if err := h.db.First(&room, ban.RoomID).Error; err == nil {
+		roomName = room.Name
+	}
 
 	auditLog := models.AuditLog{
 		UserID:     userID,
 		Action:     models.AuditActionUserUnban,
 		TargetType: "user",
 		TargetID:   ban.UserID,
-		Details:    "Unbanned from room: " + room.Name,
+		Details:    "Unbanned from room: " + roomName,
 	}
 	h.db.Create(&auditLog)
 
@@ -332,6 +335,12 @@ func (h *BanHandler) DeleteBan(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *BanHandler) CheckUserBan(w http.ResponseWriter, r *http.Request) {
+	requesterID := middleware.GetUserID(r)
+	if requesterID == uuid.Nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	userID := r.URL.Query().Get("user_id")
 	roomID := r.URL.Query().Get("room_id")
 
@@ -350,6 +359,14 @@ func (h *BanHandler) CheckUserBan(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "Invalid room_id", http.StatusBadRequest)
 		return
+	}
+
+	if userUUID != requesterID {
+		var requesterMembership models.UserRoom
+		if err := h.db.Where("user_id = ? AND room_id = ? AND role IN ?", requesterID, roomUUID, []string{"admin", "moderator"}).First(&requesterMembership).Error; err != nil {
+			http.Error(w, "Insufficient permissions to check ban status of other users", http.StatusForbidden)
+			return
+		}
 	}
 
 	var ban models.Ban

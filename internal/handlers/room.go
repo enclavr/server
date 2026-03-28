@@ -115,11 +115,26 @@ func (h *RoomHandler) GetRooms(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	roomIDs := make([]uuid.UUID, len(rooms))
+	for i, room := range rooms {
+		roomIDs[i] = room.ID
+	}
+
+	type countResult struct {
+		RoomID uuid.UUID
+		Count  int64
+	}
+	var counts []countResult
+	h.db.Model(&models.UserRoom{}).Select("room_id, count(*) as count").Where("room_id IN ?", roomIDs).Group("room_id").Scan(&counts)
+
+	countMap := make(map[uuid.UUID]int, len(counts))
+	for _, c := range counts {
+		countMap[c.RoomID] = int(c.Count)
+	}
+
 	responses := make([]RoomResponse, 0, len(rooms))
 	for _, room := range rooms {
-		var userCount int64
-		h.db.Model(&models.UserRoom{}).Where("room_id = ?", room.ID).Count(&userCount)
-		responses = append(responses, h.roomToResponse(&room, int(userCount)))
+		responses = append(responses, h.roomToResponse(&room, countMap[room.ID]))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -378,15 +393,38 @@ func (h *RoomHandler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rooms := make([]UserRoomResponse, 0, len(userRooms))
+	roomIDs := make([]uuid.UUID, len(userRooms))
+	for i, ur := range userRooms {
+		roomIDs[i] = ur.RoomID
+	}
+
+	var rooms []models.Room
+	if err := h.db.Where("id IN ?", roomIDs).Find(&rooms).Error; err != nil {
+		http.Error(w, "Failed to fetch rooms", http.StatusInternalServerError)
+		return
+	}
+	roomMap := make(map[uuid.UUID]models.Room, len(rooms))
+	for _, room := range rooms {
+		roomMap[room.ID] = room
+	}
+
+	type countResult struct {
+		RoomID uuid.UUID
+		Count  int64
+	}
+	var counts []countResult
+	h.db.Model(&models.UserRoom{}).Select("room_id, count(*) as count").Where("room_id IN ?", roomIDs).Group("room_id").Scan(&counts)
+	countMap := make(map[uuid.UUID]int, len(counts))
+	for _, c := range counts {
+		countMap[c.RoomID] = int(c.Count)
+	}
+
+	roomResponses := make([]UserRoomResponse, 0, len(userRooms))
 	for _, ur := range userRooms {
-		var room models.Room
-		if err := h.db.First(&room, ur.RoomID).Error; err != nil {
+		room, ok := roomMap[ur.RoomID]
+		if !ok {
 			continue
 		}
-
-		var memberCount int64
-		h.db.Model(&models.UserRoom{}).Where("room_id = ?", ur.RoomID).Count(&memberCount)
 
 		roomResp := UserRoomResponse{
 			RoomID:      ur.RoomID,
@@ -395,13 +433,13 @@ func (h *RoomHandler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 			Role:        ur.Role,
 			IsPrivate:   room.IsPrivate,
 			JoinedAt:    ur.JoinedAt.Format("2006-01-02T15:04:05Z07:00"),
-			MemberCount: int(memberCount),
+			MemberCount: countMap[ur.RoomID],
 		}
-		rooms = append(rooms, roomResp)
+		roomResponses = append(roomResponses, roomResp)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(rooms); err != nil {
+	if err := json.NewEncoder(w).Encode(roomResponses); err != nil {
 		log.Printf("Error encoding response: %v", err)
 	}
 }
