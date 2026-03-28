@@ -209,6 +209,8 @@ func main() {
 	announcementHandler := handlers.NewAnnouncementHandler(db)
 	voiceChannelHandler := handlers.NewVoiceChannelHandler(db)
 	groupDMHandler := handlers.NewGroupDMHandler(db)
+	typingHandler := handlers.NewTypingIndicatorHandler(db)
+	voiceSessionHandler := handlers.NewVoiceSessionHandler(db)
 	webAuthnRPID := os.Getenv("WEBAUTHN_RPID")
 	if webAuthnRPID == "" {
 		webAuthnRPID = "localhost"
@@ -218,6 +220,7 @@ func main() {
 	_ = services.NewPushService(db, cfg)
 
 	go hub.Run()
+	go handlers.CleanupExpiredTypingIndicators(db.DB, 30*time.Second)
 
 	middleware.InitRateLimiter(60)
 
@@ -560,6 +563,16 @@ func main() {
 	mux.HandleFunc("/api/announcement/update", middleware.RequireAuth(authService, announcementHandler.UpdateAnnouncement))
 	mux.HandleFunc("/api/announcement/delete", middleware.RequireAuth(authService, announcementHandler.DeleteAnnouncement))
 	mux.HandleFunc("/api/announcement/deactivate", middleware.RequireAuth(authService, announcementHandler.DeactivateAnnouncement))
+
+	mux.HandleFunc("/api/typing/start", middleware.RequireAuth(authService, typingHandler.StartTyping))
+	mux.HandleFunc("/api/typing/stop", middleware.RequireAuth(authService, typingHandler.StopTyping))
+	mux.HandleFunc("/api/typing/users", middleware.RequireAuth(authService, typingHandler.GetTypingUsers))
+
+	mux.HandleFunc("/api/voice-session/create", middleware.RequireAuth(authService, voiceSessionHandler.CreateVoiceSession))
+	mux.HandleFunc("/api/voice-session/end", middleware.RequireAuth(authService, voiceSessionHandler.EndVoiceSession))
+	mux.HandleFunc("/api/voice-sessions", middleware.RequireAuth(authService, voiceSessionHandler.GetUserVoiceSessions))
+	mux.HandleFunc("/api/voice-sessions/room", middleware.RequireAuth(authService, voiceSessionHandler.GetRoomVoiceSessions))
+	mux.HandleFunc("/api/voice-sessions/stats", middleware.RequireAuth(authService, voiceSessionHandler.GetVoiceSessionStats))
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
