@@ -224,8 +224,11 @@ func TestCORSMiddleware_Preflight(t *testing.T) {
 func TestCORSMiddleware_EmptyOrigins(t *testing.T) {
 	m := NewCORSMiddleware([]string{})
 
-	if len(m.allowedOrigins) != 1 || m.allowedOrigins[0] != "*" {
-		t.Error("Empty origins should default to wildcard")
+	if len(m.allowedOrigins) != 2 {
+		t.Errorf("Empty origins should default to 2 localhost origins, got %d", len(m.allowedOrigins))
+	}
+	if m.allowedOrigins[0] != "http://localhost:3000" || m.allowedOrigins[1] != "http://localhost:8080" {
+		t.Errorf("Empty origins should default to localhost origins, got %v", m.allowedOrigins)
 	}
 }
 

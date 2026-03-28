@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,7 +25,8 @@ var (
 
 func NewCORSMiddleware(allowedOrigins []string) *CORSMiddleware {
 	if len(allowedOrigins) == 0 {
-		allowedOrigins = []string{"*"}
+		log.Println("WARNING: No ALLOWED_ORIGINS configured. Defaulting to localhost for development.")
+		allowedOrigins = []string{"http://localhost:3000", "http://localhost:8080"}
 	}
 	return &CORSMiddleware{
 		allowedOrigins: allowedOrigins,
@@ -55,7 +58,7 @@ func (c *CORSMiddleware) Handler(next http.Handler) http.Handler {
 		if r.Method == "OPTIONS" {
 			w.Header().Set("Access-Control-Allow-Methods", strings.Join(c.allowMethods, ", "))
 			w.Header().Set("Access-Control-Allow-Headers", strings.Join(c.allowHeaders, ", "))
-			w.Header().Set("Access-Control-Max-Age", string(rune(c.maxAge)))
+			w.Header().Set("Access-Control-Max-Age", strconv.Itoa(c.maxAge))
 			if allowed {
 				w.Header().Set("Access-Control-Allow-Origin", actualOrigin)
 				w.Header().Set("Vary", "Origin")

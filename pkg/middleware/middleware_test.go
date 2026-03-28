@@ -419,8 +419,8 @@ func TestNewCORSMiddleware(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			middleware := NewCORSMiddleware(tt.allowedOrigins)
 			if len(tt.allowedOrigins) == 0 {
-				if len(middleware.allowedOrigins) != 1 || middleware.allowedOrigins[0] != "*" {
-					t.Errorf("expected default * origin")
+				if len(middleware.allowedOrigins) != 2 || middleware.allowedOrigins[0] != "http://localhost:3000" {
+					t.Errorf("expected default localhost origins, got %v", middleware.allowedOrigins)
 				}
 			} else {
 				if len(middleware.allowedOrigins) != len(tt.allowedOrigins) {
@@ -473,7 +473,7 @@ func TestCORSMiddleware_NonOptions(t *testing.T) {
 }
 
 func TestCORSMiddleware_Wildcard(t *testing.T) {
-	middleware := NewCORSMiddleware([]string{})
+	middleware := NewCORSMiddleware([]string{"*"})
 	handler := middleware.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))

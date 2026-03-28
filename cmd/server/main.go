@@ -588,13 +588,16 @@ func main() {
 		}
 	})
 
-	mux.Handle("/debug/pprof/", http.HandlerFunc(http.DefaultServeMux.ServeHTTP))
-	mux.Handle("/debug/pprof/heap", http.HandlerFunc(http.DefaultServeMux.ServeHTTP))
-	mux.Handle("/debug/pprof/goroutine", http.HandlerFunc(http.DefaultServeMux.ServeHTTP))
-	mux.Handle("/debug/pprof/block", http.HandlerFunc(http.DefaultServeMux.ServeHTTP))
-	mux.Handle("/debug/pprof/mutex", http.HandlerFunc(http.DefaultServeMux.ServeHTTP))
+	if os.Getenv("ENABLE_PPROF") == "true" {
+		log.Println("WARNING: pprof debug endpoints are enabled. Do not use in production.")
+		mux.Handle("/debug/pprof/", middleware.RequireAuth(authService, http.DefaultServeMux.ServeHTTP))
+		mux.Handle("/debug/pprof/heap", middleware.RequireAuth(authService, http.DefaultServeMux.ServeHTTP))
+		mux.Handle("/debug/pprof/goroutine", middleware.RequireAuth(authService, http.DefaultServeMux.ServeHTTP))
+		mux.Handle("/debug/pprof/block", middleware.RequireAuth(authService, http.DefaultServeMux.ServeHTTP))
+		mux.Handle("/debug/pprof/mutex", middleware.RequireAuth(authService, http.DefaultServeMux.ServeHTTP))
+	}
 
-	mux.Handle("/metrics", promhttp.Handler())
+	mux.Handle("/metrics", middleware.RequireAuth(authService, promhttp.Handler().ServeHTTP))
 
 	corsMiddleware := middleware.NewCORSMiddleware(cfg.Server.AllowedOrigins)
 
@@ -619,8 +622,8 @@ func main() {
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      handler,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		ReadTimeout:  cfg.Server.ReadTimeout,
+		WriteTimeout: cfg.Server.WriteTimeout,
 		IdleTimeout:  60 * time.Second,
 	}
 

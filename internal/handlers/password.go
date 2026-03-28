@@ -160,7 +160,7 @@ func (h *PasswordResetHandler) ValidateToken(w http.ResponseWriter, r *http.Requ
 
 func (h *PasswordResetHandler) sendPasswordResetEmail(email, token string) {
 	if h.email.SMTPHost == "" {
-		log.Printf("SMTP not configured, would send password reset email to %s with token: %s", email, token)
+		log.Printf("SMTP not configured, would send password reset email to %s (token generation skipped)", email)
 		return
 	}
 
@@ -303,7 +303,7 @@ func (h *EmailVerificationHandler) VerifyEmail(w http.ResponseWriter, r *http.Re
 
 func (h *EmailVerificationHandler) sendVerificationEmail(email, token string) {
 	if h.email.SMTPHost == "" {
-		log.Printf("SMTP not configured, would send verification email to %s with token: %s", email, token)
+		log.Printf("SMTP not configured, would send verification email to %s (token generation skipped)", email)
 		return
 	}
 
