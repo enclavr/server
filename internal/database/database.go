@@ -110,6 +110,8 @@ func (d *Database) Migrate() error {
 		&models.WebAuthnCredential{},
 		&models.WebAuthnSession{},
 		&models.UserConnection{},
+		&models.VoiceChannel{},
+		&models.VoiceChannelParticipant{},
 	)
 	if err != nil {
 		return err
@@ -240,6 +242,11 @@ func (d *Database) Migrate() error {
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_user_connections_connected_user_id ON user_connections(connected_user_id)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_user_connections_status ON user_connections(status)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_user_connections_user_status ON user_connections(user_id, status)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_voice_channels_room_id ON voice_channels(room_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_voice_channels_deleted_at ON voice_channels(deleted_at)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_voice_channels_created_by ON voice_channels(created_by)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_voice_channel_participants_channel_id ON voice_channel_participants(channel_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_voice_channel_participants_user_id ON voice_channel_participants(user_id)")
 
 	log.Println("Database migration completed")
 	return nil

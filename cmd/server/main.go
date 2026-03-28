@@ -207,6 +207,7 @@ func main() {
 	mentionHandler := handlers.NewMentionHandler(db)
 	roomTransferHandler := handlers.NewRoomTransferHandler(db)
 	announcementHandler := handlers.NewAnnouncementHandler(db)
+	voiceChannelHandler := handlers.NewVoiceChannelHandler(db)
 	webAuthnRPID := os.Getenv("WEBAUTHN_RPID")
 	if webAuthnRPID == "" {
 		webAuthnRPID = "localhost"
@@ -287,6 +288,16 @@ func main() {
 
 	mux.HandleFunc("/api/voice/ws", voiceHandler.HandleWebSocket)
 	mux.HandleFunc("/api/voice/ice", voiceHandler.GetICEConfig)
+
+	mux.HandleFunc("/api/voice-channels", middleware.RequireAuth(authService, voiceChannelHandler.GetRoomChannels))
+	mux.HandleFunc("/api/voice-channel", middleware.RequireAuth(authService, voiceChannelHandler.GetChannel))
+	mux.HandleFunc("/api/voice-channel/create", middleware.RequireAuth(authService, voiceChannelHandler.CreateChannel))
+	mux.HandleFunc("/api/voice-channel/update", middleware.RequireAuth(authService, voiceChannelHandler.UpdateChannel))
+	mux.HandleFunc("/api/voice-channel/delete", middleware.RequireAuth(authService, voiceChannelHandler.DeleteChannel))
+	mux.HandleFunc("/api/voice-channel/join", middleware.RequireAuth(authService, voiceChannelHandler.JoinChannel))
+	mux.HandleFunc("/api/voice-channel/leave", middleware.RequireAuth(authService, voiceChannelHandler.LeaveChannel))
+	mux.HandleFunc("/api/voice-channel/participants", middleware.RequireAuth(authService, voiceChannelHandler.GetParticipants))
+	mux.HandleFunc("/api/voice-channel/participant/update", middleware.RequireAuth(authService, voiceChannelHandler.UpdateParticipant))
 
 	mux.HandleFunc("/api/dm/ws", dmWebSocketHandler.HandleDMWebSocket)
 
