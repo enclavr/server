@@ -243,9 +243,15 @@ func (h *DirectMessageHandler) UpdateDM(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var sender, receiver models.User
-	h.db.First(&sender, dm.SenderID)
-	h.db.First(&receiver, dm.ReceiverID)
+	// Batch fetch sender and receiver to avoid N+1 queries
+	var users []models.User
+	h.db.Where("id IN ?", []uuid.UUID{dm.SenderID, dm.ReceiverID}).Find(&users)
+	userMap := make(map[uuid.UUID]models.User)
+	for _, u := range users {
+		userMap[u.ID] = u
+	}
+	sender := userMap[dm.SenderID]
+	receiver := userMap[dm.ReceiverID]
 
 	h.sendDMResponse(w, &dm, &sender, &receiver)
 }

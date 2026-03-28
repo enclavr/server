@@ -105,10 +105,24 @@ func (h *RoleHandler) GetMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Batch fetch all users at once to avoid N+1 queries
+	userIDs := make([]uuid.UUID, 0, len(userRooms))
+	for _, ur := range userRooms {
+		userIDs = append(userIDs, ur.UserID)
+	}
+	userMap := make(map[uuid.UUID]models.User)
+	if len(userIDs) > 0 {
+		var users []models.User
+		h.db.Where("id IN ?", userIDs).Find(&users)
+		for _, u := range users {
+			userMap[u.ID] = u
+		}
+	}
+
 	members := make([]RoomMemberResponse, 0, len(userRooms))
 	for _, ur := range userRooms {
-		var user models.User
-		if err := h.db.First(&user, ur.UserID).Error; err != nil {
+		user, ok := userMap[ur.UserID]
+		if !ok {
 			continue
 		}
 		members = append(members, RoomMemberResponse{

@@ -2,10 +2,12 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"strings"
 
@@ -119,6 +121,10 @@ func (s *OAuthService) GetAuthURL(provider OAuthProvider, state string, redirect
 		return "", fmt.Errorf("provider %s not configured", provider)
 	}
 
+	if redirectURI != "" {
+		config.RedirectURL = redirectURI
+	}
+
 	return config.AuthCodeURL(state, oauth2.AccessTypeOnline), nil
 }
 
@@ -137,6 +143,10 @@ func (s *OAuthService) ExchangeCode(ctx context.Context, provider OAuthProvider,
 
 	if config == nil {
 		return nil, fmt.Errorf("provider %s not configured", provider)
+	}
+
+	if redirectURI != "" {
+		config.RedirectURL = redirectURI
 	}
 
 	token, err := config.Exchange(ctx, code)
@@ -341,23 +351,57 @@ func (s *OAuthService) FindOrCreateUser(db *gorm.DB, userInfo *OAuthUserInfo) (*
 		return nil, result.Error
 	}
 
-	username := generateOAuthUsername(userInfo.Name, userInfo.Email)
+	baseUsername := generateOAuthUsername(userInfo.Name, userInfo.Email)
+	username := baseUsername
 
-	newUser := models.User{
-		ID:          uuid.New(),
-		Username:    username,
-		Email:       userInfo.Email,
-		DisplayName: userInfo.Name,
-		AvatarURL:   userInfo.AvatarURL,
-		OIDCIssuer:  string(userInfo.Provider),
-		OIDCSubject: userInfo.Subject,
+	for i := 0; i < 10; i++ {
+		newUser := models.User{
+			ID:          uuid.New(),
+			Username:    username,
+			Email:       userInfo.Email,
+			DisplayName: userInfo.Name,
+			AvatarURL:   userInfo.AvatarURL,
+			OIDCIssuer:  string(userInfo.Provider),
+			OIDCSubject: userInfo.Subject,
+		}
+
+		if err := db.Create(&newUser).Error; err != nil {
+			if isUniqueConstraintError(err) {
+				suffix, err := generateRandomSuffix(4)
+				if err != nil {
+					suffix = fmt.Sprintf("%d", i+1)
+				}
+				username = fmt.Sprintf("%s_%s", baseUsername, suffix)
+				continue
+			}
+			return nil, err
+		}
+
+		return &newUser, nil
 	}
 
-	if err := db.Create(&newUser).Error; err != nil {
-		return nil, err
-	}
+	return nil, fmt.Errorf("failed to create user after %d username collision attempts", 10)
+}
 
-	return &newUser, nil
+func isUniqueConstraintError(err error) bool {
+	errMsg := err.Error()
+	return strings.Contains(errMsg, "unique constraint") ||
+		strings.Contains(errMsg, "duplicate key") ||
+		strings.Contains(errMsg, "UNIQUE constraint") ||
+		strings.Contains(errMsg, "Duplicate entry")
+}
+
+func generateRandomSuffix(length int) (string, error) {
+	const charset = "0123456789"
+	result := make([]byte, length)
+	for i := range result {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		if err != nil {
+			return "", err
+		}
+		result[i] = charset[n.Int64()]
+	}
+	return string(result), nil
 }
 
 func generateOAuthUsername(name, email string) string {

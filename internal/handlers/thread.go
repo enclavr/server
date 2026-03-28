@@ -195,10 +195,23 @@ func (h *ThreadHandler) GetThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Batch fetch all users at once to avoid N+1 queries
+	msgUserIDs := make([]uuid.UUID, 0, len(threadMessages))
+	for _, msg := range threadMessages {
+		msgUserIDs = append(msgUserIDs, msg.UserID)
+	}
+	msgUserMap := make(map[uuid.UUID]models.User)
+	if len(msgUserIDs) > 0 {
+		var users []models.User
+		h.db.Where("id IN ?", msgUserIDs).Find(&users)
+		for _, u := range users {
+			msgUserMap[u.ID] = u
+		}
+	}
+
 	var messages []ThreadMessageResponse
 	for _, msg := range threadMessages {
-		var user models.User
-		h.db.First(&user, "id = ?", msg.UserID)
+		user := msgUserMap[msg.UserID]
 
 		content := msg.Content
 		if msg.IsDeleted {
@@ -281,19 +294,63 @@ func (h *ThreadHandler) GetThreadsForMessage(w http.ResponseWriter, r *http.Requ
 		CreatedAt    time.Time `json:"created_at"`
 	}
 
+	// Batch fetch all thread creators at once to avoid N+1 queries
+	threadCreatorIDs := make([]uuid.UUID, 0, len(threads))
+	for _, thread := range threads {
+		threadCreatorIDs = append(threadCreatorIDs, thread.CreatedBy)
+	}
+	threadCreatorMap := make(map[uuid.UUID]models.User)
+	if len(threadCreatorIDs) > 0 {
+		var users []models.User
+		h.db.Where("id IN ?", threadCreatorIDs).Find(&users)
+		for _, u := range users {
+			threadCreatorMap[u.ID] = u
+		}
+	}
+
+	// Batch fetch message counts for all threads
+	threadIDs := make([]uuid.UUID, 0, len(threads))
+	for _, thread := range threads {
+		threadIDs = append(threadIDs, thread.ID)
+	}
+	countMap := make(map[uuid.UUID]int64)
+	lastMsgMap := make(map[uuid.UUID]models.ThreadMessage)
+	if len(threadIDs) > 0 {
+		// Get counts
+		type countResult struct {
+			ThreadID uuid.UUID
+			Count    int64
+		}
+		var counts []countResult
+		h.db.Model(&models.ThreadMessage{}).
+			Select("thread_id, COUNT(*) as count").
+			Where("thread_id IN ?", threadIDs).
+			Group("thread_id").
+			Find(&counts)
+		for _, c := range counts {
+			countMap[c.ThreadID] = c.Count
+		}
+
+		// Get last messages using a subquery approach
+		var lastMsgs []models.ThreadMessage
+		h.db.Where("thread_id IN ?", threadIDs).
+			Order("created_at DESC").
+			Find(&lastMsgs)
+		seen := make(map[uuid.UUID]bool)
+		for _, msg := range lastMsgs {
+			if !seen[msg.ThreadID] {
+				lastMsgMap[msg.ThreadID] = msg
+				seen[msg.ThreadID] = true
+			}
+		}
+	}
+
 	var result []ThreadListItem
 	for _, thread := range threads {
-		var user models.User
-		h.db.First(&user, "id = ?", thread.CreatedBy)
-
-		var count int64
-		h.db.Model(&models.ThreadMessage{}).Where("thread_id = ?", thread.ID).Count(&count)
-
-		var lastMsg models.ThreadMessage
-		h.db.Where("thread_id = ?", thread.ID).Order("created_at DESC").First(&lastMsg)
+		user := threadCreatorMap[thread.CreatedBy]
 
 		lastContent := ""
-		if !lastMsg.IsDeleted {
+		if lastMsg, ok := lastMsgMap[thread.ID]; ok && !lastMsg.IsDeleted {
 			lastContent = lastMsg.Content
 		}
 
@@ -303,7 +360,7 @@ func (h *ThreadHandler) GetThreadsForMessage(w http.ResponseWriter, r *http.Requ
 			ParentID:     thread.ParentID,
 			CreatedBy:    thread.CreatedBy,
 			Username:     user.Username,
-			MessageCount: int(count),
+			MessageCount: int(countMap[thread.ID]),
 			LastMessage:  lastContent,
 			CreatedAt:    thread.CreatedAt,
 		})

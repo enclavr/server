@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/enclavr/server/internal/models"
 	"github.com/enclavr/server/pkg/middleware"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 type PreferencesHandler struct {
@@ -53,7 +55,7 @@ func (h *PreferencesHandler) GetPreferences(w http.ResponseWriter, r *http.Reque
 
 	var preferences models.UserPreferences
 	if err := h.db.Where("user_id = ?", userID).First(&preferences).Error; err != nil {
-		if err.Error() == "record not found" {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			preferences = models.UserPreferences{
 				UserID:              userID,
 				Theme:               "dark",
@@ -109,7 +111,7 @@ func (h *PreferencesHandler) UpdatePreferences(w http.ResponseWriter, r *http.Re
 
 	var preferences models.UserPreferences
 	if err := h.db.Where("user_id = ?", userID).First(&preferences).Error; err != nil {
-		if err.Error() == "record not found" {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			preferences = models.UserPreferences{
 				UserID: userID,
 				Theme:  "dark",
@@ -210,7 +212,7 @@ func (h *PreferencesHandler) ExportPreferences(w http.ResponseWriter, r *http.Re
 
 	var preferences models.UserPreferences
 	if err := h.db.Where("user_id = ?", userID).First(&preferences).Error; err != nil {
-		if err.Error() == "record not found" {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			preferences = models.UserPreferences{
 				UserID:              userID,
 				Theme:               "dark",
@@ -304,7 +306,7 @@ func (h *PreferencesHandler) ImportPreferences(w http.ResponseWriter, r *http.Re
 
 	var preferences models.UserPreferences
 	if err := h.db.Where("user_id = ?", userID).First(&preferences).Error; err != nil {
-		if err.Error() == "record not found" {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			preferences = models.UserPreferences{UserID: userID}
 		} else {
 			http.Error(w, "Failed to fetch preferences", http.StatusInternalServerError)
@@ -430,7 +432,7 @@ func (h *PreferencesHandler) ResetPreferences(w http.ResponseWriter, r *http.Req
 
 	var existing models.UserPreferences
 	if err := h.db.Where("user_id = ?", userID).First(&existing).Error; err != nil {
-		if err.Error() != "record not found" {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			http.Error(w, "Failed to fetch preferences", http.StatusInternalServerError)
 			return
 		}

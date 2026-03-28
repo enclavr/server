@@ -286,8 +286,12 @@ func (cs *CacheService) GetMulti(ctx context.Context, keys []string) (map[string
 	result := make(map[string]interface{})
 	for i, val := range results {
 		if val != nil {
+			str, ok := val.(string)
+			if !ok {
+				continue
+			}
 			var dest interface{}
-			if err := json.Unmarshal([]byte(val.(string)), &dest); err == nil {
+			if err := json.Unmarshal([]byte(str), &dest); err == nil {
 				result[keys[i]] = dest
 			}
 		}

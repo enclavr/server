@@ -127,11 +127,23 @@ func (h *PresenceHandler) GetPresence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Batch fetch all users at once to avoid N+1 queries
+	userIDs := make([]uuid.UUID, 0, len(presences))
+	for _, p := range presences {
+		userIDs = append(userIDs, p.UserID)
+	}
+	userMap := make(map[uuid.UUID]models.User)
+	if len(userIDs) > 0 {
+		var users []models.User
+		h.db.Where("id IN ?", userIDs).Find(&users)
+		for _, u := range users {
+			userMap[u.ID] = u
+		}
+	}
+
 	var response []PresenceResponse
 	for _, p := range presences {
-		var user models.User
-		h.db.First(&user, "id = ?", p.UserID)
-
+		user := userMap[p.UserID]
 		response = append(response, PresenceResponse{
 			UserID:   p.UserID,
 			Username: user.Username,

@@ -216,6 +216,9 @@ func (h *Hub) Run() {
 			metrics.WebSocketConnections.Dec()
 			metrics.ActiveUsers.Dec()
 
+			// Cleanup global maps to prevent memory leaks
+			h.cleanupUserState(client.userID)
+
 		case message := <-h.broadcast:
 			h.mutex.RLock()
 			r, ok := h.rooms[message.RoomID]
@@ -1061,6 +1064,38 @@ func (h *Hub) cleanupTypingUsers() {
 			h.typingMutex.Unlock()
 		}
 	}
+}
+
+func (h *Hub) cleanupUserState(userID uuid.UUID) {
+	// Clean up user presence
+	userPresence.Lock()
+	delete(userPresence.states, userID)
+	userPresence.Unlock()
+
+	// Clean up presence subscriptions
+	userPresenceSubscriptions.Lock()
+	delete(userPresenceSubscriptions.subscriptions, userID)
+	userPresenceSubscriptions.Unlock()
+
+	// Clean up user focus state
+	userFocusState.Lock()
+	delete(userFocusState.focus, userID)
+	userFocusState.Unlock()
+
+	// Clean up media state
+	mediaStateStore.Lock()
+	delete(mediaStateStore.states, userID)
+	mediaStateStore.Unlock()
+
+	// Clean up typing state
+	h.typingMutex.Lock()
+	delete(h.typingUsers, userID)
+	h.typingMutex.Unlock()
+
+	// Clean up typing throttle
+	h.typingThrottleMu.Lock()
+	delete(h.typingThrottle, userID)
+	h.typingThrottleMu.Unlock()
 }
 
 func (h *Hub) ValidateAndSanitizeMessage(msgType string, payload json.RawMessage) (json.RawMessage, error) {

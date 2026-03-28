@@ -147,7 +147,7 @@ func (h *CategoryHandler) UpdateCategory(w http.ResponseWriter, r *http.Request)
 	var req struct {
 		ID          uuid.UUID `json:"id"`
 		Name        string    `json:"name"`
-		SortOrder   int       `json:"sort_order"`
+		SortOrder   *int      `json:"sort_order"`
 		Description string    `json:"description"`
 		Icon        string    `json:"icon"`
 		Color       string    `json:"color"`
@@ -168,7 +168,9 @@ func (h *CategoryHandler) UpdateCategory(w http.ResponseWriter, r *http.Request)
 	if req.Name != "" {
 		updates["name"] = req.Name
 	}
-	updates["sort_order"] = req.SortOrder
+	if req.SortOrder != nil {
+		updates["sort_order"] = *req.SortOrder
+	}
 	updates["description"] = req.Description
 	updates["icon"] = req.Icon
 	updates["color"] = req.Color

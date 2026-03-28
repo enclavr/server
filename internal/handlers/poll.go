@@ -192,10 +192,23 @@ func (h *PollHandler) GetPolls(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Batch fetch all poll creators at once to avoid N+1 queries
+	creatorIDs := make([]uuid.UUID, 0, len(polls))
+	for _, poll := range polls {
+		creatorIDs = append(creatorIDs, poll.CreatedBy)
+	}
+	creatorMap := make(map[uuid.UUID]models.User)
+	if len(creatorIDs) > 0 {
+		var users []models.User
+		h.db.Where("id IN ?", creatorIDs).Find(&users)
+		for _, u := range users {
+			creatorMap[u.ID] = u
+		}
+	}
+
 	var responses []PollResponse
 	for _, poll := range polls {
-		var user models.User
-		h.db.First(&user, "id = ?", poll.CreatedBy)
+		user := creatorMap[poll.CreatedBy]
 
 		options, totalVotes, hasVoted := h.getPollOptions(poll.ID, userID)
 		canVote := h.canUserVote(&poll, userID)
