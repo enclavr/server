@@ -614,6 +614,7 @@ func main() {
 	var handler http.Handler = mux
 	handler = middleware.RequestID()(handler)
 	handler = middleware.GzipCompression()(handler)
+	handler = middleware.LimitRequestBody(1 << 20)(handler)
 	handler = middleware.SentryRecovery()(handler)
 	if cfg.Sentry.DSN != "" {
 		sentryHandler := sentryhttp.New(sentryhttp.Options{

@@ -100,6 +100,7 @@ type Client struct {
 	bytesIn       atomic.Int64
 	bytesOut      atomic.Int64
 	closed        atomic.Bool
+	closeConnOnce sync.Once
 }
 
 // safeCloseSend closes the client's send channel idempotently.
@@ -110,6 +111,18 @@ func (c *Client) safeCloseSend() bool {
 		return true
 	}
 	return false
+}
+
+// safeCloseConn closes the WebSocket connection exactly once.
+// Returns the error from conn.Close() if this call performed the close, or nil if already closed.
+func (c *Client) safeCloseConn() error {
+	var closeErr error
+	c.closeConnOnce.Do(func() {
+		if c.conn != nil {
+			closeErr = c.conn.Close()
+		}
+	})
+	return closeErr
 }
 
 func NewHub() *Hub {
@@ -627,24 +640,18 @@ func (c *Client) ReadPump() {
 		closeCode := websocket.CloseNormalClosure
 		closeReason := "normal"
 
-		if c.conn != nil {
-			if closeErr := c.conn.Close(); closeErr != nil {
-				if ce, ok := closeErr.(*websocket.CloseError); ok {
-					closeCode = ce.Code
-					closeReason = string(websocket.FormatCloseMessage(ce.Code, ce.Text))
-				}
-				wsLogger.Error("Error closing connection",
-					"connection_id", c.connectionID,
-					"user_id", c.userID,
-					"remote_addr", c.remoteAddr,
-					"close_code", closeCode,
-					"close_reason", closeReason,
-					"error", closeErr.Error())
+		if closeErr := c.safeCloseConn(); closeErr != nil {
+			if ce, ok := closeErr.(*websocket.CloseError); ok {
+				closeCode = ce.Code
+				closeReason = string(websocket.FormatCloseMessage(ce.Code, ce.Text))
 			}
-		} else {
-			wsLogger.Warn("Connection was nil during cleanup",
+			wsLogger.Error("Error closing connection",
 				"connection_id", c.connectionID,
-				"user_id", c.userID)
+				"user_id", c.userID,
+				"remote_addr", c.remoteAddr,
+				"close_code", closeCode,
+				"close_reason", closeReason,
+				"error", closeErr.Error())
 		}
 
 		c.SetState(StateDisconnected)
@@ -886,17 +893,11 @@ func (c *Client) WritePump() {
 	ticker := time.NewTicker(PingInterval)
 	defer func() {
 		ticker.Stop()
-		if c.conn != nil {
-			if closeErr := c.conn.Close(); closeErr != nil {
-				wsLogger.Error("Error closing connection in WritePump",
-					"connection_id", c.connectionID,
-					"user_id", c.userID,
-					"error", closeErr)
-			}
-		} else {
-			wsLogger.Warn("Connection was nil in WritePump cleanup",
+		if closeErr := c.safeCloseConn(); closeErr != nil {
+			wsLogger.Error("Error closing connection in WritePump",
 				"connection_id", c.connectionID,
-				"user_id", c.userID)
+				"user_id", c.userID,
+				"error", closeErr)
 		}
 	}()
 

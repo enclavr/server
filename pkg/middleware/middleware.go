@@ -217,6 +217,8 @@ func RequestTimeout(timeout time.Duration) func(http.Handler) http.Handler {
 				return
 			case <-ctx.Done():
 				ht.WriteHeader(http.StatusRequestTimeout)
+				// Wait for handler goroutine to finish to prevent leak
+				<-done
 			}
 		})
 	}
@@ -320,6 +322,20 @@ func SentryRecovery() func(http.Handler) http.Handler {
 					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				}
 			}()
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// LimitRequestBody limits the size of request bodies for mutating HTTP methods.
+// This provides defense-in-depth against large request body attacks.
+func LimitRequestBody(maxBytes int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodPost, http.MethodPut, http.MethodPatch:
+				r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			}
 			next.ServeHTTP(w, r)
 		})
 	}

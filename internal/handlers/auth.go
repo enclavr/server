@@ -217,14 +217,6 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		DisplayName:  req.Username,
 	}
 
-	if h.firstIsAdmin {
-		var userCount int64
-		h.db.Model(&models.User{}).Count(&userCount)
-		if userCount == 0 {
-			user.IsAdmin = true
-		}
-	}
-
 	if err := h.db.Transaction(func(tx *gorm.DB) error {
 		if h.firstIsAdmin {
 			var userCount int64
@@ -529,7 +521,9 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			// Token reuse detected - revoke all tokens for this user since
 			// we cannot determine the token family of the reused token
-			h.db.Where("user_id = ?", user.ID).Delete(&models.RefreshToken{})
+			if revokeErr := h.db.Where("user_id = ?", user.ID).Delete(&models.RefreshToken{}).Error; revokeErr != nil {
+				log.Printf("ERROR: Failed to revoke tokens after reuse detection: %v", revokeErr)
+			}
 			http.Error(w, "Token reuse detected, sessions revoked", http.StatusUnauthorized)
 			return
 		}
@@ -537,9 +531,13 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.db.Where("user_id = ? AND token = ?", user.ID, hashedToken).Delete(&models.RefreshToken{})
+	if err := h.db.Where("user_id = ? AND token = ?", user.ID, hashedToken).Delete(&models.RefreshToken{}).Error; err != nil {
+		log.Printf("ERROR: Failed to delete used refresh token: %v", err)
+	}
 	if existingToken.TokenFamily != "" {
-		h.db.Where("user_id = ? AND token_family = ?", user.ID, existingToken.TokenFamily).Delete(&models.RefreshToken{})
+		if err := h.db.Where("user_id = ? AND token_family = ?", user.ID, existingToken.TokenFamily).Delete(&models.RefreshToken{}).Error; err != nil {
+			log.Printf("ERROR: Failed to delete token family: %v", err)
+		}
 	}
 
 	h.sendAuthResponseWithRotation(w, &user, r)
@@ -792,6 +790,7 @@ func (h *AuthHandler) EnableTwoFactor(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthHandler) ConfirmTwoFactor(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -891,12 +890,17 @@ func (h *AuthHandler) DisableTwoFactor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.db.Model(&user).Updates(map[string]interface{}{
+	if err := h.db.Model(&user).Updates(map[string]interface{}{
 		"two_factor_enabled": false,
 		"two_factor_secret":  "",
-	})
+	}).Error; err != nil {
+		http.Error(w, "Failed to disable 2FA", http.StatusInternalServerError)
+		return
+	}
 
-	h.db.Where("user_id = ?", user.ID).Delete(&models.TwoFactorRecovery{})
+	if err := h.db.Where("user_id = ?", user.ID).Delete(&models.TwoFactorRecovery{}).Error; err != nil {
+		log.Printf("ERROR: Failed to delete 2FA recovery codes: %v", err)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -905,6 +909,7 @@ func (h *AuthHandler) DisableTwoFactor(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthHandler) RequestPasswordReset(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 	var req PasswordResetRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -961,6 +966,7 @@ func (h *AuthHandler) RequestPasswordReset(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *AuthHandler) CompletePasswordReset(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 	var req PasswordResetCompleteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -1158,6 +1164,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -1434,8 +1441,14 @@ func (h *AuthHandler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) 
 
 	sessionID, _ := r.Context().Value(middleware.SessionIDKey).(uuid.UUID)
 
-	h.db.Where("user_id = ? AND id != ?", userID, sessionID).Delete(&models.Session{})
-	h.db.Where("user_id = ? AND id != ?", userID, sessionID).Delete(&models.RefreshToken{})
+	if err := h.db.Where("user_id = ? AND id != ?", userID, sessionID).Delete(&models.Session{}).Error; err != nil {
+		log.Printf("ERROR: Failed to revoke sessions: %v", err)
+		http.Error(w, "Failed to revoke sessions", http.StatusInternalServerError)
+		return
+	}
+	if err := h.db.Where("user_id = ? AND id != ?", userID, sessionID).Delete(&models.RefreshToken{}).Error; err != nil {
+		log.Printf("ERROR: Failed to revoke refresh tokens: %v", err)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
