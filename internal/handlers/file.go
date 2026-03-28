@@ -204,7 +204,7 @@ func (h *FileHandler) GetFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, part := range parts {
-		if part == ".." || strings.Contains(part, "..") {
+		if part == ".." || strings.Contains(part, "..") || strings.ContainsRune(part, 0) {
 			http.Error(w, "Invalid file path", http.StatusBadRequest)
 			return
 		}
@@ -213,9 +213,17 @@ func (h *FileHandler) GetFile(w http.ResponseWriter, r *http.Request) {
 	storageKey := strings.Join(parts, "/")
 	filePath := filepath.Join(h.uploadDir, storageKey)
 
-	absUploadDir, _ := filepath.Abs(h.uploadDir)
-	absFilePath, _ := filepath.Abs(filePath)
-	if !strings.HasPrefix(absFilePath, absUploadDir) {
+	absUploadDir, err := filepath.Abs(h.uploadDir)
+	if err != nil {
+		http.Error(w, "Invalid file path", http.StatusBadRequest)
+		return
+	}
+	absFilePath, err := filepath.Abs(filePath)
+	if err != nil {
+		http.Error(w, "Invalid file path", http.StatusBadRequest)
+		return
+	}
+	if !strings.HasPrefix(absFilePath, absUploadDir+string(os.PathSeparator)) && absFilePath != absUploadDir {
 		http.Error(w, "Invalid file path", http.StatusBadRequest)
 		return
 	}

@@ -67,6 +67,12 @@ func (h *ReactionHandler) AddReaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var userRoom models.UserRoom
+	if err := h.db.Where("user_id = ? AND room_id = ?", userID, msg.RoomID).First(&userRoom).Error; err != nil {
+		http.Error(w, "You must be a member of this room to react", http.StatusForbidden)
+		return
+	}
+
 	var existingReaction models.MessageReaction
 	if err := h.db.Where("message_id = ? AND user_id = ? AND emoji = ?", req.MessageID, userID, req.Emoji).First(&existingReaction).Error; err == nil {
 		http.Error(w, "You have already reacted with this emoji", http.StatusConflict)

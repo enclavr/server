@@ -347,6 +347,17 @@ func (h *CategoryHandler) BulkCreateCategories(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	var user models.User
+	if err := h.db.First(&user, "id = ?", userID).Error; err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	if !user.IsAdmin {
+		http.Error(w, "Admin access required", http.StatusForbidden)
+		return
+	}
+
 	type BulkCategoryRequest struct {
 		Categories []CreateCategoryRequest `json:"categories"`
 	}

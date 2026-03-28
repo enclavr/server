@@ -43,6 +43,13 @@ func setupUserHandler(t *testing.T) *UserHandler {
 func TestUserHandler_SearchUsers(t *testing.T) {
 	handler := setupUserHandler(t)
 
+	authUser := models.User{
+		ID:       uuid.New(),
+		Username: "authuser",
+		Email:    "auth@example.com",
+	}
+	handler.db.Create(&authUser)
+
 	testUser := models.User{
 		Username:    "testuser",
 		DisplayName: "Test User",
@@ -78,6 +85,7 @@ func TestUserHandler_SearchUsers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/users/search?username="+tt.query, nil)
+			req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, authUser.ID))
 			w := httptest.NewRecorder()
 
 			handler.SearchUsers(w, req)

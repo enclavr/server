@@ -57,6 +57,7 @@ func setupReactionHandler(t *testing.T) (*ReactionHandler, *database.Database, u
 	db.Create(&user)
 	db.Create(&room)
 	db.Create(&message)
+	db.Create(&models.UserRoom{UserID: user.ID, RoomID: room.ID, Role: "member"})
 
 	return handler, testDB, user.ID, room.ID, message.ID
 }

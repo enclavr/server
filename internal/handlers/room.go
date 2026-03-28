@@ -103,8 +103,14 @@ func (h *RoomHandler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *RoomHandler) GetRooms(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r)
+	if userID == uuid.Nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	var rooms []models.Room
-	if err := h.db.Find(&rooms).Error; err != nil {
+	if err := h.db.Where("is_private = ? OR id IN (SELECT room_id FROM user_rooms WHERE user_id = ?)", false, userID).Find(&rooms).Error; err != nil {
 		http.Error(w, "Failed to fetch rooms", http.StatusInternalServerError)
 		return
 	}

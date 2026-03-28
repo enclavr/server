@@ -109,7 +109,10 @@ func (h *MessageHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 
 	msgType := models.MessageTypeText
 	if req.Type == "system" {
-		msgType = models.MessageTypeSystem
+		var user models.User
+		if err := h.db.First(&user, "id = ?", userID).Error; nil == err && user.IsAdmin {
+			msgType = models.MessageTypeSystem
+		}
 	}
 
 	msg := &models.Message{

@@ -914,18 +914,24 @@ func (h *AuthHandler) CompletePasswordReset(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	if err := h.db.Model(&user).Update("password_hash", hashedPassword).Error; err != nil {
-		http.Error(w, "Failed to update password", http.StatusInternalServerError)
+	if err := h.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&user).Update("password_hash", hashedPassword).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&user).Update("password_changed_at", time.Now()).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&resetToken).Update("used", true).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ?", user.ID).Delete(&models.TwoFactorRecovery{}).Error; err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		http.Error(w, "Failed to complete password reset", http.StatusInternalServerError)
 		return
 	}
-	if err := h.db.Model(&user).Update("password_changed_at", time.Now()).Error; err != nil {
-		http.Error(w, "Failed to update password timestamp", http.StatusInternalServerError)
-		return
-	}
-	if err := h.db.Model(&resetToken).Update("used", true).Error; err != nil {
-		log.Printf("Error marking reset token as used: %v", err)
-	}
-	h.db.Where("user_id = ?", user.ID).Delete(&models.TwoFactorRecovery{})
 
 	if h.emailService != nil && h.emailService.IsEnabled() {
 		_ = h.emailService.SendPasswordChangedEmail(r.Context(), services.EmailRecipient{
@@ -1110,6 +1116,7 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	h.db.Model(&user).Update("password_changed_at", time.Now())
 
 	h.db.Where("user_id = ?", user.ID).Delete(&models.RefreshToken{})
+	h.db.Where("user_id = ?", user.ID).Delete(&models.PasswordReset{})
 
 	if h.emailService != nil && h.emailService.IsEnabled() {
 		_ = h.emailService.SendPasswordChangedEmail(r.Context(), services.EmailRecipient{

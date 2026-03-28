@@ -174,6 +174,7 @@ func TestRoomHandler_GetRooms(t *testing.T) {
 	db.Create(&models.UserRoom{UserID: userID, RoomID: room2.ID, Role: "member"})
 
 	req := httptest.NewRequest(http.MethodGet, "/rooms", nil)
+	req = req.WithContext(roomContextWithUserID(req.Context(), userID))
 	w := httptest.NewRecorder()
 	handler.GetRooms(w, req)
 

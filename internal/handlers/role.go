@@ -160,10 +160,19 @@ func (h *RoleHandler) GetUserRole(w http.ResponseWriter, r *http.Request) {
 
 func (h *RoleHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 	currentUserID := middleware.GetUserID(r)
+	if currentUserID == uuid.Nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
 
 	var req UpdateRoleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if _, ok := DefaultRoles[req.Role]; !ok {
+		http.Error(w, "Invalid role", http.StatusBadRequest)
 		return
 	}
 

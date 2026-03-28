@@ -58,6 +58,12 @@ type UserStats struct {
 }
 
 func (h *UserHandler) SearchUsers(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r)
+	if userID == uuid.Nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	query := r.URL.Query().Get("username")
 	if query == "" {
 		http.Error(w, "Query parameter required", http.StatusBadRequest)
