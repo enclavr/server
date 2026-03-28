@@ -65,14 +65,16 @@ func NewHTTPClient(config RetryConfig, circuitBreaker *CircuitBreaker) *HTTPClie
 
 func (c *HTTPClient) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
 	if c.cb != nil {
+		var resp *http.Response
 		err := c.cb.Execute(ctx, func() error {
-			_, err := c.doWithRetry(ctx, req)
-			return err
+			var reqErr error
+			resp, reqErr = c.doWithRetry(ctx, req)
+			return reqErr
 		})
 		if err != nil {
 			return nil, err
 		}
-		return nil, nil
+		return resp, nil
 	}
 	return c.doWithRetry(ctx, req)
 }

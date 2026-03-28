@@ -353,8 +353,21 @@ func (h *PollHandler) Vote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.canUserVote(&poll, userID) {
-		http.Error(w, "You cannot vote on this poll", http.StatusForbidden)
+	tx := h.db.Begin()
+
+	if !poll.IsMultiple {
+		var existingCount int64
+		tx.Model(&models.PollVote{}).Where("poll_id = ? AND user_id = ?", req.PollID, userID).Count(&existingCount)
+		if existingCount > 0 {
+			tx.Rollback()
+			http.Error(w, "You have already voted on this poll", http.StatusForbidden)
+			return
+		}
+	}
+
+	if poll.ExpiresAt != nil && time.Now().After(*poll.ExpiresAt) {
+		tx.Rollback()
+		http.Error(w, "This poll has expired", http.StatusForbidden)
 		return
 	}
 
@@ -364,8 +377,15 @@ func (h *PollHandler) Vote(w http.ResponseWriter, r *http.Request) {
 		UserID:   userID,
 	}
 
-	if err := h.db.Create(vote).Error; err != nil {
+	if err := tx.Create(vote).Error; err != nil {
+		tx.Rollback()
 		log.Printf("Error creating vote: %v", err)
+		http.Error(w, "Failed to record vote", http.StatusInternalServerError)
+		return
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		log.Printf("Error committing vote: %v", err)
 		http.Error(w, "Failed to record vote", http.StatusInternalServerError)
 		return
 	}

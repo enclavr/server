@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/enclavr/server/internal/config"
+	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/pkg/logger"
 	"github.com/google/uuid"
 )
@@ -66,13 +68,14 @@ type NotificationService struct {
 	cancel         context.CancelFunc
 }
 
-func NewNotificationService(config NotificationConfig) *NotificationService {
+func NewNotificationService(config NotificationConfig, db *database.Database, cfg *config.Config) *NotificationService {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	ns := &NotificationService{
 		queue:   make(chan Notification, config.QueueSize),
 		workers: config.Workers,
 		ctx:     ctx,
+		cancel:  cancel,
 	}
 
 	if config.EmailConfig.SMTPHost != "" || config.EmailConfig.SendGridAPIKey != "" || config.EmailConfig.MailgunAPIKey != "" {
@@ -80,14 +83,12 @@ func NewNotificationService(config NotificationConfig) *NotificationService {
 	}
 
 	if config.PushConfig.APIKey != "" || config.PushConfig.ServiceAccount != "" {
-		ns.pushService = NewPushService(nil, nil)
+		ns.pushService = NewPushService(db, cfg)
 	}
 
 	if config.WebhookConfig.Secret != "" {
 		ns.webhookService = NewWebhookNotificationService(config.WebhookConfig)
 	}
-
-	_ = cancel
 
 	for i := 0; i < config.Workers; i++ {
 		ns.wg.Add(1)

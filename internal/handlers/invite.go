@@ -11,6 +11,7 @@ import (
 	"github.com/enclavr/server/pkg/middleware"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 type InviteHandler struct {
@@ -156,11 +157,6 @@ func (h *InviteHandler) UseInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if invite.MaxUses > 0 && invite.Uses >= invite.MaxUses {
-		http.Error(w, "This invite has reached its maximum uses", http.StatusForbidden)
-		return
-	}
-
 	var existingUser models.UserRoom
 	result := h.db.Where("user_id = ? AND room_id = ?", userID, invite.RoomID).First(&existingUser)
 	if result.Error == nil {
@@ -188,18 +184,41 @@ func (h *InviteHandler) UseInvite(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	tx := h.db.Begin()
+
+	if invite.MaxUses > 0 {
+		result := tx.Model(&models.Invite{}).
+			Where("id = ? AND uses < ?", invite.ID, invite.MaxUses).
+			Update("uses", gorm.Expr("uses + 1"))
+		if result.Error != nil {
+			tx.Rollback()
+			http.Error(w, "Failed to use invite", http.StatusInternalServerError)
+			return
+		}
+		if result.RowsAffected == 0 {
+			tx.Rollback()
+			http.Error(w, "This invite has reached its maximum uses", http.StatusForbidden)
+			return
+		}
+	} else {
+		tx.Model(&invite).Update("uses", gorm.Expr("uses + 1"))
+	}
+
 	userRoom := models.UserRoom{
 		UserID: userID,
 		RoomID: invite.RoomID,
 		Role:   "member",
 	}
-	if err := h.db.Create(&userRoom).Error; err != nil {
+	if err := tx.Create(&userRoom).Error; err != nil {
+		tx.Rollback()
 		http.Error(w, "Failed to join room", http.StatusInternalServerError)
 		return
 	}
 
-	invite.Uses++
-	h.db.Save(&invite)
+	if err := tx.Commit().Error; err != nil {
+		http.Error(w, "Failed to join room", http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]interface{}{

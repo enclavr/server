@@ -174,9 +174,12 @@ func (h *RoomHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tx := h.db.Begin()
+
 	var userCount int64
-	h.db.Model(&models.UserRoom{}).Where("room_id = ?", req.RoomID).Count(&userCount)
+	tx.Model(&models.UserRoom{}).Where("room_id = ?", req.RoomID).Count(&userCount)
 	if int(userCount) >= room.MaxUsers {
+		tx.Rollback()
 		http.Error(w, "Room is full", http.StatusForbidden)
 		return
 	}
@@ -186,7 +189,13 @@ func (h *RoomHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 		RoomID: req.RoomID,
 		Role:   "member",
 	}
-	if err := h.db.Create(&userRoom).Error; err != nil {
+	if err := tx.Create(&userRoom).Error; err != nil {
+		tx.Rollback()
+		http.Error(w, "Failed to join room", http.StatusInternalServerError)
+		return
+	}
+
+	if err := tx.Commit().Error; err != nil {
 		http.Error(w, "Failed to join room", http.StatusInternalServerError)
 		return
 	}

@@ -99,6 +99,17 @@ type Client struct {
 	packetsOut    atomic.Int64
 	bytesIn       atomic.Int64
 	bytesOut      atomic.Int64
+	closed        atomic.Bool
+}
+
+// safeCloseSend closes the client's send channel idempotently.
+// Returns true if the channel was closed by this call, false if already closed.
+func (c *Client) safeCloseSend() bool {
+	if c.closed.CompareAndSwap(false, true) {
+		close(c.send)
+		return true
+	}
+	return false
 }
 
 func NewHub() *Hub {
@@ -190,7 +201,7 @@ func (h *Hub) Run() {
 				r.mutex.Lock()
 				if _, ok := r.clients[client]; ok {
 					delete(r.clients, client)
-					close(client.send)
+					client.safeCloseSend()
 					if len(r.clients) == 0 {
 						delete(h.rooms, client.roomID)
 						delete(h.roomMutexes, client.roomID)
@@ -211,14 +222,18 @@ func (h *Hub) Run() {
 			h.mutex.RUnlock()
 			if ok {
 				r.mutex.Lock()
+				var toRemove []*Client
 				for client := range r.clients {
 					select {
 					case client.send <- message.encode():
 					default:
-						close(client.send)
-						delete(r.clients, client)
-						h.activeClients.Add(-1)
+						client.safeCloseSend()
+						toRemove = append(toRemove, client)
 					}
+				}
+				for _, client := range toRemove {
+					delete(r.clients, client)
+					h.activeClients.Add(-1)
 				}
 				clientCount := len(r.clients)
 				r.mutex.Unlock()
@@ -276,6 +291,7 @@ func (h *Hub) flushBatch(batch []*batchItem) {
 		h.mutex.RUnlock()
 		if ok {
 			r.mutex.Lock()
+			var toRemove []*Client
 			for _, item := range items {
 				encoded := item.message.encode()
 				for client := range r.clients {
@@ -283,12 +299,15 @@ func (h *Hub) flushBatch(batch []*batchItem) {
 						select {
 						case client.send <- encoded:
 						default:
-							close(client.send)
-							delete(r.clients, client)
-							h.activeClients.Add(-1)
+							client.safeCloseSend()
+							toRemove = append(toRemove, client)
 						}
 					}
 				}
+			}
+			for _, client := range toRemove {
+				delete(r.clients, client)
+				h.activeClients.Add(-1)
 			}
 			r.mutex.Unlock()
 		}
@@ -324,7 +343,7 @@ func (h *Hub) gracefulShutdown() {
 		r.mutex.Lock()
 		clientCount := len(r.clients)
 		for client := range r.clients {
-			close(client.send)
+			client.safeCloseSend()
 		}
 		r.clients = make(map[*Client]bool)
 		r.mutex.Unlock()
@@ -380,7 +399,7 @@ func (h *Hub) RegisterClient(userID, roomID uuid.UUID, conn *websocket.Conn) *Cl
 			"user_id", userID,
 			"old_connection_id", existingClient.connectionID)
 		existingClient.SetState(StateDisconnecting)
-		close(existingClient.send)
+		existingClient.safeCloseSend()
 		delete(h.userConnections, userID)
 		h.activeClients.Add(-1)
 		if r, ok := h.rooms[existingClient.roomID]; ok {
@@ -502,6 +521,7 @@ func (h *Hub) broadcastToRoom(roomID uuid.UUID, msg *Message, excludeUserID uuid
 	}
 
 	deliveredCount := 0
+	var toRemove []*Client
 	for client := range r.clients {
 		if excludeUserID != (uuid.UUID{}) && client.userID == excludeUserID {
 			continue
@@ -514,10 +534,13 @@ func (h *Hub) broadcastToRoom(roomID uuid.UUID, msg *Message, excludeUserID uuid
 				"connection_id", client.connectionID,
 				"user_id", client.userID,
 				"room_id", roomID)
-			close(client.send)
-			delete(r.clients, client)
-			h.activeClients.Add(-1)
+			client.safeCloseSend()
+			toRemove = append(toRemove, client)
 		}
+	}
+	for _, client := range toRemove {
+		delete(r.clients, client)
+		h.activeClients.Add(-1)
 	}
 	r.mutex.Unlock()
 
