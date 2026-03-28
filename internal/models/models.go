@@ -15,16 +15,17 @@ const (
 )
 
 type Message struct {
-	ID        uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
-	RoomID    uuid.UUID      `gorm:"type:uuid;not null;index" json:"room_id"`
-	UserID    uuid.UUID      `gorm:"type:uuid;not null" json:"user_id"`
-	Type      MessageType    `gorm:"type:varchar(20);default:'text'" json:"type"`
-	Content   string         `gorm:"type:text;not null" json:"content"`
-	IsEdited  bool           `gorm:"default:false" json:"is_edited"`
-	IsDeleted bool           `gorm:"default:false" json:"is_deleted"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	ID            uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	RoomID        uuid.UUID      `gorm:"type:uuid;not null;index" json:"room_id"`
+	UserID        uuid.UUID      `gorm:"type:uuid;not null" json:"user_id"`
+	Type          MessageType    `gorm:"type:varchar(20);default:'text'" json:"type"`
+	Content       string         `gorm:"type:text;not null" json:"content"`
+	IsEdited      bool           `gorm:"default:false" json:"is_edited"`
+	IsDeleted     bool           `gorm:"default:false" json:"is_deleted"`
+	ForwardedFrom *uuid.UUID     `gorm:"type:uuid" json:"forwarded_from,omitempty"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
 
 	User User `gorm:"foreignKey:UserID" json:"-"`
 	Room Room `gorm:"foreignKey:RoomID" json:"-"`
@@ -41,15 +42,16 @@ func (m *Message) BeforeCreate(tx *gorm.DB) error {
 }
 
 type DirectMessage struct {
-	ID         uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
-	SenderID   uuid.UUID      `gorm:"type:uuid;not null" json:"sender_id"`
-	ReceiverID uuid.UUID      `gorm:"type:uuid;not null" json:"receiver_id"`
-	Content    string         `gorm:"type:text;not null" json:"content"`
-	IsEdited   bool           `gorm:"default:false" json:"is_edited"`
-	IsDeleted  bool           `gorm:"default:false" json:"is_deleted"`
-	CreatedAt  time.Time      `json:"created_at"`
-	UpdatedAt  time.Time      `json:"updated_at"`
-	DeletedAt  gorm.DeletedAt `gorm:"index" json:"-"`
+	ID            uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	SenderID      uuid.UUID      `gorm:"type:uuid;not null" json:"sender_id"`
+	ReceiverID    uuid.UUID      `gorm:"type:uuid;not null" json:"receiver_id"`
+	Content       string         `gorm:"type:text;not null" json:"content"`
+	IsEdited      bool           `gorm:"default:false" json:"is_edited"`
+	IsDeleted     bool           `gorm:"default:false" json:"is_deleted"`
+	ForwardedFrom *uuid.UUID     `gorm:"type:uuid" json:"forwarded_from,omitempty"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
 
 	Sender   User `gorm:"foreignKey:SenderID" json:"-"`
 	Receiver User `gorm:"foreignKey:ReceiverID" json:"-"`
@@ -776,6 +778,75 @@ func (n *Notification) BeforeCreate(tx *gorm.DB) error {
 	}
 	if n.CreatedAt.IsZero() {
 		n.CreatedAt = time.Now()
+	}
+	return nil
+}
+
+type GroupDM struct {
+	ID        uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	Name      string         `gorm:"size:100" json:"name"`
+	CreatedBy uuid.UUID      `gorm:"type:uuid;not null" json:"created_by"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	Creator User            `gorm:"foreignKey:CreatedBy" json:"-"`
+	Members []GroupDMMember `gorm:"foreignKey:GroupDMID" json:"members,omitempty"`
+}
+
+func (g *GroupDM) BeforeCreate(tx *gorm.DB) error {
+	if g.ID == uuid.Nil {
+		g.ID = uuid.New()
+	}
+	if g.CreatedAt.IsZero() {
+		g.CreatedAt = time.Now()
+	}
+	return nil
+}
+
+type GroupDMMember struct {
+	ID        uuid.UUID `gorm:"type:uuid;primary_key" json:"id"`
+	GroupDMID uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_group_dm_member" json:"group_dm_id"`
+	UserID    uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_group_dm_member" json:"user_id"`
+	Role      string    `gorm:"size:20;default:'member'" json:"role"`
+	JoinedAt  time.Time `json:"joined_at"`
+
+	GroupDM GroupDM `gorm:"foreignKey:GroupDMID" json:"-"`
+	User    User    `gorm:"foreignKey:UserID" json:"-"`
+}
+
+func (gm *GroupDMMember) BeforeCreate(tx *gorm.DB) error {
+	if gm.ID == uuid.Nil {
+		gm.ID = uuid.New()
+	}
+	if gm.JoinedAt.IsZero() {
+		gm.JoinedAt = time.Now()
+	}
+	return nil
+}
+
+type GroupDMMessage struct {
+	ID            uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	GroupDMID     uuid.UUID      `gorm:"type:uuid;not null;index" json:"group_dm_id"`
+	SenderID      uuid.UUID      `gorm:"type:uuid;not null" json:"sender_id"`
+	Content       string         `gorm:"type:text;not null" json:"content"`
+	IsEdited      bool           `gorm:"default:false" json:"is_edited"`
+	IsDeleted     bool           `gorm:"default:false" json:"is_deleted"`
+	ForwardedFrom *uuid.UUID     `gorm:"type:uuid" json:"forwarded_from,omitempty"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
+
+	GroupDM GroupDM `gorm:"foreignKey:GroupDMID" json:"-"`
+	Sender  User    `gorm:"foreignKey:SenderID" json:"-"`
+}
+
+func (gm *GroupDMMessage) BeforeCreate(tx *gorm.DB) error {
+	if gm.ID == uuid.Nil {
+		gm.ID = uuid.New()
+	}
+	if gm.CreatedAt.IsZero() {
+		gm.CreatedAt = time.Now()
 	}
 	return nil
 }

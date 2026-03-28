@@ -26,6 +26,7 @@ func setupMessageHandlerDB(t *testing.T) *gorm.DB {
 		&models.Category{},
 		&models.Message{},
 		&models.Presence{},
+		&models.RoomSettings{},
 	)
 	if err != nil {
 		t.Fatalf("failed to migrate database: %v", err)
@@ -370,4 +371,267 @@ func TestMessageHandler_SearchMessages(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMessageHandler_SendMessage_SlowMode(t *testing.T) {
+	db := setupMessageHandlerDB(t)
+	testDB := &database.Database{DB: db}
+	hub := websocket.NewHub()
+	handler := NewMessageHandler(testDB, hub)
+
+	user := models.User{
+		ID:       uuid.New(),
+		Username: "slowuser",
+		Email:    "slow@example.com",
+	}
+	db.Create(&user)
+
+	room := models.Room{
+		ID:   uuid.New(),
+		Name: "slow-room",
+	}
+	db.Create(&room)
+
+	userRoom := models.UserRoom{
+		UserID: user.ID,
+		RoomID: room.ID,
+		Role:   "member",
+	}
+	db.Create(&userRoom)
+
+	roomSettings := models.RoomSettings{
+		RoomID:          room.ID,
+		SlowModeSeconds: 10,
+	}
+	db.Create(&roomSettings)
+
+	t.Run("first message allowed", func(t *testing.T) {
+		body, _ := json.Marshal(SendMessageRequest{
+			RoomID:  room.ID,
+			Content: "First message",
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/message/send", bytes.NewReader(body))
+		req = req.WithContext(messageContextWithUserID(req.Context(), user.ID))
+		w := httptest.NewRecorder()
+
+		handler.SendMessage(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+		}
+	})
+
+	t.Run("second message blocked by slow mode", func(t *testing.T) {
+		body, _ := json.Marshal(SendMessageRequest{
+			RoomID:  room.ID,
+			Content: "Too fast!",
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/message/send", bytes.NewReader(body))
+		req = req.WithContext(messageContextWithUserID(req.Context(), user.ID))
+		w := httptest.NewRecorder()
+
+		handler.SendMessage(w, req)
+
+		if w.Code != http.StatusTooManyRequests {
+			t.Errorf("expected status %d, got %d", http.StatusTooManyRequests, w.Code)
+		}
+	})
+}
+
+func TestMessageHandler_SendMessage_NoSlowMode(t *testing.T) {
+	db := setupMessageHandlerDB(t)
+	testDB := &database.Database{DB: db}
+	hub := websocket.NewHub()
+	handler := NewMessageHandler(testDB, hub)
+
+	user := models.User{
+		ID:       uuid.New(),
+		Username: "fastuser",
+		Email:    "fast@example.com",
+	}
+	db.Create(&user)
+
+	room := models.Room{
+		ID:   uuid.New(),
+		Name: "fast-room",
+	}
+	db.Create(&room)
+
+	userRoom := models.UserRoom{
+		UserID: user.ID,
+		RoomID: room.ID,
+		Role:   "member",
+	}
+	db.Create(&userRoom)
+
+	t.Run("rapid messages allowed without slow mode", func(t *testing.T) {
+		for i := 0; i < 3; i++ {
+			body, _ := json.Marshal(SendMessageRequest{
+				RoomID:  room.ID,
+				Content: "Message " + string(rune('A'+i)),
+			})
+			req := httptest.NewRequest(http.MethodPost, "/api/message/send", bytes.NewReader(body))
+			req = req.WithContext(messageContextWithUserID(req.Context(), user.ID))
+			w := httptest.NewRecorder()
+
+			handler.SendMessage(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Errorf("message %d: expected status %d, got %d", i, http.StatusOK, w.Code)
+			}
+		}
+	})
+}
+
+func TestMessageHandler_ForwardMessage(t *testing.T) {
+	db := setupMessageHandlerDB(t)
+	testDB := &database.Database{DB: db}
+	hub := websocket.NewHub()
+	handler := NewMessageHandler(testDB, hub)
+
+	user := models.User{
+		ID:       uuid.New(),
+		Username: "forwarder",
+		Email:    "forward@example.com",
+	}
+	db.Create(&user)
+
+	sourceRoom := models.Room{
+		ID:   uuid.New(),
+		Name: "source-room",
+	}
+	db.Create(&sourceRoom)
+
+	targetRoom := models.Room{
+		ID:   uuid.New(),
+		Name: "target-room",
+	}
+	db.Create(&targetRoom)
+
+	nonMemberRoom := models.Room{
+		ID:   uuid.New(),
+		Name: "non-member-room",
+	}
+	db.Create(&nonMemberRoom)
+
+	db.Create(&models.UserRoom{UserID: user.ID, RoomID: sourceRoom.ID, Role: "member"})
+	db.Create(&models.UserRoom{UserID: user.ID, RoomID: targetRoom.ID, Role: "member"})
+
+	originalMsg := models.Message{
+		ID:      uuid.New(),
+		RoomID:  sourceRoom.ID,
+		UserID:  user.ID,
+		Content: "Original message to forward",
+	}
+	db.Create(&originalMsg)
+
+	tests := []struct {
+		name           string
+		body           ForwardMessageRequest
+		expectedStatus int
+		setupCtx       func(ctx context.Context, userID uuid.UUID) context.Context
+	}{
+		{
+			name: "valid forward",
+			body: ForwardMessageRequest{
+				MessageID: originalMsg.ID,
+				RoomID:    targetRoom.ID,
+			},
+			expectedStatus: http.StatusCreated,
+			setupCtx:       messageContextWithUserID,
+		},
+		{
+			name: "missing message_id",
+			body: ForwardMessageRequest{
+				RoomID: targetRoom.ID,
+			},
+			expectedStatus: http.StatusBadRequest,
+			setupCtx:       messageContextWithUserID,
+		},
+		{
+			name: "missing room_id",
+			body: ForwardMessageRequest{
+				MessageID: originalMsg.ID,
+			},
+			expectedStatus: http.StatusBadRequest,
+			setupCtx:       messageContextWithUserID,
+		},
+		{
+			name: "non-existent message",
+			body: ForwardMessageRequest{
+				MessageID: uuid.New(),
+				RoomID:    targetRoom.ID,
+			},
+			expectedStatus: http.StatusNotFound,
+			setupCtx:       messageContextWithUserID,
+		},
+		{
+			name: "non-member of target room",
+			body: ForwardMessageRequest{
+				MessageID: originalMsg.ID,
+				RoomID:    nonMemberRoom.ID,
+			},
+			expectedStatus: http.StatusForbidden,
+			setupCtx:       messageContextWithUserID,
+		},
+		{
+			name: "unauthorized",
+			body: ForwardMessageRequest{
+				MessageID: originalMsg.ID,
+				RoomID:    targetRoom.ID,
+			},
+			expectedStatus: http.StatusUnauthorized,
+			setupCtx:       func(ctx context.Context, _ uuid.UUID) context.Context { return ctx },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, _ := json.Marshal(tt.body)
+			req := httptest.NewRequest(http.MethodPost, "/api/message/forward", bytes.NewReader(body))
+			req = req.WithContext(tt.setupCtx(req.Context(), user.ID))
+			w := httptest.NewRecorder()
+
+			handler.ForwardMessage(w, req)
+
+			if w.Code != tt.expectedStatus {
+				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+			}
+		})
+	}
+
+	t.Run("forwarded message has correct forwarded_from", func(t *testing.T) {
+		body, _ := json.Marshal(ForwardMessageRequest{
+			MessageID: originalMsg.ID,
+			RoomID:    targetRoom.ID,
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/message/forward", bytes.NewReader(body))
+		req = req.WithContext(messageContextWithUserID(req.Context(), user.ID))
+		w := httptest.NewRecorder()
+
+		handler.ForwardMessage(w, req)
+
+		if w.Code != http.StatusCreated {
+			t.Fatalf("expected status %d, got %d", http.StatusCreated, w.Code)
+		}
+
+		var response MessageResponse
+		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+
+		if response.ForwardedFrom == nil {
+			t.Error("expected forwarded_from to be set")
+		} else if *response.ForwardedFrom != originalMsg.ID {
+			t.Errorf("expected forwarded_from to be %s, got %s", originalMsg.ID, *response.ForwardedFrom)
+		}
+
+		if response.Content != originalMsg.Content {
+			t.Errorf("expected content %q, got %q", originalMsg.Content, response.Content)
+		}
+
+		if response.RoomID != targetRoom.ID {
+			t.Errorf("expected room_id %s, got %s", targetRoom.ID, response.RoomID)
+		}
+	})
 }

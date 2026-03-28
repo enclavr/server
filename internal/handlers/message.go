@@ -55,16 +55,17 @@ type UpdateMessageRequest struct {
 }
 
 type MessageResponse struct {
-	ID        uuid.UUID `json:"id"`
-	RoomID    uuid.UUID `json:"room_id"`
-	UserID    uuid.UUID `json:"user_id"`
-	Username  string    `json:"username"`
-	Type      string    `json:"type"`
-	Content   string    `json:"content"`
-	IsEdited  bool      `json:"is_edited"`
-	IsDeleted bool      `json:"is_deleted"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID            uuid.UUID  `json:"id"`
+	RoomID        uuid.UUID  `json:"room_id"`
+	UserID        uuid.UUID  `json:"user_id"`
+	Username      string     `json:"username"`
+	Type          string     `json:"type"`
+	Content       string     `json:"content"`
+	IsEdited      bool       `json:"is_edited"`
+	IsDeleted     bool       `json:"is_deleted"`
+	ForwardedFrom *uuid.UUID `json:"forwarded_from,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 func (h *MessageHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
@@ -107,6 +108,27 @@ func (h *MessageHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var roomSettings models.RoomSettings
+	if err := h.db.Where("room_id = ?", req.RoomID).First(&roomSettings).Error; err == nil {
+		if roomSettings.SlowModeSeconds > 0 && userRoom.LastMessageAt != nil {
+			elapsed := time.Since(*userRoom.LastMessageAt)
+			required := time.Duration(roomSettings.SlowModeSeconds) * time.Second
+			if elapsed < required {
+				remaining := required - elapsed
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Retry-After", strconv.Itoa(int(remaining.Seconds())+1))
+				w.WriteHeader(http.StatusTooManyRequests)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"error":             "slow_mode_enabled",
+					"message":           "Slow mode is enabled for this room",
+					"slow_mode_seconds": roomSettings.SlowModeSeconds,
+					"retry_after":       int(remaining.Seconds()) + 1,
+				})
+				return
+			}
+		}
+	}
+
 	msgType := models.MessageTypeText
 	if req.Type == "system" {
 		var user models.User
@@ -126,6 +148,10 @@ func (h *MessageHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to save message", http.StatusInternalServerError)
 		return
 	}
+
+	now := time.Now()
+	h.db.Model(&models.UserRoom{}).Where("user_id = ? AND room_id = ?", userID, req.RoomID).
+		Update("last_message_at", now)
 
 	mentions, err := h.mentionService.ParseMentions(msg.Content, msg.RoomID, userID)
 	if err != nil {
@@ -147,16 +173,17 @@ func (h *MessageHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := MessageResponse{
-		ID:        msg.ID,
-		RoomID:    msg.RoomID,
-		UserID:    msg.UserID,
-		Username:  user.Username,
-		Type:      string(msg.Type),
-		Content:   msg.Content,
-		IsEdited:  msg.IsEdited,
-		IsDeleted: msg.IsDeleted,
-		CreatedAt: msg.CreatedAt,
-		UpdatedAt: msg.UpdatedAt,
+		ID:            msg.ID,
+		RoomID:        msg.RoomID,
+		UserID:        msg.UserID,
+		Username:      user.Username,
+		Type:          string(msg.Type),
+		Content:       msg.Content,
+		IsEdited:      msg.IsEdited,
+		IsDeleted:     msg.IsDeleted,
+		ForwardedFrom: msg.ForwardedFrom,
+		CreatedAt:     msg.CreatedAt,
+		UpdatedAt:     msg.UpdatedAt,
 	}
 
 	wsMsg := &websocket.Message{
@@ -252,16 +279,17 @@ func (h *MessageHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 		}
 
 		response = append(response, MessageResponse{
-			ID:        msg.ID,
-			RoomID:    msg.RoomID,
-			UserID:    msg.UserID,
-			Username:  username,
-			Type:      string(msg.Type),
-			Content:   content,
-			IsEdited:  msg.IsEdited,
-			IsDeleted: msg.IsDeleted,
-			CreatedAt: msg.CreatedAt,
-			UpdatedAt: msg.UpdatedAt,
+			ID:            msg.ID,
+			RoomID:        msg.RoomID,
+			UserID:        msg.UserID,
+			Username:      username,
+			Type:          string(msg.Type),
+			Content:       content,
+			IsEdited:      msg.IsEdited,
+			IsDeleted:     msg.IsDeleted,
+			ForwardedFrom: msg.ForwardedFrom,
+			CreatedAt:     msg.CreatedAt,
+			UpdatedAt:     msg.UpdatedAt,
 		})
 	}
 
@@ -330,16 +358,17 @@ func (h *MessageHandler) UpdateMessage(w http.ResponseWriter, r *http.Request) {
 	h.db.First(&user, "id = ?", msg.UserID)
 
 	response := MessageResponse{
-		ID:        msg.ID,
-		RoomID:    msg.RoomID,
-		UserID:    msg.UserID,
-		Username:  user.Username,
-		Type:      string(msg.Type),
-		Content:   msg.Content,
-		IsEdited:  msg.IsEdited,
-		IsDeleted: msg.IsDeleted,
-		CreatedAt: msg.CreatedAt,
-		UpdatedAt: msg.UpdatedAt,
+		ID:            msg.ID,
+		RoomID:        msg.RoomID,
+		UserID:        msg.UserID,
+		Username:      user.Username,
+		Type:          string(msg.Type),
+		Content:       msg.Content,
+		IsEdited:      msg.IsEdited,
+		IsDeleted:     msg.IsDeleted,
+		ForwardedFrom: msg.ForwardedFrom,
+		CreatedAt:     msg.CreatedAt,
+		UpdatedAt:     msg.UpdatedAt,
 	}
 
 	wsMsg := &websocket.Message{
@@ -484,6 +513,114 @@ func (h *MessageHandler) SearchMessages(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(results); err != nil {
+		log.Printf("Error encoding response: %v", err)
+	}
+}
+
+type ForwardMessageRequest struct {
+	MessageID uuid.UUID `json:"message_id"`
+	RoomID    uuid.UUID `json:"room_id"`
+}
+
+func (h *MessageHandler) ForwardMessage(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req ForwardMessageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.MessageID == uuid.Nil {
+		http.Error(w, "message_id is required", http.StatusBadRequest)
+		return
+	}
+
+	if req.RoomID == uuid.Nil {
+		http.Error(w, "room_id is required", http.StatusBadRequest)
+		return
+	}
+
+	var originalMsg models.Message
+	if err := h.db.First(&originalMsg, "id = ? AND is_deleted = false", req.MessageID).Error; err != nil {
+		http.Error(w, "Original message not found", http.StatusNotFound)
+		return
+	}
+
+	var targetRoom models.Room
+	if err := h.db.First(&targetRoom, "id = ?", req.RoomID).Error; err != nil {
+		http.Error(w, "Target room not found", http.StatusNotFound)
+		return
+	}
+
+	var userRoom models.UserRoom
+	if err := h.db.Where("user_id = ? AND room_id = ?", userID, req.RoomID).First(&userRoom).Error; err != nil {
+		http.Error(w, "You must be a member of the target room", http.StatusForbidden)
+		return
+	}
+
+	var originalRoom models.UserRoom
+	if err := h.db.Where("user_id = ? AND room_id = ?", userID, originalMsg.RoomID).First(&originalRoom).Error; err != nil {
+		http.Error(w, "You must be a member of the original room", http.StatusForbidden)
+		return
+	}
+
+	forwardedFrom := originalMsg.ID
+	msg := &models.Message{
+		RoomID:        req.RoomID,
+		UserID:        userID,
+		Content:       originalMsg.Content,
+		Type:          originalMsg.Type,
+		ForwardedFrom: &forwardedFrom,
+	}
+
+	if err := h.db.Create(msg).Error; err != nil {
+		http.Error(w, "Failed to forward message", http.StatusInternalServerError)
+		return
+	}
+
+	now := time.Now()
+	h.db.Model(&models.UserRoom{}).Where("user_id = ? AND room_id = ?", userID, req.RoomID).
+		Update("last_message_at", now)
+
+	var user models.User
+	h.db.First(&user, "id = ?", userID)
+
+	response := MessageResponse{
+		ID:            msg.ID,
+		RoomID:        msg.RoomID,
+		UserID:        msg.UserID,
+		Username:      user.Username,
+		Type:          string(msg.Type),
+		Content:       msg.Content,
+		IsEdited:      false,
+		IsDeleted:     false,
+		ForwardedFrom: msg.ForwardedFrom,
+		CreatedAt:     msg.CreatedAt,
+		UpdatedAt:     msg.UpdatedAt,
+	}
+
+	wsMsg := &websocket.Message{
+		Type:      "chat-message",
+		RoomID:    msg.RoomID,
+		UserID:    msg.UserID,
+		Timestamp: time.Now(),
+	}
+	wsPayload, err := json.Marshal(response)
+	if err != nil {
+		log.Printf("Error marshaling WebSocket payload for ForwardMessage: %v", err)
+	} else {
+		wsMsg.Payload = wsPayload
+		h.hub.BroadcastToRoom(msg.RoomID, wsMsg, uuid.Nil)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("Error encoding response: %v", err)
 	}
 }

@@ -112,6 +112,9 @@ func (d *Database) Migrate() error {
 		&models.UserConnection{},
 		&models.VoiceChannel{},
 		&models.VoiceChannelParticipant{},
+		&models.GroupDM{},
+		&models.GroupDMMember{},
+		&models.GroupDMMessage{},
 	)
 	if err != nil {
 		return err
@@ -247,6 +250,12 @@ func (d *Database) Migrate() error {
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_voice_channels_created_by ON voice_channels(created_by)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_voice_channel_participants_channel_id ON voice_channel_participants(channel_id)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_voice_channel_participants_user_id ON voice_channel_participants(user_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_group_dms_created_by ON group_dms(created_by)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_group_dm_members_group_dm_id ON group_dm_members(group_dm_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_group_dm_members_user_id ON group_dm_members(user_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_group_dm_messages_group_dm_id ON group_dm_messages(group_dm_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_group_dm_messages_sender_id ON group_dm_messages(sender_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_group_dm_messages_created_at ON group_dm_messages(created_at DESC)")
 
 	log.Println("Database migration completed")
 	return nil

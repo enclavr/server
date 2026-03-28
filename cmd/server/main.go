@@ -208,6 +208,7 @@ func main() {
 	roomTransferHandler := handlers.NewRoomTransferHandler(db)
 	announcementHandler := handlers.NewAnnouncementHandler(db)
 	voiceChannelHandler := handlers.NewVoiceChannelHandler(db)
+	groupDMHandler := handlers.NewGroupDMHandler(db)
 	webAuthnRPID := os.Getenv("WEBAUTHN_RPID")
 	if webAuthnRPID == "" {
 		webAuthnRPID = "localhost"
@@ -305,6 +306,7 @@ func main() {
 	mux.HandleFunc("/api/message/send", middleware.RequireAuth(authService, messageHandler.SendMessage))
 	mux.HandleFunc("/api/message/update", middleware.RequireAuth(authService, messageHandler.UpdateMessage))
 	mux.HandleFunc("/api/message/delete", middleware.RequireAuth(authService, messageHandler.DeleteMessage))
+	mux.HandleFunc("/api/message/forward", middleware.RequireAuth(authService, messageHandler.ForwardMessage))
 
 	mux.HandleFunc("/api/presence/update", middleware.RequireAuth(authService, presenceHandler.UpdatePresence))
 	mux.HandleFunc("/api/presence/room", middleware.RequireAuth(authService, presenceHandler.GetPresence))
@@ -323,6 +325,14 @@ func main() {
 	mux.HandleFunc("/api/dm/read", middleware.RequireAuth(authService, dmReadReceiptHandler.MarkRead))
 	mux.HandleFunc("/api/dm/read/status", middleware.RequireAuth(authService, dmReadReceiptHandler.GetReadStatus))
 	mux.HandleFunc("/api/dm/read/all", middleware.RequireAuth(authService, dmReadReceiptHandler.MarkAllRead))
+
+	mux.HandleFunc("/api/group-dm/create", middleware.RequireAuth(authService, groupDMHandler.CreateGroupDM))
+	mux.HandleFunc("/api/group-dms", middleware.RequireAuth(authService, groupDMHandler.GetGroupDMs))
+	mux.HandleFunc("/api/group-dm/messages", middleware.RequireAuth(authService, groupDMHandler.GetGroupDMMessages))
+	mux.HandleFunc("/api/group-dm/message/send", middleware.RequireAuth(authService, groupDMHandler.SendGroupDMMessage))
+	mux.HandleFunc("/api/group-dm/member/add", middleware.RequireAuth(authService, groupDMHandler.AddMember))
+	mux.HandleFunc("/api/group-dm/member/remove", middleware.RequireAuth(authService, groupDMHandler.RemoveMember))
+	mux.HandleFunc("/api/group-dm/leave", middleware.RequireAuth(authService, groupDMHandler.LeaveGroupDM))
 
 	mux.HandleFunc("/api/users/search", middleware.RequireAuth(authService, userHandler.SearchUsers))
 	mux.HandleFunc("/api/user/update", middleware.RequireAuth(authService, userHandler.UpdateUser))

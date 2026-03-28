@@ -54,11 +54,12 @@ func (c *Category) BeforeCreate(tx *gorm.DB) error {
 }
 
 type UserRoom struct {
-	ID       uuid.UUID `gorm:"type:uuid;primary_key" json:"id"`
-	UserID   uuid.UUID `gorm:"type:uuid;not null" json:"user_id"`
-	RoomID   uuid.UUID `gorm:"type:uuid;not null" json:"room_id"`
-	Role     string    `gorm:"size:20;default:'member'" json:"role"`
-	JoinedAt time.Time `json:"joined_at"`
+	ID            uuid.UUID  `gorm:"type:uuid;primary_key" json:"id"`
+	UserID        uuid.UUID  `gorm:"type:uuid;not null" json:"user_id"`
+	RoomID        uuid.UUID  `gorm:"type:uuid;not null" json:"room_id"`
+	Role          string     `gorm:"size:20;default:'member'" json:"role"`
+	JoinedAt      time.Time  `json:"joined_at"`
+	LastMessageAt *time.Time `json:"last_message_at"`
 
 	User User `gorm:"foreignKey:UserID" json:"-"`
 	Room Room `gorm:"foreignKey:RoomID" json:"-"`
