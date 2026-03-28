@@ -107,9 +107,10 @@ func (h *DirectMessageHandler) GetConversations(w http.ResponseWriter, r *http.R
 		Order("MAX(created_at) DESC")
 
 	if err := h.db.Table("(?) as sub", subQuery).
-		Select("sub.user_id, users.username, users.display_name, users.avatar_url, MAX(dm.content) as last_message, MAX(dm.created_at) as last_time, COUNT(*) as unread_count").
+		Select("sub.user_id, users.username, users.display_name, users.avatar_url, MAX(dm.content) as last_message, MAX(dm.created_at) as last_time, COUNT(CASE WHEN dm.sender_id != ? AND dmr.id IS NULL THEN 1 END) as unread_count", userID).
 		Joins("JOIN users ON users.id = sub.user_id").
 		Joins("LEFT JOIN direct_messages dm ON (dm.sender_id = ? AND dm.receiver_id = sub.user_id) OR (dm.sender_id = sub.user_id AND dm.receiver_id = ?)", userID, userID).
+		Joins("LEFT JOIN dm_read_receipts dmr ON dmr.direct_message_id = dm.id AND dmr.user_id = ?", userID).
 		Group("sub.user_id, users.id, users.username, users.display_name, users.avatar_url").
 		Order("last_time DESC").
 		Scan(&conversations).Error; err != nil {

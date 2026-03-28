@@ -4332,9 +4332,9 @@ func (c *Client) handleGetNotificationPreferences(msg *Message) {
 	}
 
 	key := fmt.Sprintf("%s:%s", c.userID, roomID)
-	c.hub.mutex.RLock()
+	c.hub.notificationMutex.RLock()
 	existing, exists := c.hub.notificationSettings[key]
-	c.hub.mutex.RUnlock()
+	c.hub.notificationMutex.RUnlock()
 
 	prefs := &RoomNotificationPreferences{
 		RoomID:    roomID.String(),

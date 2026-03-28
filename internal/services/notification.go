@@ -217,13 +217,15 @@ func (ns *NotificationService) sendPush(ctx context.Context, notification Notifi
 		}
 	}
 
-	if userIDStr, ok := notification.Data["user_id"].(string); ok {
-		if userID, err := uuid.Parse(userIDStr); err == nil {
-			err := ns.pushService.SendNotification(userID, pushPayload)
-			if err != nil {
-				result.Error = err
-				result.Success = false
-				return result
+	if notification.Data != nil {
+		if userIDStr, ok := notification.Data["user_id"].(string); ok {
+			if userID, err := uuid.Parse(userIDStr); err == nil {
+				err := ns.pushService.SendNotification(userID, pushPayload)
+				if err != nil {
+					result.Error = err
+					result.Success = false
+					return result
+				}
 			}
 		}
 	}
@@ -241,6 +243,12 @@ func (ns *NotificationService) sendWebhook(ctx context.Context, notification Not
 
 	if ns.webhookService == nil {
 		result.Error = fmt.Errorf("webhook service not configured")
+		result.Success = false
+		return result
+	}
+
+	if notification.Data == nil {
+		result.Error = fmt.Errorf("notification data is nil")
 		result.Success = false
 		return result
 	}

@@ -19,6 +19,7 @@ func setupTestDBForDM(t *testing.T) *gorm.DB {
 	err := db.AutoMigrate(
 		&models.User{},
 		&models.DirectMessage{},
+		&models.DMReadReceipt{},
 	)
 	if err != nil {
 		t.Fatalf("failed to migrate database: %v", err)

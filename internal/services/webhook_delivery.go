@@ -171,6 +171,15 @@ func (s *WebhookDeliveryService) QueueBatch(deliveries []WebhookDelivery) []erro
 func (s *WebhookDeliveryService) ScheduleDelivery(delivery WebhookDelivery, delay time.Duration) {
 	delivery.ScheduledAt = time.Now().Add(delay)
 	go func() {
+		if delay > 0 {
+			timer := time.NewTimer(delay)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+			case <-s.ctx.Done():
+				return
+			}
+		}
 		select {
 		case s.retryQueue <- delivery:
 			s.mu.Lock()

@@ -559,7 +559,7 @@ type Ban struct {
 
 	User   User `gorm:"foreignKey:UserID" json:"-"`
 	Room   Room `gorm:"foreignKey:RoomID" json:"-"`
-	Banned User `gorm:"foreignKey:UserID" json:"-"`
+	Banned User `gorm:"foreignKey:BannedBy" json:"-"`
 }
 
 func (b *Ban) BeforeCreate(tx *gorm.DB) error {

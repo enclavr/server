@@ -168,7 +168,7 @@ func (es *EmailService) connectLocked() error {
 		}
 	}
 
-	auth := smtp.PlainAuth("", es.config.SMTPHost, es.config.SMTPPassword, es.config.SMTPHost)
+	auth := smtp.PlainAuth("", es.config.SMTPUsername, es.config.SMTPPassword, es.config.SMTPHost)
 	if err = es.client.Auth(auth); err != nil {
 		if quitErr := es.client.Quit(); quitErr != nil {
 			log.Printf("SMTP quit error: %v", quitErr)
