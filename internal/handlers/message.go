@@ -9,6 +9,7 @@ import (
 
 	"github.com/enclavr/server/internal/database"
 	"github.com/enclavr/server/internal/models"
+	"github.com/enclavr/server/internal/services"
 	"github.com/enclavr/server/internal/websocket"
 	"github.com/enclavr/server/pkg/middleware"
 	"github.com/enclavr/server/pkg/validator"
@@ -16,12 +17,17 @@ import (
 )
 
 type MessageHandler struct {
-	db  *database.Database
-	hub *websocket.Hub
+	db             *database.Database
+	hub            *websocket.Hub
+	mentionService *services.MentionService
 }
 
 func NewMessageHandler(db *database.Database, hub *websocket.Hub) *MessageHandler {
-	return &MessageHandler{db: db, hub: hub}
+	return &MessageHandler{
+		db:             db,
+		hub:            hub,
+		mentionService: services.NewMentionService(db),
+	}
 }
 
 type SearchMessagesRequest struct {
@@ -118,10 +124,23 @@ func (h *MessageHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	mentions, err := h.mentionService.ParseMentions(msg.Content, msg.RoomID, userID)
+	if err != nil {
+		log.Printf("Error parsing mentions for message %s: %v", msg.ID, err)
+	} else if len(mentions) > 0 {
+		if err := h.mentionService.SaveMentions(mentions, msg.ID, msg.RoomID); err != nil {
+			log.Printf("Error saving mentions for message %s: %v", msg.ID, err)
+		}
+	}
+
 	var user models.User
 	if err := h.db.First(&user, "id = ?", userID).Error; err != nil {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
+	}
+
+	if len(mentions) > 0 {
+		go h.mentionService.CreateMentionNotifications(mentions, user.Username, msg.RoomID, msg.ID)
 	}
 
 	response := MessageResponse{

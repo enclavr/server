@@ -203,6 +203,9 @@ func main() {
 	dmWebSocketHandler := handlers.NewDMWebSocketHandler(db, dmHub, cfg)
 	dmReactionHandler := handlers.NewDMReactionHandler(db, dmHub)
 	dmReadReceiptHandler := handlers.NewDMReadReceiptHandler(db, dmHub)
+	mentionHandler := handlers.NewMentionHandler(db)
+	roomTransferHandler := handlers.NewRoomTransferHandler(db)
+	announcementHandler := handlers.NewAnnouncementHandler(db)
 	_ = services.NewPushService(db, cfg)
 
 	go hub.Run()
@@ -491,6 +494,18 @@ func main() {
 	mux.HandleFunc("/api/category-permission/update", middleware.RequireAuth(authService, categoryPermissionHandler.UpdatePermission))
 	mux.HandleFunc("/api/category-permission/delete", middleware.RequireAuth(authService, categoryPermissionHandler.DeletePermission))
 	mux.HandleFunc("/api/category-permission/check", middleware.RequireAuth(authService, categoryPermissionHandler.CheckPermission))
+
+	mux.HandleFunc("/api/mentions", middleware.RequireAuth(authService, mentionHandler.GetUserMentions))
+	mux.HandleFunc("/api/mentions/message", middleware.RequireAuth(authService, mentionHandler.GetMessageMentions))
+
+	mux.HandleFunc("/api/room/transfer-ownership", middleware.RequireAuth(authService, roomTransferHandler.TransferOwnership))
+
+	mux.HandleFunc("/api/announcements", middleware.RequireAuth(authService, announcementHandler.GetAnnouncements))
+	mux.HandleFunc("/api/announcement/active", middleware.RequireAuth(authService, announcementHandler.GetActiveAnnouncement))
+	mux.HandleFunc("/api/announcement/create", middleware.RequireAuth(authService, announcementHandler.CreateAnnouncement))
+	mux.HandleFunc("/api/announcement/update", middleware.RequireAuth(authService, announcementHandler.UpdateAnnouncement))
+	mux.HandleFunc("/api/announcement/delete", middleware.RequireAuth(authService, announcementHandler.DeleteAnnouncement))
+	mux.HandleFunc("/api/announcement/deactivate", middleware.RequireAuth(authService, announcementHandler.DeactivateAnnouncement))
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

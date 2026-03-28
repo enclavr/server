@@ -105,6 +105,8 @@ func (d *Database) Migrate() error {
 		&models.PreferenceOverride{},
 		&models.CategorySettings{},
 		&models.AttachmentTag{},
+		&models.MessageMention{},
+		&models.Announcement{},
 	)
 	if err != nil {
 		return err
@@ -226,6 +228,11 @@ func (d *Database) Migrate() error {
 	}
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_attachment_share_url ON attachment_shares(share_url)")
 	d.Exec("CREATE INDEX IF NOT EXISTS idx_attachment_share_attachment ON attachment_shares(attachment_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_message_mentions_message_id ON message_mentions(message_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_message_mentions_user_id ON message_mentions(user_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_message_mentions_room_id ON message_mentions(room_id)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_announcements_active ON announcements(is_active, created_at DESC)")
+	d.Exec("CREATE INDEX IF NOT EXISTS idx_announcements_created_by ON announcements(created_by)")
 
 	log.Println("Database migration completed")
 	return nil
