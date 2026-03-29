@@ -25,7 +25,7 @@ This repository maintains a `memory-bank/` directory for agent context. It is **
 ## Tech Stack
 
 - **Language:** Go 1.25 (August 2025)
-- **Web Framework:** Go net/http with gorilla/mux
+- **Web Framework:** Go net/http with gin-gonic/gin
 - **Database:** PostgreSQL (Neon default) / PostgreSQL 18 (self-hosted) + GORM ORM
 - **WebSocket:** gorilla/websocket
 - **Real-time:** WebSocket with Redis pub/sub for scaling
