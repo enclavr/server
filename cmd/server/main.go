@@ -208,6 +208,7 @@ func main() {
 	roomTransferHandler := handlers.NewRoomTransferHandler(db)
 	announcementHandler := handlers.NewAnnouncementHandler(db)
 	voiceChannelHandler := handlers.NewVoiceChannelHandler(db)
+	voiceChannelPermHandler := handlers.NewVoiceChannelPermissionHandler(db)
 	groupDMHandler := handlers.NewGroupDMHandler(db)
 	typingHandler := handlers.NewTypingIndicatorHandler(db)
 	voiceSessionHandler := handlers.NewVoiceSessionHandler(db)
@@ -302,6 +303,13 @@ func main() {
 	mux.HandleFunc("/api/voice-channel/leave", middleware.RequireAuth(authService, voiceChannelHandler.LeaveChannel))
 	mux.HandleFunc("/api/voice-channel/participants", middleware.RequireAuth(authService, voiceChannelHandler.GetParticipants))
 	mux.HandleFunc("/api/voice-channel/participant/update", middleware.RequireAuth(authService, voiceChannelHandler.UpdateParticipant))
+
+	mux.HandleFunc("/api/voice-channel/permission", middleware.RequireAuth(authService, voiceChannelPermHandler.GetUserPermission))
+	mux.HandleFunc("/api/voice-channel/permissions", middleware.RequireAuth(authService, voiceChannelPermHandler.GetPermissions))
+	mux.HandleFunc("/api/voice-channel/permission/set", middleware.RequireAuth(authService, voiceChannelPermHandler.SetPermission))
+	mux.HandleFunc("/api/voice-channel/permission/delete", middleware.RequireAuth(authService, voiceChannelPermHandler.DeletePermission))
+	mux.HandleFunc("/api/voice-channel/permission/check", middleware.RequireAuth(authService, voiceChannelPermHandler.CheckPermission))
+	mux.HandleFunc("/api/voice-channel/permissions/bulk", middleware.RequireAuth(authService, voiceChannelPermHandler.BulkSetPermissions))
 
 	mux.HandleFunc("/api/dm/ws", middleware.RequireAuth(authService, dmWebSocketHandler.HandleDMWebSocket))
 

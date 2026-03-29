@@ -64,3 +64,40 @@ func (vcp *VoiceChannelParticipant) BeforeCreate(tx *gorm.DB) error {
 	}
 	return nil
 }
+
+// VoiceChannelPermission defines granular access control for a voice channel.
+// When a permission entry exists for a user, it overrides default channel behavior.
+type VoiceChannelPermission struct {
+	ID              uuid.UUID      `gorm:"type:uuid;primary_key" json:"id"`
+	ChannelID       uuid.UUID      `gorm:"type:uuid;not null;uniqueIndex:idx_channel_user_perm" json:"channel_id"`
+	UserID          uuid.UUID      `gorm:"type:uuid;not null;uniqueIndex:idx_channel_user_perm" json:"user_id"`
+	CanJoin         bool           `gorm:"" json:"can_join"`
+	CanSpeak        bool           `gorm:"" json:"can_speak"`
+	CanMuteOthers   bool           `gorm:"" json:"can_mute_others"`
+	CanDeafenOthers bool           `gorm:"" json:"can_deafen_others"`
+	CanMoveUsers    bool           `gorm:"" json:"can_move_users"`
+	IsPriority      bool           `gorm:"" json:"is_priority"`
+	GrantedBy       uuid.UUID      `gorm:"type:uuid;not null" json:"granted_by"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
+
+	Channel       VoiceChannel `gorm:"foreignKey:ChannelID" json:"-"`
+	User          User         `gorm:"foreignKey:UserID" json:"-"`
+	GrantedByUser User         `gorm:"foreignKey:GrantedBy" json:"-"`
+}
+
+// BeforeCreate sets the ID and timestamps before creating a permission.
+func (vcp *VoiceChannelPermission) BeforeCreate(tx *gorm.DB) error {
+	if vcp.ID == uuid.Nil {
+		vcp.ID = uuid.New()
+	}
+	now := time.Now()
+	if vcp.CreatedAt.IsZero() {
+		vcp.CreatedAt = now
+	}
+	if vcp.UpdatedAt.IsZero() {
+		vcp.UpdatedAt = now
+	}
+	return nil
+}

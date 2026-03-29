@@ -60,6 +60,7 @@ func SetupTestDB(t *testing.T) *gorm.DB {
 		&models.UserNotificationSettings{},
 		&models.VoiceChannel{},
 		&models.VoiceChannelParticipant{},
+		&models.VoiceChannelPermission{},
 	)
 	if err != nil {
 		t.Fatalf("failed to migrate test database: %v", err)
