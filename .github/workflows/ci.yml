@@ -46,7 +46,9 @@ jobs:
         run: golangci-lint run -c .golangci.yml --timeout 5m
 
       - name: Run tests with PostgreSQL
-        if: false  # Disabled due to test isolation issues - use SQLite instead
+        # Disabled: direct PostgreSQL tests conflict with Neon-based CI setup.
+        # Self-hosted PostgreSQL is tested locally; CI uses Neon or SQLite.
+        if: false
         run: |
           go test -v -race -p 1 -coverprofile=coverage.out -count=1 \
             -timeout 15m \

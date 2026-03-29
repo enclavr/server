@@ -135,6 +135,8 @@ go fmt ./...
 | REDIS_DB | 0 | Redis database |
 | SENTRY_DSN | - | Sentry DSN for error tracking |
 
+> **Note:** This table is not exhaustive. See [`.env.example`](../.env.example) for the full list of environment variables.
+
 ### Admin User Configuration
 
 | Variable | Default | Description |
@@ -191,4 +193,4 @@ When the codebase grows too large (>50 files in a module), refactor into smaller
 
 ## License
 
-MIT
+The Unlicense (Public Domain)

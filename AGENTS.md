@@ -25,7 +25,7 @@ This repository maintains a `memory-bank/` directory for agent context. It is **
 ## Tech Stack
 
 - **Language:** Go 1.25 (August 2025)
-- **Web Framework:** Go net/http with gin-gonic/gin
+- **Web Framework:** Go net/http (standard library) — gin-gonic/gin used only in tests
 - **Database:** PostgreSQL (Neon default) / PostgreSQL 18 (self-hosted) + GORM ORM
 - **WebSocket:** gorilla/websocket
 - **Real-time:** WebSocket with Redis pub/sub for scaling
@@ -58,8 +58,8 @@ go mod tidy
 ```
 cmd/server/          # Entry point
 internal/
-  handlers/          # HTTP handlers (35+ handlers)
-  models/            # GORM database models (30+ tables)
+  handlers/          # HTTP handlers (~55 handlers)
+  models/            # GORM database models (34 tables)
   services/          # Business logic
   config/            # Configuration
   database/          # Database connection
@@ -214,7 +214,7 @@ psql -h localhost -U user dbname < backup_pre_migration.sql
 
 ## API Design
 
-- RESTful URLs: `/api/v1/resource`
+- RESTful URLs: `/api/resource`
 - Use proper HTTP methods: GET, POST, PUT, DELETE
 - Return JSON for all responses
 - Use status codes correctly
