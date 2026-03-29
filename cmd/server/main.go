@@ -292,7 +292,7 @@ func main() {
 	mux.HandleFunc("/api/rooms/search", middleware.RequireAuth(authService, roomHandler.SearchRooms))
 
 	mux.HandleFunc("/api/voice/ws", middleware.RequireAuth(authService, voiceHandler.HandleWebSocket))
-	mux.HandleFunc("/api/voice/ice", voiceHandler.GetICEConfig)
+	mux.HandleFunc("/api/voice/ice", middleware.RequireAuth(authService, voiceHandler.GetICEConfig))
 
 	mux.HandleFunc("/api/voice-channels", middleware.RequireAuth(authService, voiceChannelHandler.GetRoomChannels))
 	mux.HandleFunc("/api/voice-channel", middleware.RequireAuth(authService, voiceChannelHandler.GetChannel))
@@ -412,7 +412,7 @@ func main() {
 	mux.HandleFunc("/api/files/upload", middleware.RequireAuth(authService, fileHandler.UploadFile))
 	mux.HandleFunc("/api/files", middleware.RequireAuth(authService, fileHandler.GetRoomFiles))
 	mux.HandleFunc("/api/files/delete", middleware.RequireAuth(authService, fileHandler.DeleteFile))
-	mux.HandleFunc("/api/files/", fileHandler.GetFile)
+	mux.HandleFunc("/api/files/", middleware.RequireAuth(authService, fileHandler.GetFile))
 
 	mux.HandleFunc("/api/thread/create", middleware.RequireAuth(authService, threadHandler.CreateThread))
 	mux.HandleFunc("/api/thread", middleware.RequireAuth(authService, threadHandler.GetThread))

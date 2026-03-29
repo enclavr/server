@@ -67,7 +67,8 @@ func (h *VoiceHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 			allowedOrigins := h.config.Server.AllowedOrigins
 			if len(allowedOrigins) == 0 {
-				return true
+				log.Printf("WARNING: No ALLOWED_ORIGINS configured. Rejecting WebSocket connection from origin: %s", origin)
+				return false
 			}
 
 			for _, allowed := range allowedOrigins {

@@ -74,7 +74,8 @@ func (h *DMWebSocketHandler) HandleDMWebSocket(w http.ResponseWriter, r *http.Re
 
 			allowedOrigins := h.config.Server.AllowedOrigins
 			if len(allowedOrigins) == 0 {
-				return true
+				log.Printf("WARNING: No ALLOWED_ORIGINS configured. Rejecting DM WebSocket connection from origin: %s", origin)
+				return false
 			}
 
 			for _, allowed := range allowedOrigins {
