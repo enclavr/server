@@ -22,7 +22,7 @@ RUN apk add --no-cache --virtual .build-deps gcc musl-dev && \
     apk del .build-deps
 
 # Runtime stage
-FROM alpine:3.21
+FROM alpine:3.23
 
 # Metadata labels for runtime image
 LABEL org.opencontainers.image.title="Enclavr Server Runtime" \
