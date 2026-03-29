@@ -159,16 +159,27 @@ func (h *VoiceSessionHandler) GetVoiceSessionStats(w http.ResponseWriter, r *htt
 	query.Where("ended_at IS NULL").Count(&activeSessions)
 
 	var totalMinutes float64
-	h.db.Model(&models.VoiceSession{}).
-		Where("user_id = ? AND ended_at IS NOT NULL", userID).
-		Select("COALESCE(EXTRACT(EPOCH FROM SUM(ended_at - started_at)) / 60, 0)").
-		Scan(&totalMinutes)
-
 	var avgDuration float64
-	h.db.Model(&models.VoiceSession{}).
-		Where("user_id = ? AND ended_at IS NOT NULL", userID).
-		Select("COALESCE(AVG(EXTRACT(EPOCH FROM ended_at - started_at)), 0)").
-		Scan(&avgDuration)
+
+	if database.IsSQLiteDB(h.db.DB) {
+		h.db.Model(&models.VoiceSession{}).
+			Where("user_id = ? AND ended_at IS NOT NULL", userID).
+			Select("COALESCE(SUM(CAST((julianday(ended_at) - julianday(started_at)) * 86400 AS REAL)) / 60, 0)").
+			Scan(&totalMinutes)
+		h.db.Model(&models.VoiceSession{}).
+			Where("user_id = ? AND ended_at IS NOT NULL", userID).
+			Select("COALESCE(AVG(CAST((julianday(ended_at) - julianday(started_at)) * 86400 AS REAL)), 0)").
+			Scan(&avgDuration)
+	} else {
+		h.db.Model(&models.VoiceSession{}).
+			Where("user_id = ? AND ended_at IS NOT NULL", userID).
+			Select("COALESCE(EXTRACT(EPOCH FROM SUM(ended_at - started_at)) / 60, 0)").
+			Scan(&totalMinutes)
+		h.db.Model(&models.VoiceSession{}).
+			Where("user_id = ? AND ended_at IS NOT NULL", userID).
+			Select("COALESCE(AVG(EXTRACT(EPOCH FROM ended_at - started_at)), 0)").
+			Scan(&avgDuration)
+	}
 
 	stats := VoiceSessionStats{
 		TotalSessions:  int(totalSessions),

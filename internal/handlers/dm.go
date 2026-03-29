@@ -65,7 +65,10 @@ func (h *DirectMessageHandler) SendDM(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var blockCount int64
-	h.db.Model(&models.Block{}).Where("blocker_id = ? AND blocked_id = ?", req.ReceiverID, userID).Count(&blockCount)
+	if err := h.db.Model(&models.Block{}).Where("blocker_id = ? AND blocked_id = ?", req.ReceiverID, userID).Count(&blockCount).Error; err != nil {
+		http.Error(w, "Failed to check block status", http.StatusInternalServerError)
+		return
+	}
 	if blockCount > 0 {
 		http.Error(w, "You are blocked by this user", http.StatusForbidden)
 		return

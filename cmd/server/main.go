@@ -236,6 +236,7 @@ func main() {
 	mux.HandleFunc("/api/auth/login", authRateLimiter(authHandler.Login))
 	mux.HandleFunc("/api/auth/refresh", authHandler.RefreshToken)
 	mux.HandleFunc("/api/auth/me", middleware.RequireAuth(authService, authHandler.GetMe))
+	mux.HandleFunc("/api/auth/logout", middleware.RequireAuth(authService, authHandler.Logout))
 
 	mux.HandleFunc("/api/auth/oidc/login", oidcHandler.Login)
 	mux.HandleFunc("/api/auth/oidc/callback", oidcHandler.Callback)
