@@ -710,3 +710,46 @@ mcp-sequential-thinking_sequentialthinking --thought "Analyzing the problem step
 - ✅ Use for complex multi-step problems
 - ✅ Use for planning and design with room for revision
 - ✅ Use when full scope might not be clear initially
+
+## GitHub Security (via `gh api`)
+
+The `gh` CLI has NO dedicated security commands. Use `gh api` for all security operations.
+
+### Dependabot Alerts
+```bash
+# List open Dependabot alerts
+gh api repos/enclavr/server/dependabot/alerts --jq '.[] | {number, state, severity, package: .security_advisory.summary, cve: .security_advisory.cve_id}'
+
+# Get alert details (includes vulnerable range, patch version, description)
+gh api repos/enclavr/server/dependabot/alerts/ALERT_NUMBER
+
+# Dismiss an alert
+gh api -X PATCH repos/enclavr/server/dependabot/alerts/ALERT_NUMBER -f state=dismissed -f dismissed_reason=no_fix_available
+```
+
+### Code Scanning Alerts
+```bash
+# List code scanning alerts
+gh api repos/enclavr/server/code-scanning/alerts --jq '.[] | {number, state, rule: .rule.id, severity: .rule.severity, description: .most_recent_instance.message.text, file: .most_recent_instance.location.path, line: .most_recent_instance.location.start_line}'
+
+# Dismiss a false positive
+gh api -X PATCH repos/enclavr/server/code-scanning/alerts/ALERT_NUMBER -f state=dismissed -f dismissed_reason=false_positive
+```
+
+### Secret Scanning
+```bash
+# List secret scanning alerts
+gh api repos/enclavr/server/secret-scanning/alerts
+```
+
+### Dependabot Configuration
+Dependabot is configured in `.github/dependabot.yml`:
+- **gomod** (Go modules): weekly Monday, grouped prod/dev, cooldown for major/minor/patch
+- **GitHub Actions**: weekly Monday, grouped
+- **Docker**: weekly Wednesday
+
+**Security workflow:** Check alerts -> Fix vulnerabilities -> Run `golangci-lint run ./... && go test -v ./...` -> Commit -> Push
+
+## Git Push Policy
+
+**ALWAYS keep git commits up to date on the remote.** After every commit, push immediately: `git push origin main`. Never leave local-only commits.
