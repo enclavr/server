@@ -7,11 +7,41 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+var sensitiveKeys = []string{
+	"authorization", "cookie", "set-cookie", "x-api-key",
+	"x-auth-token", "x-csrf-token", "password", "token",
+	"secret", "api_key", "access_token", "refresh_token",
+}
+
+func sanitizeFields(fields map[string]interface{}) map[string]interface{} {
+	if fields == nil {
+		return nil
+	}
+	sanitized := make(map[string]interface{}, len(fields))
+	for k, v := range fields {
+		lowerKey := strings.ToLower(k)
+		isSensitive := false
+		for _, sk := range sensitiveKeys {
+			if strings.Contains(lowerKey, sk) {
+				isSensitive = true
+				break
+			}
+		}
+		if isSensitive {
+			sanitized[k] = "[REDACTED]"
+		} else {
+			sanitized[k] = v
+		}
+	}
+	return sanitized
+}
 
 type Level string
 
@@ -115,7 +145,7 @@ func logEntry(level Level, msg string, fields map[string]interface{}) {
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Level:     level,
 		Message:   msg,
-		Fields:    fields,
+		Fields:    sanitizeFields(fields),
 	}
 
 	data, err := json.Marshal(entry)
@@ -142,7 +172,7 @@ func logEntryWithContext(ctx context.Context, level Level, msg string, fields ma
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Level:     level,
 		Message:   msg,
-		Fields:    fields,
+		Fields:    sanitizeFields(fields),
 	}
 
 	if reqID, ok := ctx.Value(RequestIDKey).(string); ok && reqID != "" {
@@ -155,10 +185,6 @@ func logEntryWithContext(ctx context.Context, level Level, msg string, fields ma
 
 	if corrID, ok := ctx.Value(CorrelationIDKey).(string); ok && corrID != "" {
 		entry.CorrelationID = corrID
-	}
-
-	if spanID, ok := ctx.Value(SpanIDKey).(string); ok && spanID != "" {
-		entry.SpanID = spanID
 	}
 
 	data, err := json.Marshal(entry)

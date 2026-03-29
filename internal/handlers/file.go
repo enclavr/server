@@ -228,12 +228,12 @@ func (h *FileHandler) GetFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+	if _, err := os.Stat(absFilePath); os.IsNotExist(err) {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
 	}
 
-	http.ServeFile(w, r, filePath)
+	http.ServeFile(w, r, absFilePath)
 }
 
 func (h *FileHandler) GetRoomFiles(w http.ResponseWriter, r *http.Request) {

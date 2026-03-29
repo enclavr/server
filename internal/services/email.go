@@ -260,12 +260,18 @@ func (es *EmailService) sendMailgun(to EmailRecipient, subject, htmlBody, textBo
 	return fmt.Errorf("Mailgun provider not implemented")
 }
 
+func sanitizeHeaderValue(value string) string {
+	value = strings.ReplaceAll(value, "\r", "")
+	value = strings.ReplaceAll(value, "\n", "")
+	return value
+}
+
 func buildMessage(from, to mail.Address, subject, htmlBody, textBody string) string {
 	var buf bytes.Buffer
 
 	buf.WriteString("From: " + from.String() + "\r\n")
 	buf.WriteString("To: " + to.String() + "\r\n")
-	buf.WriteString("Subject: " + subject + "\r\n")
+	buf.WriteString("Subject: " + sanitizeHeaderValue(subject) + "\r\n")
 	buf.WriteString("MIME-Version: 1.0\r\n")
 	buf.WriteString("Content-Type: multipart/alternative; boundary=boundary\r\n\r\n")
 

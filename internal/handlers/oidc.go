@@ -109,10 +109,12 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.SetCookie(w, &http.Cookie{
-		Name:   "oidc_state",
-		Value:  "",
-		Path:   "/",
-		MaxAge: -1,
+		Name:     "oidc_state",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		Secure:   true,
+		HttpOnly: true,
 	})
 
 	code := r.URL.Query().Get("code")

@@ -180,17 +180,21 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.SetCookie(w, &http.Cookie{
-		Name:   "oauth_state",
-		Value:  "",
-		Path:   "/",
-		MaxAge: -1,
+		Name:     "oauth_state",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		Secure:   true,
+		HttpOnly: true,
 	})
 
 	http.SetCookie(w, &http.Cookie{
-		Name:   "oauth_provider",
-		Value:  "",
-		Path:   "/",
-		MaxAge: -1,
+		Name:     "oauth_provider",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		Secure:   true,
+		HttpOnly: true,
 	})
 
 	var oauthCfg oauth2.Config
