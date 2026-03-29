@@ -1,0 +1,68 @@
+This is free and unencumbered software released into the public domain.
+
+Anyone is free to copy, modify, publish, use, compile, sell, or
+distribute this software, either in source code form or as a compiled
+binary, for any purpose, commercial or non-commercial, and by any
+means.
+
+In jurisdictions that recognize copyright laws, the author or authors
+of this software dedicate any and all copyright interest in the
+software to the public domain. We make this dedication for the benefit
+of the public at large and to the detriment of our heirs and
+successors. We intend this dedication to be an overt act of
+relinquishment in perpetuity of all present and future rights to this
+software under copyright law.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+---
+
+## Legal Compliance Disclaimer
+
+This software is provided "as is" for self-hosting purposes. Users are solely
+responsible for ensuring compliance with applicable laws and regulations in
+their jurisdiction.
+
+### Export Controls & Sanctions
+
+This software includes encryption capabilities. Users are responsible for:
+- Complying with applicable export control laws in their jurisdiction
+- Ensuring compliance with sanctions and embargo regulations
+- Not using this software in sanctioned or restricted jurisdictions
+
+This software may not be exported or re-exported to persons or entities
+blocked, denied, or designated under applicable export control laws.
+
+### Data Protection & Privacy
+
+This software processes personal data (usernames, voice data, messages).
+Deployers are responsible for:
+- Obtaining necessary consents
+- Implementing appropriate data protection measures
+- Responding to data subject requests
+- Complying with applicable data breach notification requirements
+
+### Telecom & Voice Regulations
+
+This software enables real-time voice communication. Users/deployers are
+responsible for:
+- Complying with local VoIP/telecom regulations
+- Implementing emergency services (e.g., E911) where required
+- Lawful interception capabilities where legally mandated
+- Any licensing or registration requirements for voice services
+
+### No Warranties
+
+THIS SOFTWARE IS PROVIDED WITHOUT ANY WARRANTIES, EXPRESS OR IMPLIED.
+THE AUTHORS ACCEPT NO LIABILITY FOR ANY LEGAL CONSEQUENCES ARISING FROM
+THE USE OR DEPLOYMENT OF THIS SOFTWARE, INCLUDING BUT NOT LIMITED TO:
+- Data protection or privacy law violations
+- Telecommunications regulatory violations
+- Export control violations
+- Security breaches or vulnerabilities
