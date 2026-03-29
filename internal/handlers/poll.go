@@ -370,7 +370,11 @@ func (h *PollHandler) Vote(w http.ResponseWriter, r *http.Request) {
 
 	if !poll.IsMultiple {
 		var existingCount int64
-		tx.Model(&models.PollVote{}).Where("poll_id = ? AND user_id = ?", req.PollID, userID).Count(&existingCount)
+		if err := tx.Model(&models.PollVote{}).Where("poll_id = ? AND user_id = ?", req.PollID, userID).Count(&existingCount).Error; err != nil {
+			tx.Rollback()
+			http.Error(w, "Failed to check existing votes", http.StatusInternalServerError)
+			return
+		}
 		if existingCount > 0 {
 			tx.Rollback()
 			http.Error(w, "You have already voted on this poll", http.StatusForbidden)
