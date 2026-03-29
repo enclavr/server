@@ -30,6 +30,10 @@ func NewDMWebSocketHandler(db *database.Database, dmHub *websocket.DMHub, cfg *c
 
 func (h *DMWebSocketHandler) HandleDMWebSocket(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r)
+	if userID == uuid.Nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
 	peerIDStr := r.URL.Query().Get("peer_id")
 
 	if peerIDStr == "" {

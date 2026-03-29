@@ -290,7 +290,7 @@ func main() {
 	mux.HandleFunc("/api/room/leave", middleware.RequireAuth(authService, roomHandler.LeaveRoom))
 	mux.HandleFunc("/api/rooms/search", middleware.RequireAuth(authService, roomHandler.SearchRooms))
 
-	mux.HandleFunc("/api/voice/ws", voiceHandler.HandleWebSocket)
+	mux.HandleFunc("/api/voice/ws", middleware.RequireAuth(authService, voiceHandler.HandleWebSocket))
 	mux.HandleFunc("/api/voice/ice", voiceHandler.GetICEConfig)
 
 	mux.HandleFunc("/api/voice-channels", middleware.RequireAuth(authService, voiceChannelHandler.GetRoomChannels))
@@ -303,7 +303,7 @@ func main() {
 	mux.HandleFunc("/api/voice-channel/participants", middleware.RequireAuth(authService, voiceChannelHandler.GetParticipants))
 	mux.HandleFunc("/api/voice-channel/participant/update", middleware.RequireAuth(authService, voiceChannelHandler.UpdateParticipant))
 
-	mux.HandleFunc("/api/dm/ws", dmWebSocketHandler.HandleDMWebSocket)
+	mux.HandleFunc("/api/dm/ws", middleware.RequireAuth(authService, dmWebSocketHandler.HandleDMWebSocket))
 
 	mux.HandleFunc("/api/messages", middleware.RequireAuth(authService, messageHandler.GetMessages))
 	mux.HandleFunc("/api/message/send", middleware.RequireAuth(authService, messageHandler.SendMessage))
@@ -360,7 +360,7 @@ func main() {
 	mux.HandleFunc("/api/reaction/remove", middleware.RequireAuth(authService, reactionHandler.RemoveReaction))
 	mux.HandleFunc("/api/reactions", middleware.RequireAuth(authService, reactionHandler.GetReactions))
 
-	mux.HandleFunc("/api/settings", settingsHandler.GetSettings)
+	mux.HandleFunc("/api/settings", middleware.RequireAuth(authService, settingsHandler.GetSettings))
 	mux.HandleFunc("/api/settings/update", middleware.RequireAuth(authService, settingsHandler.UpdateSettings))
 
 	mux.HandleFunc("/api/preferences", middleware.RequireAuth(authService, preferencesHandler.GetPreferences))

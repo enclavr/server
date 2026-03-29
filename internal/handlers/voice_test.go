@@ -162,6 +162,9 @@ func TestVoiceHandler_HandleWebSocket_MissingRoomID(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/ws", nil)
 	w := httptest.NewRecorder()
 
+	ctx := context.Background()
+	req = req.WithContext(context.WithValue(ctx, middleware.UserIDKey, uuid.New()))
+
 	handler.HandleWebSocket(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -178,6 +181,9 @@ func TestVoiceHandler_HandleWebSocket_InvalidRoomID(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/ws?room_id=invalid", nil)
 	w := httptest.NewRecorder()
+
+	ctx := context.Background()
+	req = req.WithContext(context.WithValue(ctx, middleware.UserIDKey, uuid.New()))
 
 	handler.HandleWebSocket(w, req)
 

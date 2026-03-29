@@ -137,15 +137,21 @@ func JWTAuthWithSession(authService *auth.AuthService, db *database.Database) fu
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
-			if authHeader == "" {
-				http.Error(w, "Authorization header required", http.StatusUnauthorized)
-				return
-			}
+			var tokenString string
 
-			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-			if tokenString == authHeader {
-				http.Error(w, "Invalid authorization format", http.StatusUnauthorized)
-				return
+			if authHeader != "" {
+				tokenString = strings.TrimPrefix(authHeader, "Bearer ")
+				if tokenString == authHeader {
+					http.Error(w, "Invalid authorization format", http.StatusUnauthorized)
+					return
+				}
+			} else {
+				// Fallback to query parameter for WebSocket connections
+				tokenString = r.URL.Query().Get("token")
+				if tokenString == "" {
+					http.Error(w, "Authorization header required", http.StatusUnauthorized)
+					return
+				}
 			}
 
 			claims, err := authService.ValidateToken(tokenString)

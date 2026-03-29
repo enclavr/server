@@ -476,13 +476,15 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 	redirectURI := h.cfg.Server.GetBaseURL() + "/api/v1/auth/oauth/callback"
 	token, err := h.oauthService.ExchangeCode(r.Context(), provider, req.Code, redirectURI)
 	if err != nil {
-		http.Error(w, "Failed to exchange code: "+err.Error(), http.StatusBadRequest)
+		log.Printf("[ERROR] OAuth token exchange failed: %v", err)
+		http.Error(w, "Authentication failed", http.StatusBadRequest)
 		return
 	}
 
 	userInfo, err := h.oauthService.GetUserInfo(r.Context(), provider, token)
 	if err != nil {
-		http.Error(w, "Failed to get user info: "+err.Error(), http.StatusBadRequest)
+		log.Printf("[ERROR] OAuth user info retrieval failed: %v", err)
+		http.Error(w, "Authentication failed", http.StatusBadRequest)
 		return
 	}
 

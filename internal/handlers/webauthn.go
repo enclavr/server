@@ -135,7 +135,7 @@ func (h *WebAuthnHandler) FinishRegistration(w http.ResponseWriter, r *http.Requ
 	credential, err := h.webAuthnService.FinishRegistration(r.Context(), userID, req.Name, credentialData)
 	if err != nil {
 		log.Printf("WebAuthn finish registration error: %v", err)
-		http.Error(w, "Failed to complete registration: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "Failed to complete registration", http.StatusBadRequest)
 		return
 	}
 
@@ -171,7 +171,7 @@ func (h *WebAuthnHandler) BeginLogin(w http.ResponseWriter, r *http.Request) {
 	options, _, err := h.webAuthnService.BeginLogin(r.Context(), userID)
 	if err != nil {
 		log.Printf("WebAuthn begin login error: %v", err)
-		http.Error(w, "Failed to begin login: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "Failed to begin login", http.StatusBadRequest)
 		return
 	}
 
@@ -217,7 +217,7 @@ func (h *WebAuthnHandler) FinishLogin(w http.ResponseWriter, r *http.Request) {
 	credential, err := h.webAuthnService.FinishLogin(r.Context(), userID, req.CredentialID, assertionData)
 	if err != nil {
 		log.Printf("WebAuthn finish login error: %v", err)
-		http.Error(w, "Authentication failed: "+err.Error(), http.StatusUnauthorized)
+		http.Error(w, "Authentication failed", http.StatusUnauthorized)
 		return
 	}
 

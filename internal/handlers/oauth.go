@@ -209,7 +209,8 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	token, err := oauthCfg.Exchange(r.Context(), code)
 	if err != nil {
-		http.Error(w, "Failed to exchange token: "+err.Error(), http.StatusInternalServerError)
+		log.Printf("[ERROR] OAuth token exchange failed: %v", err)
+		http.Error(w, "Authentication failed", http.StatusInternalServerError)
 		return
 	}
 
@@ -225,7 +226,8 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		http.Error(w, "Failed to get user: "+err.Error(), http.StatusInternalServerError)
+		log.Printf("[ERROR] OAuth user handling failed: %v", err)
+		http.Error(w, "Authentication failed", http.StatusInternalServerError)
 		return
 	}
 

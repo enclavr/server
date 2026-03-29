@@ -118,19 +118,21 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	token, err := h.oauth2Cfg.Exchange(r.Context(), code)
 	if err != nil {
-		http.Error(w, "Failed to exchange token: "+err.Error(), http.StatusInternalServerError)
+		log.Printf("[ERROR] OIDC token exchange failed: %v", err)
+		http.Error(w, "Authentication failed", http.StatusInternalServerError)
 		return
 	}
 
 	rawIDToken, ok := token.Extra("id_token").(string)
 	if !ok {
-		http.Error(w, "No id_token in response", http.StatusInternalServerError)
+		http.Error(w, "Authentication failed", http.StatusInternalServerError)
 		return
 	}
 
 	idToken, err := h.verifier.Verify(r.Context(), rawIDToken)
 	if err != nil {
-		http.Error(w, "Failed to verify ID token: "+err.Error(), http.StatusInternalServerError)
+		log.Printf("[ERROR] OIDC ID token verification failed: %v", err)
+		http.Error(w, "Authentication failed", http.StatusInternalServerError)
 		return
 	}
 
@@ -141,26 +143,30 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		PreferredUsername string `json:"preferred_username"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
-		http.Error(w, "Failed to parse claims: "+err.Error(), http.StatusInternalServerError)
+		log.Printf("[ERROR] OIDC claims parsing failed: %v", err)
+		http.Error(w, "Authentication failed", http.StatusInternalServerError)
 		return
 	}
 
 	user, err := h.findOrCreateUser(claims)
 	if err != nil {
-		http.Error(w, "Failed to create user: "+err.Error(), http.StatusInternalServerError)
+		log.Printf("[ERROR] OIDC user creation failed: %v", err)
+		http.Error(w, "Authentication failed", http.StatusInternalServerError)
 		return
 	}
 
 	authService := auth.NewAuthService(h.cfg)
 	accessToken, err := authService.GenerateToken(user)
 	if err != nil {
-		http.Error(w, "Failed to generate token: "+err.Error(), http.StatusInternalServerError)
+		log.Printf("[ERROR] OIDC token generation failed: %v", err)
+		http.Error(w, "Authentication failed", http.StatusInternalServerError)
 		return
 	}
 
 	refreshToken, err := authService.GenerateRefreshToken(user)
 	if err != nil {
-		http.Error(w, "Failed to generate refresh token: "+err.Error(), http.StatusInternalServerError)
+		log.Printf("[ERROR] OIDC refresh token generation failed: %v", err)
+		http.Error(w, "Authentication failed", http.StatusInternalServerError)
 		return
 	}
 

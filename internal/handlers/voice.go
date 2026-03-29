@@ -31,6 +31,10 @@ func NewVoiceHandler(db *database.Database, hub *websocket.Hub, cfg *config.Conf
 
 func (h *VoiceHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r)
+	if userID == uuid.Nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
 	roomIDStr := r.URL.Query().Get("room_id")
 
 	if roomIDStr == "" {

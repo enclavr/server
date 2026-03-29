@@ -87,7 +87,8 @@ func (h *TwoFactorHandler) Setup(w http.ResponseWriter, r *http.Request) {
 		Period:      30,
 	})
 	if err != nil {
-		http.Error(w, "Failed to generate secret: "+err.Error(), http.StatusInternalServerError)
+		log.Printf("[ERROR] Failed to generate TOTP secret: %v", err)
+		http.Error(w, "Failed to generate secret", http.StatusInternalServerError)
 		return
 	}
 
