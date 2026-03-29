@@ -97,7 +97,11 @@ func (h *RoomHandler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 		RoomID: room.ID,
 		Role:   "owner",
 	}
-	h.db.Create(&userRoom)
+	if err := h.db.Create(&userRoom).Error; err != nil {
+		log.Printf("Error creating user room: %v", err)
+		http.Error(w, "Failed to add creator to room", http.StatusInternalServerError)
+		return
+	}
 
 	h.sendRoomResponse(w, &room, 0)
 }
@@ -339,21 +343,40 @@ func (h *RoomHandler) SearchRooms(w http.ResponseWriter, r *http.Request) {
 	}
 
 	roomResponses := make([]RoomResponse, 0, len(rooms))
-	for _, room := range rooms {
-		var userCount int64
-		h.db.Model(&models.UserRoom{}).Where("room_id = ?", room.ID).Count(&userCount)
-
-		isMember := false
-		result := h.db.Model(&models.UserRoom{}).Where("user_id = ? AND room_id = ?", userID, room.ID).First(&models.UserRoom{})
-		if result.Error == nil {
-			isMember = true
+	if len(rooms) > 0 {
+		roomIDs := make([]uuid.UUID, len(rooms))
+		for i, room := range rooms {
+			roomIDs[i] = room.ID
 		}
 
-		response := h.roomToResponse(&room, int(userCount))
-		if isMember {
-			roomResponses = append([]RoomResponse{response}, roomResponses...)
-		} else {
-			roomResponses = append(roomResponses, response)
+		// Batch query: get user counts for all rooms at once
+		type roomCount struct {
+			RoomID uuid.UUID
+			Count  int64
+		}
+		var counts []roomCount
+		h.db.Model(&models.UserRoom{}).Select("room_id, count(*) as count").
+			Where("room_id IN ?", roomIDs).Group("room_id").Scan(&counts)
+		countMap := make(map[uuid.UUID]int64, len(counts))
+		for _, c := range counts {
+			countMap[c.RoomID] = c.Count
+		}
+
+		// Batch query: get membership for current user across all rooms
+		var memberships []models.UserRoom
+		h.db.Where("user_id = ? AND room_id IN ?", userID, roomIDs).Find(&memberships)
+		memberSet := make(map[uuid.UUID]bool, len(memberships))
+		for _, m := range memberships {
+			memberSet[m.RoomID] = true
+		}
+
+		for _, room := range rooms {
+			response := h.roomToResponse(&room, int(countMap[room.ID]))
+			if memberSet[room.ID] {
+				roomResponses = append([]RoomResponse{response}, roomResponses...)
+			} else {
+				roomResponses = append(roomResponses, response)
+			}
 		}
 	}
 

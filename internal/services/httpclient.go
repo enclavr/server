@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -113,19 +114,11 @@ func (c *HTTPClient) doWithRetry(ctx context.Context, req *http.Request) (*http.
 }
 
 func (c *HTTPClient) calculateBackoff(attempt int) time.Duration {
-	delay := float64(c.config.InitialDelay) * pow(c.config.BackoffMultiplier, float64(attempt-1))
+	delay := float64(c.config.InitialDelay) * math.Pow(c.config.BackoffMultiplier, float64(attempt-1))
 	if delay > float64(c.config.MaxDelay) {
 		return c.config.MaxDelay
 	}
 	return time.Duration(delay)
-}
-
-func pow(base, exp float64) float64 {
-	result := 1.0
-	for i := 0; i < int(exp); i++ {
-		result *= base
-	}
-	return result
 }
 
 func (c *HTTPClient) isRetryableStatus(statusCode int) bool {
@@ -217,7 +210,7 @@ type BackoffStrategy func(attempt int) time.Duration
 
 func ExponentialBackoff(initialDelay, maxDelay time.Duration, multiplier float64) BackoffStrategy {
 	return func(attempt int) time.Duration {
-		delay := float64(initialDelay) * pow(multiplier, float64(attempt))
+		delay := float64(initialDelay) * math.Pow(multiplier, float64(attempt))
 		if delay > float64(maxDelay) {
 			return maxDelay
 		}

@@ -469,11 +469,12 @@ func (w *WebhookNotificationService) SendWithRetry(ctx context.Context, url, eve
 			time.Sleep(w.retryDelay)
 			continue
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			resp.Body.Close()
 			return nil
 		}
+		resp.Body.Close()
 
 		lastErr = fmt.Errorf("webhook returned status %d", resp.StatusCode)
 		time.Sleep(w.config.RetryDelay)

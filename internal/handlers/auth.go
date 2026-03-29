@@ -951,7 +951,11 @@ func (h *AuthHandler) RequestPasswordReset(w http.ResponseWriter, r *http.Reques
 		Token:     token,
 		ExpiresAt: time.Now().Add(1 * time.Hour),
 	}
-	h.db.Create(&resetToken)
+	if err := h.db.Create(&resetToken).Error; err != nil {
+		log.Printf("Error creating password reset token: %v", err)
+		http.Error(w, "Failed to create reset token", http.StatusInternalServerError)
+		return
+	}
 
 	if h.emailService != nil && h.emailService.IsEnabled() {
 		resetURL := h.cfg.Server.GetBaseURL() + "/reset-password?token=" + token

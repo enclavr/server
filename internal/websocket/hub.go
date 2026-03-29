@@ -250,6 +250,8 @@ func (h *Hub) Run() {
 				for _, client := range toRemove {
 					delete(r.clients, client)
 					h.activeClients.Add(-1)
+					metrics.WebSocketConnections.Dec()
+					metrics.ActiveUsers.Dec()
 				}
 				clientCount := len(r.clients)
 				r.mutex.Unlock()
@@ -324,6 +326,8 @@ func (h *Hub) flushBatch(batch []*batchItem) {
 			for _, client := range toRemove {
 				delete(r.clients, client)
 				h.activeClients.Add(-1)
+				metrics.WebSocketConnections.Dec()
+				metrics.ActiveUsers.Dec()
 			}
 			r.mutex.Unlock()
 		}
@@ -418,6 +422,8 @@ func (h *Hub) RegisterClient(userID, roomID uuid.UUID, conn *websocket.Conn) *Cl
 		existingClient.safeCloseSend()
 		delete(h.userConnections, userID)
 		h.activeClients.Add(-1)
+		metrics.WebSocketConnections.Dec()
+		metrics.ActiveUsers.Dec()
 		if r, ok := h.rooms[existingClient.roomID]; ok {
 			r.mutex.Lock()
 			delete(r.clients, existingClient)
@@ -1469,7 +1475,11 @@ func (h *Hub) BroadcastMessageRead(userID, roomID, messageID uuid.UUID) {
 		"user_id":    userID.String(),
 		"read_at":    time.Now().UnixMilli(),
 	}
-	payloadBytes, _ := json.Marshal(readReceiptPayload)
+	payloadBytes, err := json.Marshal(readReceiptPayload)
+	if err != nil {
+		wsLogger.Error("Error marshaling read receipt payload", "error", err)
+		return
+	}
 
 	notifyMsg := &Message{
 		Type:      "message-read",
@@ -2184,7 +2194,11 @@ func (c *Client) handleHeartbeat(msg *Message) {
 		BytesSent:       c.bytesOut.Load(),
 	}
 
-	payload, _ := json.Marshal(health)
+	payload, err := json.Marshal(health)
+	if err != nil {
+		wsLogger.Error("Error marshaling heartbeat payload", "error", err)
+		return
+	}
 	responseMsg := &Message{
 		Type:      "heartbeat-ack",
 		RoomID:    c.roomID,
@@ -2649,7 +2663,11 @@ func (c *Client) handlePingWithTimestamp(msg *Message) {
 		LatencyMs:  roundTrip / 2,
 	}
 
-	payloadBytes, _ := json.Marshal(pongPayload)
+	payloadBytes, err := json.Marshal(pongPayload)
+	if err != nil {
+		wsLogger.Error("Error marshaling pong payload", "error", err)
+		return
+	}
 	pongMsg := &Message{
 		Type:      "pong-with-timestamp",
 		RoomID:    c.roomID,
@@ -2831,7 +2849,11 @@ func (c *Client) handleGetPresence(msg *Message) {
 		}
 	}
 
-	payloadBytes, _ := json.Marshal(presences)
+	payloadBytes, err := json.Marshal(presences)
+	if err != nil {
+		wsLogger.Error("Error marshaling presence list payload", "error", err)
+		return
+	}
 	responseMsg := &Message{
 		Type:      "presence-list",
 		RoomID:    c.roomID,
@@ -3044,11 +3066,19 @@ func (c *Client) handleMessageUpdated(msg *Message) {
 
 	sanitizedContent := validator.SanitizeMessageContent(payload.Content)
 
+	updatePayload, err := json.Marshal(map[string]string{
+		"message_id": payload.MessageID,
+		"content":    sanitizedContent,
+	})
+	if err != nil {
+		wsLogger.Error("Error marshaling message update payload", "error", err)
+		return
+	}
 	notifyMsg := &Message{
 		Type:      "message-updated",
 		RoomID:    c.roomID,
 		UserID:    c.userID,
-		Payload:   json.RawMessage(fmt.Sprintf(`{"message_id":"%s","content":"%s"}`, payload.MessageID, sanitizedContent)),
+		Payload:   updatePayload,
 		Timestamp: time.Now(),
 	}
 	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
@@ -3083,11 +3113,19 @@ func (c *Client) handleThreadReply(msg *Message) {
 
 	sanitizedContent := validator.SanitizeMessageContent(payload.Content)
 
+	replyPayload, err := json.Marshal(map[string]string{
+		"parent_id": payload.ParentID,
+		"content":   sanitizedContent,
+	})
+	if err != nil {
+		wsLogger.Error("Error marshaling thread reply payload", "error", err)
+		return
+	}
 	notifyMsg := &Message{
 		Type:      "thread-reply",
 		RoomID:    c.roomID,
 		UserID:    c.userID,
-		Payload:   json.RawMessage(fmt.Sprintf(`{"parent_id":"%s","content":"%s"}`, payload.ParentID, sanitizedContent)),
+		Payload:   replyPayload,
 		Timestamp: time.Now(),
 	}
 	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
@@ -3133,11 +3171,19 @@ func (c *Client) handleThreadMessage(msg *Message) {
 
 	sanitizedContent := validator.SanitizeMessageContent(payload.Content)
 
+	threadPayload, err := json.Marshal(map[string]string{
+		"thread_id": payload.ThreadID,
+		"content":   sanitizedContent,
+	})
+	if err != nil {
+		wsLogger.Error("Error marshaling thread message payload", "error", err)
+		return
+	}
 	notifyMsg := &Message{
 		Type:      "thread-message",
 		RoomID:    c.roomID,
 		UserID:    c.userID,
-		Payload:   json.RawMessage(fmt.Sprintf(`{"thread_id":"%s","content":"%s"}`, payload.ThreadID, sanitizedContent)),
+		Payload:   threadPayload,
 		Timestamp: time.Now(),
 	}
 	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
@@ -3269,7 +3315,11 @@ func (c *Client) handleClientReconnect(msg *Message) {
 	clients := c.hub.GetRoomClients(c.roomID)
 	typingUsers := c.hub.GetTypingUsers(c.roomID)
 
-	typingPayload, _ := json.Marshal(typingUsers)
+	typingPayload, err := json.Marshal(typingUsers)
+	if err != nil {
+		wsLogger.Error("Error marshaling typing users payload", "error", err)
+		return
+	}
 	typingMsg := &Message{
 		Type:      "typing-users-list",
 		RoomID:    c.roomID,
@@ -3299,7 +3349,11 @@ func (c *Client) handleClientReconnect(msg *Message) {
 		})
 	}
 
-	onlinePayload, _ := json.Marshal(onlineUsers)
+	onlinePayload, err := json.Marshal(onlineUsers)
+	if err != nil {
+		wsLogger.Error("Error marshaling online users payload", "error", err)
+		return
+	}
 	onlineMsg := &Message{
 		Type:      "online-users-list",
 		RoomID:    c.roomID,
@@ -3369,11 +3423,19 @@ func (c *Client) handleThreadMessageUpdated(msg *Message) {
 
 	sanitizedContent := validator.SanitizeMessageContent(payload.Content)
 
+	threadUpdatePayload, err := json.Marshal(map[string]string{
+		"message_id": payload.MessageID,
+		"content":    sanitizedContent,
+	})
+	if err != nil {
+		wsLogger.Error("Error marshaling thread message update payload", "error", err)
+		return
+	}
 	notifyMsg := &Message{
 		Type:      "thread-message-updated",
 		RoomID:    c.roomID,
 		UserID:    c.userID,
-		Payload:   json.RawMessage(fmt.Sprintf(`{"message_id":"%s","content":"%s"}`, payload.MessageID, sanitizedContent)),
+		Payload:   threadUpdatePayload,
 		Timestamp: time.Now(),
 	}
 	c.hub.broadcastToRoom(c.roomID, notifyMsg, c.userID)
@@ -3954,7 +4016,11 @@ func (c *Client) handleTypingBroadcast(msg *Message) {
 		Timestamp:   time.Now(),
 	}
 
-	payloadBytes, _ := json.Marshal(broadcastPayload)
+	payloadBytes, err := json.Marshal(broadcastPayload)
+	if err != nil {
+		wsLogger.Error("Error marshaling typing broadcast payload", "error", err)
+		return
+	}
 	notifyMsg := &Message{
 		Type:      "typing-broadcast",
 		RoomID:    c.roomID,
@@ -4134,7 +4200,11 @@ func (c *Client) handleClientReady(msg *Message) {
 	c.hub.sendOnlineUsersList(c.roomID, c.userID)
 
 	typingUsers := c.hub.GetTypingUsers(c.roomID)
-	typingPayload, _ := json.Marshal(typingUsers)
+	typingPayload, err := json.Marshal(typingUsers)
+	if err != nil {
+		wsLogger.Error("Error marshaling typing users payload", "error", err)
+		return
+	}
 	typingMsg := &Message{
 		Type:      "typing-users-list",
 		RoomID:    c.roomID,

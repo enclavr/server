@@ -95,13 +95,17 @@ func (p *PubSubService) monitorConnection() {
 
 func (p *PubSubService) reconnect() error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	if p.connected {
+		p.mu.Unlock()
 		return nil
 	}
+	p.mu.Unlock()
 
+	// Cancel outside the lock to avoid deadlock with goroutines waiting on ctx.Done()
 	p.cancel()
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	p.ctx = ctx
@@ -176,6 +180,11 @@ func (p *PubSubService) Subscribe(channel string) error {
 }
 
 func (p *PubSubService) subscribeLocked(channel string) error {
+	if p.pubsub != nil {
+		if err := p.pubsub.Close(); err != nil {
+			log.Printf("[Redis] Error closing previous pubsub: %v", err)
+		}
+	}
 	pubsub := p.client.Subscribe(p.ctx, channel)
 	ch := pubsub.Channel()
 
